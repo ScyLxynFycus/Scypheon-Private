@@ -56,10 +56,10 @@ class ModelSandboxService : Service() {
             }.getOrDefault(false)
         }
 
-        override fun generateResponse(prompt: String, callback: ISandboxStatusCallback): Boolean {
+        override fun generateResponse(prompt: String, callback: ISandboxStatusCallback) {
             if (nativeModelPtr == 0L) {
-                safeInvoke(callback) { it.onError("Engine not initialized") }
-                return false
+                safeInvoke(callback) { it.onInternalError("Engine not initialized") }
+                return
             }
             callbacks.register(callback)
 
@@ -76,7 +76,6 @@ class ModelSandboxService : Service() {
                     broadcastError("Inference failed: ${e.message}")
                 }
             }
-            return true
         }
 
         override fun unloadEngine() {
@@ -110,9 +109,9 @@ class ModelSandboxService : Service() {
         (statm[1].toLong() * 4096L) / (1024L * 1024L)
     }.getOrNull() ?: 0L
 
-    private fun broadcastComplete() = broadcast { it.onComplete() }
-    private fun broadcastError(msg: String) = broadcast { it.onError(msg) }
-    private fun broadcastWarning(msg: String) = broadcast { it.onMemoryWarning(msg) }
+    private fun broadcastComplete() = broadcast { it.onInitializationResult(true) }
+    private fun broadcastError(msg: String) = broadcast { it.onInternalError(msg) }
+    private fun broadcastWarning(msg: String) = broadcast { it.onInternalError(msg) }
 
     private inline fun broadcast(crossinline action: (ISandboxStatusCallback) -> Unit) {
         val n = callbacks.beginBroadcast()

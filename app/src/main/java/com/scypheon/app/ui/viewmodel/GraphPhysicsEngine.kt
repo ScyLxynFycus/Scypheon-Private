@@ -1,6 +1,7 @@
 package com.scypheon.app.ui.viewmodel
 
 import com.scypheon.app.data.models.GraphEdge
+import com.scypheon.app.data.models.RawGraphEdge
 import com.scypheon.app.data.models.GraphLayout
 import com.scypheon.app.data.models.GraphNode
 import kotlinx.coroutines.*
@@ -17,7 +18,7 @@ class GraphPhysicsEngine(
     private var simJob: Job? = null
     private var isPaused = true
 
-    fun start(rawEdges: List<com.scypheon.app.ui.screens.GraphEdge>) {
+    fun start(rawEdges: List<com.scypheon.app.data.models.RawGraphEdge>) {
         simJob?.cancel()
         
         val uniqueLabels = (rawEdges.map { it.subject } + rawEdges.map { it.obj }).distinct()

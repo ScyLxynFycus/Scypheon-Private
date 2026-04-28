@@ -1,8 +1,10 @@
 package com.scypheon.sdk.core.sandbox;
 
 interface ISandboxStatusCallback {
-    void onTokenReceived(String token);
-    void onComplete();
-    void onError(String message);
-    void onMemoryWarning(String detail);
+    void onInitializationProgress(float progress);
+    void onInitializationResult(boolean success);
+    void onHardwareStatusUpdate(String status);
+    void onInternalError(String error);
+    void onPollutionDetected(long residualBytes);
+    void onEmbeddings(in float[] embeddings);
 }

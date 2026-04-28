@@ -28,7 +28,7 @@ import com.scypheon.app.ui.views.NeuralGraphView
 @Composable
 fun GraphExplorerScreen(
     viewModel: GraphViewModel,
-    graphData: List<GraphEdge>,
+    graphData: List<com.scypheon.app.data.models.RawGraphEdge>,
     onBack: () -> Unit
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -113,12 +113,7 @@ fun NeuralInfoCard(node: GraphNode) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(130.dp)
-            .graphicsLayer {
-                if (isBlurSupported) {
-                    renderEffect = android.graphics.RenderEffect.createBlurEffect(20f, 20f, android.graphics.Shader.TileMode.CLAMP).asComposeRenderEffect()
-                }
-            },
+            .height(130.dp),
         color = Color.Black.copy(alpha = 0.7f),
         shape = RoundedCornerShape(24.dp),
         tonalElevation = 8.dp
@@ -132,6 +127,3 @@ fun NeuralInfoCard(node: GraphNode) {
     }
 }
 
-private fun android.graphics.RenderEffect.asComposeRenderEffect(): androidx.compose.ui.graphics.RenderEffect {
-    return androidx.compose.ui.graphics.asComposeRenderEffect(this)
-}

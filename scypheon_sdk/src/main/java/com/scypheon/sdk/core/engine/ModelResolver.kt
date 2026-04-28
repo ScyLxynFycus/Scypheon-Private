@@ -1,6 +1,6 @@
 package com.scypheon.sdk.core.engine
 
-import com.scypheon.app.data.local.HardwarePreferences
+import com.scypheon.sdk.core.utils.HardwarePreferences
 import javax.inject.Inject
 import javax.inject.Singleton
 

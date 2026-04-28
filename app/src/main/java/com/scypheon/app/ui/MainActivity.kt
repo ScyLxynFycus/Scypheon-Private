@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity() {
                         )
                     } else if (uiState.isGraphExplorerVisible) {
                         GraphExplorerScreen(
+                            viewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
                             graphData = uiState.graphData,
                             onBack = { viewModel.hideGraphExplorer() }
                         )

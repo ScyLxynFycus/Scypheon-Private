@@ -45,7 +45,7 @@ class ScypheonRepository @Inject constructor(
     private val vectorEngine: IVectorEngine,
     private val blackBoxVault: BlackBoxVault,
     @ApplicationContext private val context: Context,
-    private val hardwarePrefs: com.scypheon.app.data.local.HardwarePreferences
+    private val hardwarePrefs: com.scypheon.sdk.core.utils.HardwarePreferences
 ) {
     // SAR PHASE 3: SHM & Recovery State
     private val replayBuffer = com.scypheon.sdk.core.utils.ContextReplayBuffer()
@@ -91,9 +91,7 @@ class ScypheonRepository @Inject constructor(
         return withContext(Dispatchers.IO) {
             try {
                 Timber.i(" [V.I.I.P] Promoting Sandbox Service to FOREGROUND (Attempt $attempt)...")
-                val intent = Intent(context, com.scypheon.app.services.ModelSandboxService::class.java).apply {
-                    action = com.scypheon.app.services.ModelSandboxService.ACTION_PROMOTE
-                }
+                val intent = Intent(context, com.scypheon.app.services.ModelSandboxService::class.java)
                 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)

@@ -1,4 +1,4 @@
-package com.scypheon.app.data.local
+package com.scypheon.sdk.core.utils
 
 import android.app.ActivityManager
 import android.content.Context
@@ -51,5 +51,27 @@ class HardwarePreferences @Inject constructor(
         val current = prefs.getStringSet("blacklist", emptySet())?.toMutableSet() ?: mutableSetOf()
         current.add(tier.toString())
         prefs.edit().putStringSet("blacklist", current).apply()
+    }
+
+    fun blacklistModel(modelPath: String) {
+        val current = prefs.getStringSet("blacklisted_models", emptySet())?.toMutableSet() ?: mutableSetOf()
+        current.add(modelPath)
+        prefs.edit().putStringSet("blacklisted_models", current).apply()
+    }
+
+    fun isBlacklisted(tier: Int): Boolean {
+        return prefs.getStringSet("blacklist", emptySet())?.contains(tier.toString()) == true
+    }
+
+    fun isModelBlacklisted(modelPath: String): Boolean {
+        return prefs.getStringSet("blacklisted_models", emptySet())?.contains(modelPath) == true
+    }
+
+    fun isMdrsEnabled(): Boolean {
+        return prefs.getBoolean("mdrs_enabled", true)
+    }
+
+    fun isForceDegraded(): Boolean {
+        return prefs.getBoolean("force_degraded", false)
     }
 }

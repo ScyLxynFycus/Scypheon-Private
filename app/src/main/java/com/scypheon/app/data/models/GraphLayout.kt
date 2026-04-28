@@ -25,6 +25,12 @@ data class GraphEdge(
     val predicate: String
 )
 
+data class RawGraphEdge(
+    val subject: String,
+    val predicate: String,
+    val obj: String
+)
+
 data class GraphLayout(
     val nodes: List<GraphNode> = emptyList(),
     val edges: List<GraphEdge> = emptyList()
