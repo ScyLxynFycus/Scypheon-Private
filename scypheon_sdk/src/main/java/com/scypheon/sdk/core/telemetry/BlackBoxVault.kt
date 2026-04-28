@@ -40,6 +40,12 @@ class BlackBoxVault(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
+    private fun computeSha256(input: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val hashBytes = digest.digest(input.toByteArray(Charsets.UTF_8))
+        return hashBytes.joinToString("") { "%02x".format(it) }
+    }
+
     fun logEvent(eventType: String, details: String, securityLevel: String = "INFO") {
         scope.launch {
             try {
@@ -54,7 +60,7 @@ class BlackBoxVault(context: Context) {
                 }
 
                 val updatedLogsJson = gson.toJson(currentLogs)
-                val integrityHash = updatedLogsJson.hashCode().toString()
+                val integrityHash = computeSha256(updatedLogsJson)
 
                 sharedPreferences.edit()
                     .putString("audit_logs", updatedLogsJson)
@@ -73,10 +79,27 @@ class BlackBoxVault(context: Context) {
             val currentLogsJson = sharedPreferences.getString("audit_logs", "[]")
             val storedHash = sharedPreferences.getString("audit_hash", "0")
 
-            // Validate Tamper Evidence
-            if (currentLogsJson != "[]" && currentLogsJson.hashCode().toString() != storedHash) {
-                Timber.e("🚨 CRITICAL: BlackBox Vault Integrity Compromised! Tampering detected.")
-                return emptyList()
+            if (currentLogsJson != "[]" && currentLogsJson != null) {
+                val isLegacyHash = storedHash?.length != 64
+
+                val isValid = if (isLegacyHash) {
+                    currentLogsJson.hashCode().toString() == storedHash
+                } else {
+                    computeSha256(currentLogsJson) == storedHash
+                }
+
+                if (!isValid) {
+                    Timber.e("🚨 CRITICAL: BlackBox Vault Integrity Compromised! Tampering detected.")
+                    return emptyList()
+                }
+
+                // Migrate legacy hash to SHA-256 transparently on first read
+                if (isLegacyHash) {
+                    Timber.i("Migrating legacy BlackBox hash to SHA-256.")
+                    sharedPreferences.edit()
+                        .putString("audit_hash", computeSha256(currentLogsJson))
+                        .apply()
+                }
             }
 
             gson.fromJson(currentLogsJson, Array<AuditLogEntry>::class.java).toList()
