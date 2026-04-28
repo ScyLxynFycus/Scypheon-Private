@@ -41,7 +41,7 @@ class DeafEnvironmentGuardian(
         Timber.i(" [SAR] Warming up DeafEnvironmentGuardian...")
         
         // 🛡️ [SBI] Stealth Model Discovery
-        val registry = AssetExtractor.discoverModels(context)
+        val registry = com.scypheon.sdk.core.utils.AssetExtractor.discoverModels(context)
         val modelPath = registry.memoryModel ?: "yamnet.tflite"
         
         initialize(modelPath)
@@ -85,7 +85,7 @@ class DeafEnvironmentGuardian(
         try {
             val baseOptionsBuilder = BaseOptions.builder()
             
-            val internalPath = AssetExtractor.getModelPath(context, modelPath)
+            val internalPath = com.scypheon.sdk.core.utils.AssetExtractor.getModelPath(context, modelPath)
             if (internalPath.isNotEmpty() && internalPath.startsWith("/")) {
                 Timber.i(" [SAR] Loading Stealth Model from internal storage: $internalPath")
                 val file = java.io.File(internalPath)

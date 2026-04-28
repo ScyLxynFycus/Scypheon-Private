@@ -23,7 +23,7 @@ import com.scypheon.sdk.core.humanitarian.accessibility.VisualGuide
 import com.scypheon.sdk.core.memory.DualMemoryManager
 import com.scypheon.sdk.core.memory.GraphMemoryManager
 import com.scypheon.sdk.core.security.AegisPrivacyShield
-import com.scypheon.app.ui.screens.GraphEdge
+import com.scypheon.app.data.models.RawGraphEdge
 import com.scypheon.sdk.core.utils.Result
 import dagger.hilt.android.lifecycle.HiltViewModel
 import androidx.work.OneTimeWorkRequestBuilder
@@ -64,7 +64,7 @@ data class UiState(
     val telemetryLogs: List<AuditLogEntry> = emptyList(),
     val isTelemetryDashboardVisible: Boolean = false,
     val isGraphExplorerVisible: Boolean = false,
-    val graphData: List<GraphEdge> = emptyList(),
+    val graphData: List<RawGraphEdge> = emptyList(),
     val sessionHistory: List<com.scypheon.sdk.core.memory.DualMemoryManager.Session> = emptyList(),
     
     // Identity
@@ -115,11 +115,11 @@ enum class MemoryStabilityState {
 class MainViewModel @Inject constructor(
     application: Application,
     private val repository: ScypheonRepository,
-    private val liveEnglishTutor: dagger.Lazy<LiveEnglishTutor>,
-    private val reminiscenceCompanion: dagger.Lazy<ReminiscenceCompanion>,
-    private val deafEnvironmentGuardian: dagger.Lazy<DeafEnvironmentGuardian>,
-    private val gestureGuardian: dagger.Lazy<GestureGuardian>,
-    private val kineticGuardian: dagger.Lazy<KineticGuardian>,
+    private val liveEnglishTutor: LiveEnglishTutor,
+    private val reminiscenceCompanion: ReminiscenceCompanion,
+    private val deafEnvironmentGuardian: DeafEnvironmentGuardian,
+    private val gestureGuardian: GestureGuardian,
+    private val kineticGuardian: KineticGuardian,
     private val blackBoxVault: BlackBoxVault,
     private val contextSummarizer: ContextSummarizer,
     private val dualMemoryManager: DualMemoryManager,
@@ -140,10 +140,12 @@ class MainViewModel @Inject constructor(
     private var inferenceJob: kotlinx.coroutines.Job? = null
 
     // --- POCKET AGENTS REGISTRY ---
-    private val agents = mapOf<String, dagger.Lazy<out com.scypheon.sdk.core.humanitarian.ScypheonAgent>>(
-        "tutor" to liveEnglishTutor,
-        "reminiscence" to reminiscenceCompanion,
-        "deaf" to deafEnvironmentGuardian
+    private val agents = mapOf<String, com.scypheon.sdk.core.humanitarian.ScypheonAgent>(
+        "LiveEnglishTutor" to liveEnglishTutor,
+        "ReminiscenceCompanion" to reminiscenceCompanion,
+        "DeafEnvironmentGuardian" to deafEnvironmentGuardian,
+        "GestureGuardian" to gestureGuardian,
+        "KineticGuardian" to kineticGuardian
     )
 
     fun performFullSensoryAudit(uri: Uri) {
@@ -369,18 +371,6 @@ class MainViewModel @Inject constructor(
             val health = repository.checkSystemHealth(getApplication())
             val currentConfig = vault.loadConfig()
             
-            // Dynamically resolve best fitting model before initialization
-            val bestModel = hardwarePrefs.resolveBestFittingModel()
-            
-            if (bestModel == null) {
-                withContext(Dispatchers.Main) {
-                    _uiState.update { it.copy(
-                        error = "Critical Error: No models discovered in storage. Please download a model to continue.",
-                        isReady = true
-                    ) }
-                }
-                return@launch
-            }
 
             val result = repository.initializeEngines(getApplication(), nCtx = currentConfig.contextWindow)
             
@@ -388,12 +378,16 @@ class MainViewModel @Inject constructor(
                 _uiState.update { it.copy(systemHealth = health) }
 
                 if (result is Result.Success) {
+                    // Default model loaded statically or dynamically by repository
+                    val registry = com.scypheon.sdk.core.utils.AssetExtractor.discoverModels(getApplication())
+                    val activeModelName = registry.universalModel ?: "gemma-2-2b-it-Q6_K.gguf"
+
                     // Check for Memory Guard Veto or substitution warnings
                     val warning = repository.getPendingInitializationWarning()
                     if (warning?.contains("VETO") == true) {
                         _uiState.update { it.copy(
                             systemWarning = "Memory Guard Alert: The selected model is too large. Attempting to load the largest safe fallback model instead.",
-                            activeModelName = "${bestModel.name} (Fallback Active)"
+                            activeModelName = "$activeModelName (Fallback Active)"
                         ) }
                     } else if (warning == "OPENCL_PIVOT_TRIGGERED") {
                         _uiState.update { it.copy(systemWarning = "Memory Optimization: Using OpenCL to reduce VRAM pressure.") }
@@ -403,7 +397,7 @@ class MainViewModel @Inject constructor(
                         val hwStatus = repository.getHardwareStatus()
                         _uiState.update { 
                             it.copy(
-                                activeModelName = bestModel.name,
+                                activeModelName = activeModelName,
                                 activeEngineType = if (hwStatus.contains("NPU") || hwStatus.contains("LiteRT")) "LiteRT" else "Llama",
                                 isReady = true
                             ) 
@@ -604,7 +598,7 @@ class MainViewModel @Inject constructor(
 
     fun showGraphExplorer() {
         val rawGraph = dualMemoryManager.getRawKnowledgeGraph()
-        val formattedGraph = rawGraph.map { GraphEdge(it.first, it.second, it.third) }
+        val formattedGraph = rawGraph.map { RawGraphEdge(it.first, it.second, it.third) }
 
         _uiState.update {
             it.copy(
@@ -784,46 +778,46 @@ class MainViewModel @Inject constructor(
         val modelPath = modelProvisioner.getModelPath("gesture_recognizer.task").absolutePath
         // SignLanguageBridge handles camera in some implementations, 
         // DeafEnvironmentGuardian handles mic.
-        deafEnvironmentGuardian.get().startListening()
-        // kineticGuardian.get().startMonitoring() // Optional for vibration-based touch feedback
+        deafEnvironmentGuardian.startListening()
+        // kineticGuardian.startMonitoring() // Optional for vibration-based touch feedback
         
         blackBoxVault.logEvent("LIVE_BRIDGE_START", "Scypheon Live Bridge (Deaf/Mute) Activated")
     }
 
     private fun stopLiveBridge() {
-        deafEnvironmentGuardian.get().stopListening()
-        kineticGuardian.get().stopMonitoring()
+        deafEnvironmentGuardian.stopListening()
+        kineticGuardian.stopMonitoring()
         blackBoxVault.logEvent("LIVE_BRIDGE_STOP", "Scypheon Live Bridge Deactivated")
     }
 
     private fun stopAllFeatures() {
-        if (liveEnglishTutor.get().isListening) liveEnglishTutor.get().stopListening()
-        if (reminiscenceCompanion.get().isListening) reminiscenceCompanion.get().stopListening()
-        if (deafEnvironmentGuardian.get().isListening) deafEnvironmentGuardian.get().stopListening()
-        kineticGuardian.get().stopMonitoring()
+        if (liveEnglishTutor.isListening) liveEnglishTutor.stopListening()
+        if (reminiscenceCompanion.isListening) reminiscenceCompanion.stopListening()
+        if (deafEnvironmentGuardian.isListening) deafEnvironmentGuardian.stopListening()
+        kineticGuardian.stopMonitoring()
     }
 
     private fun startFeature(featureName: String) {
         when (featureName) {
             "LiveEnglishTutor" -> {
-                liveEnglishTutor.get().warmUp()
-                liveEnglishTutor.get().startListening()
+                liveEnglishTutor.warmUp()
+                liveEnglishTutor.startListening()
             }
             "ReminiscenceCompanion" -> {
-                reminiscenceCompanion.get().warmUp()
-                reminiscenceCompanion.get().initiateTherapySession()
+                reminiscenceCompanion.warmUp()
+                reminiscenceCompanion.initiateTherapySession()
             }
             "DeafEnvironmentGuardian" -> {
-                deafEnvironmentGuardian.get().warmUp()
-                deafEnvironmentGuardian.get().startListening()
+                deafEnvironmentGuardian.warmUp()
+                deafEnvironmentGuardian.startListening()
             }
             "GestureGuardian" -> {
-                gestureGuardian.get().warmUp()
-                gestureGuardian.get().initialize()
+                gestureGuardian.warmUp()
+                gestureGuardian.initialize()
             }
             "KineticGuardian" -> {
-                kineticGuardian.get().warmUp()
-                kineticGuardian.get().startMonitoring()
+                kineticGuardian.warmUp()
+                kineticGuardian.startMonitoring()
             }
             // MedicineGuard, ScamGuard, SignLanguageBridge often require CameraX or call listeners setup in Activity/Service
         }
@@ -1275,7 +1269,7 @@ class MainViewModel @Inject constructor(
      */
     fun activateAgent(featureId: String) {
         viewModelScope.launch(Dispatchers.Default) {
-            val agent = agents[featureId]?.get()
+            val agent = agents[featureId]
             if (agent != null && !agent.isReady()) {
                 Timber.i(" [POCKET] Activating $featureId...")
                 agent.warmUp()
@@ -1289,14 +1283,11 @@ class MainViewModel @Inject constructor(
      */
     fun unloadAllAgents() {
         Timber.w(" [MDRS] Unloading all auxiliary agents to reclaim RAM.")
-        agents.values.forEach { lazyAgent ->
-            // Note: We only release if it was already initialized
-            // Accessing .get() here would initialize it, so we check a custom 'isInitialized' if possible,
-            // or just rely on the fact that if it wasn't accessed, it won't be in memory.
-            // Since we can't easily check Lazy.isInitialized in Dagger 2, we rely on the agent's own state.
+        agents.values.forEach { agent ->
             try {
-                // If the engine was never touched, get() will init it just to kill it (unideal but safe)
-                lazyAgent.get().release()
+                if (agent.isReady()) {
+                    agent.release()
+                }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to release agent")
             }

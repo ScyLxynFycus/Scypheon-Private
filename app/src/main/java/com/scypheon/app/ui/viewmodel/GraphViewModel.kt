@@ -1,16 +1,17 @@
 package com.scypheon.app.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
-import com.scypheon.app.ui.screens.GraphEdge
+import com.scypheon.app.data.models.RawGraphEdge
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import androidx.lifecycle.viewModelScope
 
 @HiltViewModel
-class GraphViewModel @Inject constructor(
-    val physics: GraphPhysicsEngine
-) : ViewModel() {
+class GraphViewModel @Inject constructor() : ViewModel() {
 
-    fun initGraph(data: List<GraphEdge>) {
+    val physics = GraphPhysicsEngine(viewModelScope)
+
+    fun initGraph(data: List<RawGraphEdge>) {
         physics.start(data)
     }
 

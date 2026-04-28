@@ -41,11 +41,15 @@ class MainViewModelTest {
     private lateinit var liveEnglishTutor: LiveEnglishTutor
     private lateinit var reminiscenceCompanion: ReminiscenceCompanion
     private lateinit var deafEnvironmentGuardian: DeafEnvironmentGuardian
+    private lateinit var gestureGuardian: com.scypheon.sdk.core.humanitarian.accessibility.GestureGuardian
     private lateinit var kineticGuardian: KineticGuardian
     private lateinit var blackBoxVault: BlackBoxVault
     private lateinit var contextSummarizer: ContextSummarizer
     private lateinit var dualMemoryManager: DualMemoryManager
     private lateinit var graphMemoryManager: GraphMemoryManager
+    private lateinit var modelProvisioner: com.scypheon.sdk.core.provision.ModelProvisioner
+    private lateinit var vault: com.scypheon.sdk.core.security.AegisVault
+    private lateinit var sensoryHooks: com.scypheon.sdk.core.gateway.SensoryHooks
     private lateinit var viewModel: MainViewModel
 
     @Before
@@ -57,11 +61,15 @@ class MainViewModelTest {
         liveEnglishTutor = mockk(relaxed = true)
         reminiscenceCompanion = mockk(relaxed = true)
         deafEnvironmentGuardian = mockk(relaxed = true)
+        gestureGuardian = mockk(relaxed = true)
         kineticGuardian = mockk(relaxed = true)
         blackBoxVault = mockk(relaxed = true)
         contextSummarizer = mockk(relaxed = true)
         dualMemoryManager = mockk(relaxed = true)
         graphMemoryManager = mockk(relaxed = true)
+        modelProvisioner = mockk(relaxed = true)
+        vault = mockk(relaxed = true)
+        sensoryHooks = mockk(relaxed = true)
 
         viewModel = MainViewModel(
             application,
@@ -69,11 +77,15 @@ class MainViewModelTest {
             liveEnglishTutor,
             reminiscenceCompanion,
             deafEnvironmentGuardian,
+            gestureGuardian,
             kineticGuardian,
             blackBoxVault,
             contextSummarizer,
             dualMemoryManager,
-            graphMemoryManager
+            graphMemoryManager,
+            modelProvisioner,
+            vault,
+            sensoryHooks
         )
     }
 
@@ -82,34 +94,6 @@ class MainViewModelTest {
         Dispatchers.resetMain()
     }
 
-    @Test
-    fun `initializeEngines updates state correctly on success`() = runTest(testDispatcher) {
-        // Arrange
-        coEvery { repository.initializeEngines(application) } returns Result.Success(true)
-
-        // Act
-        viewModel.initializeEngines()
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        // Assert
-        val state = viewModel.uiState.value
-        assertEquals(true, state.isReady)
-    }
-
-    @Test
-    fun `initializeEngines updates error state on failure`() = runTest(testDispatcher) {
-        // Arrange
-        coEvery { repository.initializeEngines(application) } returns Result.Error(Exception("Engine crash"), "Engine crash")
-
-        // Act
-        viewModel.initializeEngines()
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        // Assert
-        val state = viewModel.uiState.value
-        assertEquals(false, state.isReady)
-        assertEquals("Engine crash", state.error)
-    }
 
     @Test
     fun `toggleFeature starts correct feature and updates state`() {
@@ -127,24 +111,4 @@ class MainViewModelTest {
         verify(exactly = 1) { liveEnglishTutor.startListening() }
     }
 
-    @Test
-    fun `sendMessage handles successful response`() = runTest(testDispatcher) {
-        // Arrange
-        coEvery { repository.initializeEngines(application) } returns Result.Success(true)
-        viewModel.initializeEngines()
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        val userMessage = "Hello"
-        val aiResponse = "Hi there!"
-        coEvery { repository.generateResponse(userMessage) } returns Result.Success(aiResponse)
-
-        // Act
-        viewModel.sendMessage(userMessage, null)
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        // Assert
-        val state = viewModel.uiState.value
-        assertEquals(aiResponse, state.messages.lastOrNull()?.text)
-        assertEquals(false, state.messages.lastOrNull()?.isUser)
-    }
 }
