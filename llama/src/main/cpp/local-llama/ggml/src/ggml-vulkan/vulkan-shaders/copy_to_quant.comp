@@ -1,0 +1,282 @@
+#version 450
+
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_KHR_shader_subgroup_ballot : enable
+#extension GL_KHR_shader_subgroup_shuffle : enable
+#extension GL_EXT_control_flow_attributes : enable
+#include "rte.glsl"
+#include "types.glsl"
+#include "utils.glsl"
+
+#ifdef BLOCK_SIZE
+#undef BLOCK_SIZE
+#endif
+
+#if defined(SET_ROWS) && QUANT_K == 1
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+const uint BLOCK_SIZE = 512;
+#else
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+const uint BLOCK_SIZE = 32;
+#endif
+
+layout (binding = 0) readonly buffer S {float data_s[];};
+
+#if defined(SET_ROWS)
+layout (binding = 1) readonly buffer C {uint data_i[];};
+layout (binding = 2) writeonly buffer Q {A_TYPE data_q[];};
+
+#if B_SIZE == 64
+#define DATA_I_SWIZZLE .x
+#else
+#define DATA_I_SWIZZLE
+#endif
+
+#else
+layout (binding = 1) writeonly buffer Q {A_TYPE data_q[];};
+#endif
+
+layout (push_constant) uniform parameter
+{
+    uint ne;
+    uint ne00; uint ne01; uint ne02; uint ne03; uint nb00; uint nb01; uint nb02; uint nb03;
+    uint ne10; uint ne11; uint ne12; uint ne13; uint nb10; uint nb11; uint nb12; uint nb13;
+    uint misalign_offsets;
+    float param1; float param2;
+
+    uint ne0_012mp; uint ne0_012L;
+    uint ne0_01mp;  uint ne0_01L;
+    uint ne0_0mp;   uint ne0_0L;
+    uint ne1_012mp; uint ne1_012L;
+    uint ne1_01mp;  uint ne1_01L;
+    uint ne1_0mp;   uint ne1_0L;
+} p;
+
+uint get_aoffset() { return p.misalign_offsets >> 16; }
+uint get_doffset() { return p.misalign_offsets & 0xFFFF; }
+uint get_boffset() { return 0; }
+
+// see init_fastdiv_values in ggml-vulkan.cpp
+uint fast_arith_div(uint n, uint mp, uint L) {
+    uint msbs, lsbs;
+    umulExtended(n, mp, msbs, lsbs);
+    return (msbs + n) >> L;
+}
+
+uint src0_idx(uint idx) {
+    const uint i03 = fast_arith_div(idx, p.ne0_012mp, p.ne0_012L);
+    const uint i03_offset = i03 * p.ne02*p.ne01*p.ne00;
+    const uint i02 = fast_arith_div(idx - i03_offset, p.ne0_01mp, p.ne0_01L);
+    const uint i02_offset = i02*p.ne01*p.ne00;
+    const uint i01 = fast_arith_div(idx - i03_offset - i02_offset, p.ne0_0mp, p.ne0_0L);
+    const uint i00 = idx - i03_offset - i02_offset - i01*p.ne00;
+    return i03*p.nb03 + i02*p.nb02 + i01*p.nb01 + i00*p.nb00;
+}
+
+uint src0_idx(uint i00, uint i01, uint i02, uint i03) {
+    return i03*p.nb03 + i02*p.nb02 + i01*p.nb01 + i00*p.nb00;
+}
+
+uint src1_idx(uint i10, uint i11, uint i12, uint i13) {
+    return i13*p.nb13 + i12*p.nb12 + i11*p.nb11 + i10*p.nb10; 
+}
+
+uint dst_idx_quant(uint idx, uint qk) {
+    const uint i13 = fast_arith_div(idx, p.ne1_012mp, p.ne1_012L);
+    const uint i13_offset = i13 * p.ne12*p.ne11*p.ne10;
+    const uint i12 = fast_arith_div(idx - i13_offset, p.ne1_01mp, p.ne1_01L);
+    const uint i12_offset = i12*p.ne11*p.ne10;
+    const uint i11 = fast_arith_div(idx - i13_offset - i12_offset, p.ne1_0mp, p.ne1_0L);
+    const uint i10 = idx - i13_offset - i12_offset - i11*p.ne10;
+    return i13*p.nb13 + i12*p.nb12 + i11*p.nb11 + (i10/qk)*p.nb10;
+}
+
+uint dst_idx_quant(uint i10, uint i11, uint i12, uint i13, uint qk) {
+    return i13*p.nb13 + i12*p.nb12 + i11*p.nb11 + (i10/qk)*p.nb10;
+}
+
+void get_indices_wrap(uint idx, out uint i00, out uint i01, out uint i02, out uint i03) {
+    get_indices(idx, i00, i01, i02, i03, p.ne00, p.ne01, p.ne02, p.ne03);
+}
+
+#if defined(DATA_A_Q4_0)
+void quantize(uint dst_idx, uint src_idx)
+{
+    float amax = 0.0;
+    float vmax = 0.0;
+    [[unroll]] for (int j = 0; j < 32; ++j) {
+        const float v = data_s[src_idx + j];
+        if (amax < abs(v)) {
+            amax = abs(v);
+            vmax = v;
+        }
+    }
+    const float d  = vmax / -8.0;
+    const float id = (d != 0.0) ? 1.0/d : 0.0;
+    data_q[dst_idx].d = float16_t(d);
+    [[unroll]] for (int j = 0; j < 16; ++j) {
+        const float x0 = data_s[src_idx + 0  + j]*id;
+        const float x1 = data_s[src_idx + 16 + j]*id;
+        const uint xi0 = min(15, uint(max(0.0, x0 + 8.5)));
+        const uint xi1 = min(15, uint(max(0.0, x1 + 8.5)));
+        data_q[dst_idx].qs[j]  = uint8_t(xi0 | (xi1 << 4));
+    }
+}
+#elif defined(DATA_A_Q4_1)
+void quantize(uint dst_idx, uint src_idx)
+{
+    float vmin = 1.0/0.0;
+    float vmax = -vmin;
+    [[unroll]] for (int j = 0; j < 32; ++j) {
+        const float v = data_s[src_idx + j];
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
+    }
+    const float d = (vmax - vmin) / 15.0;
+    const float id = (d != 0.0) ? 1.0/d : 0.0;
+    data_q[dst_idx].d = float16_t(d);
+    data_q[dst_idx].m = float16_t(vmin);
+    [[unroll]] for (int j = 0; j < 16; ++j) {
+        const float x0 = (data_s[src_idx + 0  + j] - vmin)*id;
+        const float x1 = (data_s[src_idx + 16 + j] - vmin)*id;
+        const uint xi0 = min(15, uint(max(0.0, x0 + 0.5)));
+        const uint xi1 = min(15, uint(max(0.0, x1 + 0.5)));
+        data_q[dst_idx].qs[j]  = uint8_t(xi0 | (xi1 << 4));
+    }
+}
+#elif defined(DATA_A_Q5_0)
+void quantize(uint dst_idx, uint src_idx)
+{
+    float amax = 0.0;
+    float vmax = 0.0;
+    [[unroll]] for (int j = 0; j < 32; ++j) {
+        const float v = data_s[src_idx + j];
+        if (amax < abs(v)) {
+            amax = abs(v);
+            vmax = v;
+        }
+    }
+    const float d  = vmax / -16.0;
+    const float id = (d != 0.0) ? 1.0/d : 0.0;
+    data_q[dst_idx].d = float16_t(d);
+    uint qh = 0;
+    [[unroll]] for (int j = 0; j < 32; ++j) {
+        const float x0 = data_s[src_idx + j]*id;
+        const uint xi0 = min(31, uint(max(0.0, x0 + 16.5)));
+        if (j < 16) {
+            data_q[dst_idx].qs[j] = uint8_t(xi0 & 0x0F);
+        } else {
+            data_q[dst_idx].qs[j - 16] |= uint8_t((xi0 & 0x0F) << 4);
+        }
+        if ((xi0 & 0x10) != 0) {
+            qh |= (1 << j);
+        }
+    }
+    data_q[dst_idx].qh[0] = uint16_t(qh & 0xFFFF);
+    data_q[dst_idx].qh[1] = uint16_t(qh >> 16);
+}
+#elif defined(DATA_A_Q5_1)
+void quantize(uint dst_idx, uint src_idx)
+{
+    float vmin = 1.0/0.0;
+    float vmax = -vmin;
+    [[unroll]] for (int j = 0; j < 32; ++j) {
+        const float v = data_s[src_idx + j];
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
+    }
+    const float d = (vmax - vmin) / 31.0;
+    const float id = (d != 0.0) ? 1.0/d : 0.0;
+    data_q[dst_idx].d = float16_t(d);
+    data_q[dst_idx].m = float16_t(vmin);
+    uint qh = 0;
+    [[unroll]] for (int j = 0; j < 32; ++j) {
+        const float x0 = (data_s[src_idx + j] - vmin)*id;
+        const uint xi0 = min(31, uint(max(0.0, x0 + 0.5)));
+        if (j < 16) {
+            data_q[dst_idx].qs[j] = uint8_t(xi0 & 0x0F);
+        } else {
+            data_q[dst_idx].qs[j - 16] |= uint8_t((xi0 & 0x0F) << 4);
+        }
+        if ((xi0 & 0x10) != 0) {
+            qh |= (1 << j);
+        }
+    }
+    data_q[dst_idx].qh = qh;
+}
+#elif defined(DATA_A_Q8_0)
+void quantize(uint dst_idx, uint src_idx)
+{
+    float amax = 0;
+    [[unroll]] for (int j = 0; j < 32; ++j) {
+        const float v = data_s[src_idx + j];
+        amax = max(amax, abs(v));
+    }
+    const float d = amax / 127.0;
+    const float id = (d != 0.0) ? 1.0/d : 0.0;
+    data_q[dst_idx].d = float16_t(d);
+    [[unroll]] for (int j = 0; j < 32; ++j) {
+        const float x0 = data_s[src_idx + j]*id;
+        data_q[dst_idx].qs[j] = int8_t(clamp(round(x0), -128.0, 127.0));
+    }
+}
+#elif defined(DATA_A_F32) || defined(DATA_A_F16)
+void quantize(uint dst_idx, uint src_idx)
+{
+    data_q[dst_idx] = A_TYPE(data_s[src_idx]);
+}
+#elif defined(DATA_A_BF16)
+void quantize(uint dst_idx, uint src_idx)
+{
+    data_q[dst_idx] = A_TYPE(fp32_to_bf16(data_s[src_idx]));
+}
+#elif defined(DATA_A_TURBO4_0)
+void quantize(uint dst_idx, uint src_idx)
+{
+    float amax = 0;
+    [[unroll]] for (int j = 0; j < 128; ++j) {
+        const float v = data_s[src_idx + j];
+        amax = max(amax, abs(v));
+    }
+    const float d = amax / 15.0f;
+    const float id = (d != 0.0) ? 1.0 / d : 0.0;
+    data_q[dst_idx].d = float16_t(d);
+    data_q[dst_idx].rnorm = float16_t(1.0f);
+    [[unroll]] for (int j = 0; j < 64; ++j) {
+        const float x0 = data_s[src_idx + j] * id;
+        const float x1 = data_s[src_idx + 64 + j] * id;
+        const uint xi0 = uint(clamp(int(x0 + 0.5f), 0, 15));
+        const uint xi1 = uint(clamp(int(x1 + 0.5f), 0, 15));
+        data_q[dst_idx].qs[j] = uint8_t(xi0 | (xi1 << 4));
+    }
+}
+#else
+void quantize(uint dst_idx, uint src_idx)
+{
+    // Fallback for unsupported types
+}
+#endif
+
+#if defined(SET_ROWS)
+void main() {
+    const uint idx = ((gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x) * BLOCK_SIZE + gl_LocalInvocationID.x) * QUANT_K;
+    if (idx >= p.ne) { return; }
+    uint i00, i01, i02, i03;
+    get_indices_wrap(idx, i00, i01, i02, i03);
+    uint i12 = fastmod(i03, p.ne12);
+    uint i11 = fastmod(i02, p.ne11);
+    uint i10 = i01;
+    uint i1 = data_i[src1_idx(i10, i11, i12, 0)] DATA_I_SWIZZLE;
+    uint s0_idx = src0_idx(i00, i01, i02, i03) + get_aoffset();
+    uint d_idx = dst_idx_quant(i00 / QUANT_K, i1, i02, i03, QUANT_K) + get_doffset();
+    quantize(d_idx, s0_idx);
+}
+#else
+void main() {
+    const uint idx = (gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x * 32 + gl_LocalInvocationID.x) * QUANT_K;
+    if (idx >= p.ne) { return; }
+    uint dst_idx = dst_idx_quant(idx, QUANT_K);
+    uint src_idx = get_aoffset() + src0_idx(idx);
+    quantize(dst_idx, src_idx);
+}
+#endif

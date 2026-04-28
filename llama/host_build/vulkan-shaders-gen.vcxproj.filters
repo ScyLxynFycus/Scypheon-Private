@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\AuraLink\VITREON\llama\.cxx\Release\4g1r5e1b\arm64-v8a\_deps\llama-src\ggml\src\ggml-vulkan\vulkan-shaders\vulkan-shaders-gen.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\AuraLink\VITREON\llama\.cxx\Release\4g1r5e1b\arm64-v8a\_deps\llama-src\ggml\src\ggml-vulkan\vulkan-shaders\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{C2E7932B-49C9-3C2E-B869-D5408D7480FF}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

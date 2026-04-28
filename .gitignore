@@ -1,0 +1,37 @@
+# Android
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+cmake_install.cmake
+CMakeCache.txt
+CMakeFiles/
+Makefile
+*.log
+*.txt
+
+# SDK & Llama
+scypheon_sdk/build/
+scypheon_sdk/.cxx/
+llama/build/
+llama/.cxx/
+
+# Gradle
+.gradle
+gradle-app.setting
+!gradle-wrapper.jar
+.gradletasknamecache
+
+# User-specific
+.DS_Store
+.idea/
+
+# Exclude Binaries over 100MB
+*.exe
+*.obj
+app/src/main/assets/.shm/

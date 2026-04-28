@@ -1,0 +1,10 @@
+^D:\AURALINK\VITREON\LLAMA\.CXX\RELEASE\4G1R5E1B\ARM64-V8A\_DEPS\LLAMA-SRC\GGML\SRC\GGML-VULKAN\VULKAN-SHADERS\CMAKELISTS.TXT
+setlocal
+C:\Users\MALEO\AppData\Local\Android\Sdk\cmake\3.22.1\bin\cmake.exe -SD:/AuraLink/VITREON/llama/.cxx/Release/4g1r5e1b/arm64-v8a/_deps/llama-src/ggml/src/ggml-vulkan/vulkan-shaders -BD:/AuraLink/VITREON/llama/host_build --check-stamp-file D:/AuraLink/VITREON/llama/host_build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
