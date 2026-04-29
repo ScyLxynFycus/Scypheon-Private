@@ -44,6 +44,11 @@ import com.scypheon.sdk.core.model.ScypheonBackendDiagnostic
 import timber.log.Timber
 import javax.inject.Inject
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runBlocking
+import com.scypheon.sdk.core.security.PromptGuard
+import com.scypheon.sdk.core.engine.InferenceGovernor
+import com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
+import com.scypheon.sdk.core.security.ModelManifestVerifier
 
 data class ChatMessageUiState(
     val text: String,
@@ -126,7 +131,12 @@ class MainViewModel @Inject constructor(
     private val graphMemoryManager: GraphMemoryManager,
     private val modelProvisioner: com.scypheon.sdk.core.provision.ModelProvisioner,
     private val vault: com.scypheon.sdk.core.security.AegisVault,
-    private val sensoryHooks: com.scypheon.sdk.core.gateway.SensoryHooks
+    private val sensoryHooks: com.scypheon.sdk.core.gateway.SensoryHooks,
+    // SECURITY HARDENING: Enterprise-grade safety components
+    private val promptGuard: com.scypheon.sdk.core.security.PromptGuard,
+    private val inferenceGovernor: com.scypheon.sdk.core.engine.InferenceGovernor,
+    private val circuitBreaker: com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker,
+    private val manifestVerifier: com.scypheon.sdk.core.security.ModelManifestVerifier
 ) : AndroidViewModel(application) {
 
     private val voiceEngine = com.scypheon.sdk.core.voice.AegisVoiceEngine(application)
@@ -908,6 +918,18 @@ class MainViewModel @Inject constructor(
         addUserMessage: Boolean = true,
         isRetry: Boolean = false
     ) {
+        // CIRCUIT BREAKER: Check if system is in fault-tolerance mode
+        if (!circuitBreaker.allowRequest()) {
+            val status = circuitBreaker.getStatus()
+            _uiState.update { state ->
+                state.copy(messages = state.messages + ChatMessageUiState(
+                    text = "⚠️ System temporarily unavailable. Recovering from recent failures. Please wait ${status.cooldownRemaining / 1000}s and try again.",
+                    isUser = false,
+                    status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED
+                ))
+            }
+            return
+        }
 
         // JIT Session ID Generation (Synchronous UI part)
         if (_uiState.value.currentSessionId.isEmpty()) {
@@ -916,6 +938,28 @@ class MainViewModel @Inject constructor(
         }
 
         val finalSessionId = _uiState.value.currentSessionId
+        
+        // SECURITY GATE: PromptGuard sanitization BEFORE any processing
+        val sanitizationResult = runBlocking { promptGuard.sanitize(text) }
+        when (sanitizationResult) {
+            is com.scypheon.sdk.core.security.PromptGuard.SanitizationResult.Blocked -> {
+                _uiState.update { state ->
+                    state.copy(messages = state.messages + ChatMessageUiState(
+                        text = "🛡️ Request Blocked: ${sanitizationResult.reason}",
+                        isUser = false,
+                        status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED
+                    ))
+                }
+                circuitBreaker.recordFailure()
+                return
+            }
+            is com.scypheon.sdk.core.security.PromptGuard.SanitizationResult.Allowed -> {
+                // Use sanitized prompt for inference
+                val sanitizedPrompt = sanitizationResult.sanitizedPrompt
+                Timber.d("✅ Prompt sanitized: ${sanitizationResult.redactionCount} PII items redacted")
+            }
+        }
+        
         val redactedText = AegisPrivacyShield.redact(text)
 
         // 孱・・GUARDRAIL: Multi-Layered Intent Scanning

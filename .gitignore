@@ -1,37 +1,52 @@
-# Android
-.gradle/
-build/
-local.properties
-.idea/
-*.iml
-.kotlin/
-captures/
-.externalNativeBuild/
-.cxx/
-cmake_install.cmake
-CMakeCache.txt
-CMakeFiles/
-Makefile
-*.log
-*.txt
-
-# SDK & Llama
-scypheon_sdk/build/
-scypheon_sdk/.cxx/
-llama/build/
-llama/.cxx/
+```
+# Java/Kotlin build artifacts
+*.class
+*.jar
+*.war
+*.ear
+*.jmod
 
 # Gradle
-.gradle
-gradle-app.setting
-!gradle-wrapper.jar
-.gradletasknamecache
+.gradle/
+build/
+!gradle.properties
 
-# User-specific
-.DS_Store
+# Kotlin
+*.kotlin_metadata
+*.kotlin_built
+
+# Dependencies
+libs/
+
+# IDE
 .idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
 
-# Exclude Binaries over 100MB
-*.exe
-*.obj
-app/src/main/assets/.shm/
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Environment
+.env
+.env.local
+.env.*
+
+# Coverage
+coverage/
+jacoco/
+
+# Distribution
+dist/
+target/
+
+# System
+.DS_Store
+Thumbs.db
+```
