@@ -5,6 +5,7 @@ import com.scypheon.sdk.core.engine.LiteRtEliteEngine
 import com.scypheon.sdk.core.engine.LlamaCppUniversalEngine
 import com.scypheon.sdk.core.engine.SandboxLlamaEngine
 import com.scypheon.sdk.core.engine.ModelLoader
+import com.scypheon.sdk.core.engine.InferenceGovernor
 import com.scypheon.sdk.core.gateway.NeuralGateway
 import com.scypheon.sdk.core.humanitarian.accessibility.DeafEnvironmentGuardian
 import com.scypheon.sdk.core.humanitarian.accessibility.GestureGuardian
@@ -24,10 +25,13 @@ import com.scypheon.sdk.core.memory.ContextSummarizer
 import com.scypheon.sdk.core.memory.GraphMemoryManager
 import com.scypheon.sdk.core.memory.LocalDocumentParser
 import com.scypheon.sdk.core.security.AegisPrivacyShield
+import com.scypheon.sdk.core.security.PromptGuard
+import com.scypheon.sdk.core.security.ModelManifestVerifier
 import com.scypheon.sdk.core.telemetry.BlackBoxVault
 import com.scypheon.sdk.core.swarm.AgentOrchestrator
 import com.scypheon.sdk.core.swarm.MedicalSubAgent
 import com.scypheon.sdk.core.swarm.SecuritySubAgent
+import com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -252,5 +256,38 @@ object SdkModule {
             com.scypheon.app.ui.GlobalLiveEventBus.postEvent(msg)
             timber.log.Timber.w("KineticGuardian Emergency: $type - $msg")
         }
+    }
+
+    // ==================== ENTERPRISE SECURITY & RESILIENCE ====================
+
+    @Provides
+    @Singleton
+    fun providePromptGuard(): PromptGuard {
+        return PromptGuard()
+    }
+
+    @Provides
+    @Singleton
+    fun provideModelManifestVerifier(): ModelManifestVerifier {
+        return ModelManifestVerifier()
+    }
+
+    @Provides
+    @Singleton
+    fun provideResilienceCircuitBreaker(): ResilienceCircuitBreaker {
+        return ResilienceCircuitBreaker(
+            ResilienceCircuitBreaker.Config(
+                failureThreshold = 3,
+                cooldownMs = 60_000L,
+                successThreshold = 2,
+                name = "inference"
+            )
+        )
+    }
+
+    @Provides
+    @Singleton
+    fun provideInferenceGovernor(): InferenceGovernor {
+        return InferenceGovernor()
     }
 }
