@@ -75,7 +75,7 @@ class ResilienceCircuitBreaker @Inject constructor() {
     private var lastStateChangeTime = System.currentTimeMillis()
     
     // Configuration
-    private val config: Config
+    private var config: Config = Config()
     
     // Statistics for monitoring
     private var totalRequests = 0L

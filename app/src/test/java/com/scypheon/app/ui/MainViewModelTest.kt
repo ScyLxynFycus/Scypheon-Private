@@ -50,6 +50,10 @@ class MainViewModelTest {
     private lateinit var modelProvisioner: com.scypheon.sdk.core.provision.ModelProvisioner
     private lateinit var vault: com.scypheon.sdk.core.security.AegisVault
     private lateinit var sensoryHooks: com.scypheon.sdk.core.gateway.SensoryHooks
+    private lateinit var promptGuard: com.scypheon.sdk.core.security.PromptGuard
+    private lateinit var inferenceGovernor: com.scypheon.sdk.core.engine.InferenceGovernor
+    private lateinit var circuitBreaker: com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
+    private lateinit var manifestVerifier: com.scypheon.sdk.core.security.ModelManifestVerifier
     private lateinit var viewModel: MainViewModel
 
     @Before
@@ -71,6 +75,12 @@ class MainViewModelTest {
         vault = mockk(relaxed = true)
         sensoryHooks = mockk(relaxed = true)
 
+        promptGuard = mockk(relaxed = true)
+        inferenceGovernor = mockk(relaxed = true)
+        circuitBreaker = mockk(relaxed = true)
+        manifestVerifier = mockk(relaxed = true)
+
+
         viewModel = MainViewModel(
             application,
             repository,
@@ -85,7 +95,11 @@ class MainViewModelTest {
             graphMemoryManager,
             modelProvisioner,
             vault,
-            sensoryHooks
+            sensoryHooks,
+            promptGuard,
+            inferenceGovernor,
+            circuitBreaker,
+            manifestVerifier
         )
     }
 

@@ -3,6 +3,7 @@ package com.scypheon.sdk.core.engine
 import com.scypheon.sdk.core.utils.HardwarePreferences
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.scypheon.sdk.core.security.ModelIntegrityGuard
 
 sealed class InferenceCapability {
     data class Full(val modelPath: String, val contextSize: Int) : InferenceCapability()

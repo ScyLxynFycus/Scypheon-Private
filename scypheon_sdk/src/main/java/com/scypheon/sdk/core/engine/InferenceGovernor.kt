@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import javax.inject.Singleton
 
 /**
@@ -264,13 +265,6 @@ class InferenceGovernor @Inject constructor() {
     }
 
     // Custom exception types for better error handling
-    sealed class InferenceException(message: String) : Exception(message) {
-        class NotInitialized : InferenceException("Engine not initialized")
-        class NotReady : InferenceException("Engine not ready")
-        class Timeout(message: String) : InferenceException(message)
-        class QueueTimeout : InferenceException("Request queue timeout")
-        class Cancellation(message: String) : InferenceException(message)
-    }
 
     // Compatibility extensions for Mutex (AndroidX coroutines)
     private suspend fun Mutex.tryAcquireCompat(timeoutMs: Long): Boolean {
@@ -291,6 +285,13 @@ class InferenceGovernor @Inject constructor() {
             Log.e(TAG, "Failed to release mutex", e)
         }
     }
+
+    open class InferenceException(message: String) : Exception(message) {
+        class QueueTimeoutException : InferenceException("Queue timeout")
+        class PreemptionException : InferenceException("Preempted by higher priority task")
+        class EngineSwapException : InferenceException("Engine swap failed")
+        class CancelledException : InferenceException("Inference cancelled")
+    }
 }
 
 // Extension function for easier usage
@@ -301,4 +302,5 @@ suspend fun InferenceGovernor.executeSafe(
 ) {
     execute(prompt, onToken)
         .onFailure { onError(it) }
+
 }
