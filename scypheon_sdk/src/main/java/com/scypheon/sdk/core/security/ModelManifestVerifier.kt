@@ -37,10 +37,10 @@ class ModelManifestVerifier @Inject constructor() {
         
         // Production: Load from secure keystore or embedded resource
         // Example: Base64.decode("YOUR_ED25519_PUBLIC_KEY_BASE64", Base64.DEFAULT)
-        private val PUBLIC_KEY_BYTES = Base64.decode(
+        private val PUBLIC_KEY_BYTES by lazy { Base64.decode(
             "MCowBQYDK2VwAyEAEXAMPLE_REPLACE_WITH_YOUR_ACTUAL_PUBLIC_KEY_HERE=",
             Base64.DEFAULT
-        )
+        ) }
     }
 
     data class ManifestEntry(
