@@ -688,75 +688,10 @@ fun MainChatScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        newNameInput = userName
-                                        showNamePrompt = true
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = "Welcome, $userName",
-                                    style = TextStyle(brush = greetingBrush, fontSize = 44.sp, fontWeight = FontWeight.Black)
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit Name",
-                                    tint = Color(0xFF0A56D1).copy(alpha = 0.7f),
-                                    modifier = Modifier.size(26.dp)
-                                )
-                            }
-                            
-                            // 🛡️ Premium Glassmorphic Personalized Mode Badge with Breathing Status Dot
-                            val dotTransition = rememberInfiniteTransition(label = "WelcomeDotPulse")
-                            val dotAlpha by dotTransition.animateFloat(
-                                initialValue = 0.35f,
-                                targetValue = 1.0f,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(1200, easing = FastOutSlowInEasing),
-                                    repeatMode = RepeatMode.Reverse
-                                ),
-                                label = "DotAlpha"
+                            Text(
+                                text = "Welcome, $userName",
+                                style = TextStyle(brush = greetingBrush, fontSize = 44.sp, fontWeight = FontWeight.Black)
                             )
-
-                            Surface(
-                                shape = RoundedCornerShape(20.dp),
-                                color = Color(0xFF0A56D1).copy(alpha = 0.06f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0A56D1).copy(alpha = 0.15f)),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .clickable {
-                                        newNameInput = userName
-                                        showNamePrompt = true
-                                    }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    // Breathing Green Indicator Dot
-                                    Box(
-                                        modifier = Modifier
-                                            .size(7.dp)
-                                            .graphicsLayer { alpha = dotAlpha }
-                                            .background(Color(0xFF34D399), CircleShape)
-                                    )
-                                    Text(
-                                        text = "SCYPHEON PRIVATE \u2022 SECURE PERSONALIZED MODE ACTIVE",
-                                        style = TextStyle(
-                                            fontSize = 10.5.sp,
-                                            color = Color(0xFF0A56D1),
-                                            fontWeight = FontWeight.Bold,
-                                            letterSpacing = 0.4.sp
-                                        )
-                                    )
-                                }
-                            }
                         }
                     }
                 } else {

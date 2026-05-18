@@ -1593,8 +1593,6 @@ class MainViewModel @Inject constructor(
                 // [v1.4.0-SAR] Reasoning Activation: Inject thinking instruction when enabled
                 if (config.enableThinking) {
                     append("\n\n[REASONING_PROTOCOL]\nSEBELUM menjawab, Anda WAJIB berpikir langkah demi langkah di dalam tag <thought>...</thought>. Tulis proses penalaran Anda di dalam tag tersebut, lalu berikan jawaban final di luar tag. Format:\n<thought>\nAnalisis dan penalaran langkah demi langkah...\n</thought>\nJawaban final Anda di sini.\n[/REASONING_PROTOCOL]")
-                } else {
-                    append("\n\n[REASONING_PROTOCOL]\nJANGAN gunakan tag <thought>...</thought> dan JANGAN melakukan penalaran (reasoning) internal sebelum menjawab. Berikan jawaban langsung secara ringkas, jelas, dan lugas tanpa bertele-tele.\n[/REASONING_PROTOCOL]")
                 }
             }
             
