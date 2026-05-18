@@ -10,6 +10,10 @@ import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorResult
 import com.scypheon.sdk.core.memory.DualMemoryManager
 import timber.log.Timber
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Humanitarian Accessibility Bridge for the Visually Impaired.
@@ -23,6 +27,7 @@ class VisualGuide(
 
     private var objectDetector: ObjectDetector? = null
     private var tts: TextToSpeech? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Prevent spamming the same objects every frame
     private var lastSpokenTime = 0L
@@ -85,11 +90,13 @@ class VisualGuide(
 
                 // 🧠 EPISODIC MEMORY: Save this physical vision snapshot into the RAG database.
                 // This allows the user to ask later: "Where did I last see my keys?" or "Was there a chair in the last room?"
-                memoryManager?.saveMessage(
-                    sessionId = "episodic_memory",
-                    text = "[VISUAL_MEMORY] At ${java.util.Date()}: I saw ${objectNames.joinToString(", ")}",
-                    isUser = false
-                )
+                scope.launch {
+                    memoryManager?.saveMessage(
+                        sessionId = "episodic_memory",
+                        text = "[VISUAL_MEMORY] At ${java.util.Date()}: I saw ${objectNames.joinToString(", ")}",
+                        isUser = false
+                    )
+                }
 
                 lastSpokenTime = currentTime
             }

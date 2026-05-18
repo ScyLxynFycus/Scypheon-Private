@@ -11,7 +11,7 @@ import android.database.sqlite.SQLiteOpenHelper
 class ScypheonDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     companion object {
-        private const val DATABASE_VERSION = 3
+        private const val DATABASE_VERSION = 4
         private const val DATABASE_NAME = "ScypheonCore.db"
 
         // Tables
@@ -76,10 +76,9 @@ class ScypheonDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
         """)
 
         db.execSQL("""
-            CREATE TRIGGER messages_au AFTER UPDATE ON $TABLE_MESSAGES
+            CREATE TRIGGER messages_au AFTER UPDATE OF text ON $TABLE_MESSAGES
             BEGIN
-                INSERT INTO ${TABLE_MESSAGES}_fts(${TABLE_MESSAGES}_fts, rowid, text) VALUES ('delete', old.id, old.text);
-                INSERT INTO ${TABLE_MESSAGES}_fts(rowid, text) VALUES (new.id, new.text);
+                UPDATE ${TABLE_MESSAGES}_fts SET text = new.text WHERE rowid = old.id;
             END;
         """)
 
@@ -100,8 +99,8 @@ class ScypheonDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
         if (!db.isReadOnly) {
             // Enable WAL for concurrency and PRAGMA foreign_keys for integrity
             db.execSQL("PRAGMA foreign_keys=ON;")
-            db.execSQL("PRAGMA journal_mode=WAL;")
-            db.execSQL("PRAGMA synchronous=NORMAL;")
+            db.enableWriteAheadLogging()
+            db.rawQuery("PRAGMA synchronous=NORMAL;", null).close()
             
             // FTS Recovery Protocol: Detect and rebuild corrupted FTS index without data loss
             db.rawQuery("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='${TABLE_MESSAGES}_fts'", null).use { cursor ->
@@ -128,10 +127,15 @@ class ScypheonDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
         // Log the upgrade for diagnostics
         android.util.Log.w("ScypheonDb", "Upgrading database from version $oldVersion to $newVersion")
         
-        if (oldVersion < 3) {
-            // Incremental migration for v3
-            // In a real prod scenario, use ALTER TABLE or temporary tables.
-            // For now, if migrations are missing, we log a warning instead of dropping data.
+        if (oldVersion < 4) {
+            // Fix: Trigger update to prevent SQL logic error on BLOB update
+            db.execSQL("DROP TRIGGER IF EXISTS messages_au")
+            db.execSQL("""
+                CREATE TRIGGER messages_au AFTER UPDATE OF text ON $TABLE_MESSAGES
+                BEGIN
+                    UPDATE ${TABLE_MESSAGES}_fts SET text = new.text WHERE rowid = old.id;
+                END;
+            """)
         }
     }
 }

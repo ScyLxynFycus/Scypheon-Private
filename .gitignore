@@ -34,4 +34,29 @@ gradle-app.setting
 # Exclude Binaries over 100MB
 *.exe
 *.obj
-app/src/main/assets/.shm/
+*.bin
+**/.shm/
+scypheon_private/app/src/main/assets/.shm/
+
+# Exclude other projects
+/VITREON/
+/VITREON_BACKUP_AGENTIC/
+/scypheon-desktop/
+/llama.cpp/
+/Scypheon-Public/
+/ai_engine/
+/brain/
+/Archive/
+/.venv/
+/temp_build_vul_gen/
+/temp_ui/
+/phase2_validation/
+/deployement/
+/kaggle_submission/
+/legacy/
+
+# Exclude root specific script and JSON files
+/*.json
+/*.py
+/*.bat
+/*.ps1

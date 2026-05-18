@@ -2,6 +2,7 @@ package com.scypheon.sdk.core.provision
 
 import android.app.DownloadManager
 import android.content.Context
+import android.database.Cursor
 import android.net.Uri
 import android.os.Environment
 import android.os.StatFs
@@ -13,8 +14,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * ModelProvisioner handles the lifecycle of AI models on the device,
- * including storage capacity checks and gated downloads from Hugging Face.
+ * ModelProvisioner handles the lifecycle of AI models on the device.
+ * 
+ * [v1.5.2-SAR] Supports both public and gated HuggingFace downloads
+ * with real-time progress tracking via Android DownloadManager.
+ * 
+ * Download location: getExternalFilesDir(Downloads)
+ * This is automatically scanned by MainViewModel.scanLocalModels()
  */
 @Singleton
 class ModelProvisioner @Inject constructor(
@@ -22,6 +28,9 @@ class ModelProvisioner @Inject constructor(
     private val vault: AegisVault
 ) {
     private val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+
+    // Track active download IDs mapped to model filenames
+    private val activeDownloads = mutableMapOf<String, Long>()
 
     /**
      * Checks if the device has enough free space for the model.
@@ -36,31 +45,134 @@ class ModelProvisioner @Inject constructor(
     }
 
     /**
-     * Triggers a download for a gated Hugging Face model.
-     * Requires the HF_TOKEN to be set in AegisVault.
+     * Downloads a model from HuggingFace.
+     * Works for both public and gated (token-required) models.
+     * 
+     * @return Download ID from DownloadManager, or -1 on failure
      */
-    fun downloadGatedModel(modelUrl: String, fileName: String, sizeEstimateBytes: Long): Long {
-        if (!hasSufficientSpace(sizeEstimateBytes)) {
-            Timber.e("Insufficient storage to download model: $fileName")
+    fun downloadModel(model: ModelMetadata): Long {
+        if (!hasSufficientSpace(model.sizeBytes)) {
+            Timber.e("📦 [PROVISION] Insufficient storage for ${model.fileName} (need ${model.sizeBytes / 1_000_000} MB)")
             return -1L
         }
 
-        val token = vault.getHfToken()
-        if (token == null) {
-            Timber.e("HF_TOKEN missing from AegisVault. Cannot download gated model.")
+        // Check if already downloading
+        if (activeDownloads.containsKey(model.fileName)) {
+            Timber.w("📦 [PROVISION] ${model.fileName} is already downloading")
+            return activeDownloads[model.fileName]!!
+        }
+
+        // Check if already exists
+        if (isModelOnDisk(model.fileName)) {
+            Timber.w("📦 [PROVISION] ${model.fileName} already exists on disk")
             return -1L
         }
 
-        val request = DownloadManager.Request(Uri.parse(modelUrl))
-            .setTitle("Downloading Scypheon Model: $fileName")
-            .setDescription("Gemma 4 Elite Pro Model Data")
-            .addRequestHeader("Authorization", "Bearer $token")
+        val request = DownloadManager.Request(Uri.parse(model.downloadUrl))
+            .setTitle("Downloading: ${model.title}")
+            .setDescription("${model.provider} · ${model.quantization} · ${formatSize(model.sizeBytes)}")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, fileName)
+            .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, model.fileName)
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(false)
 
-        return downloadManager.enqueue(request)
+        // Only add auth header for gated models
+        if (model.isGated) {
+            val token = vault.getHfToken()
+            if (token.isNullOrBlank()) {
+                Timber.e("📦 [PROVISION] HF token required for gated model: ${model.fileName}")
+                return -1L
+            }
+            request.addRequestHeader("Authorization", "Bearer $token")
+        }
+
+        val downloadId = downloadManager.enqueue(request)
+        activeDownloads[model.fileName] = downloadId
+        Timber.i("📦 [PROVISION] Started download #$downloadId: ${model.title} from ${model.provider}")
+
+        return downloadId
+    }
+
+    /**
+     * Legacy method for backward compatibility.
+     */
+    fun downloadGatedModel(modelUrl: String, fileName: String, sizeEstimateBytes: Long): Long {
+        val legacyModel = ModelMetadata(
+            id = fileName,
+            title = fileName,
+            description = "",
+            sizeBytes = sizeEstimateBytes,
+            quantization = "unknown",
+            downloadUrl = modelUrl,
+            fileName = fileName,
+            engineType = if (fileName.endsWith(".gguf")) EngineType.LLAMA_CPP else EngineType.LITE_RT,
+            isGated = true // Legacy behavior: assume gated
+        )
+        return downloadModel(legacyModel)
+    }
+
+    /**
+     * Query real-time download progress.
+     * @return DownloadProgress with bytesDownloaded, totalBytes, and percentage
+     */
+    fun getDownloadProgress(downloadId: Long): DownloadProgress {
+        val query = DownloadManager.Query().setFilterById(downloadId)
+        val cursor = downloadManager.query(query)
+
+        if (cursor != null && cursor.moveToFirst()) {
+            try {
+                val bytesDownloaded = cursor.getLongSafe(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                val totalBytes = cursor.getLongSafe(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                val status = cursor.getIntSafe(DownloadManager.COLUMN_STATUS)
+                val reason = cursor.getIntSafe(DownloadManager.COLUMN_REASON)
+
+                val percentage = if (totalBytes > 0) {
+                    (bytesDownloaded.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                } else 0f
+
+                return DownloadProgress(
+                    bytesDownloaded = bytesDownloaded,
+                    totalBytes = totalBytes,
+                    percentage = percentage,
+                    status = status,
+                    reason = reason
+                )
+            } finally {
+                cursor.close()
+            }
+        }
+        cursor?.close()
+        return DownloadProgress(0, 0, 0f, -1, 0)
+    }
+
+    /**
+     * Get download progress for a model by filename.
+     */
+    fun getProgressForModel(fileName: String): DownloadProgress? {
+        val downloadId = activeDownloads[fileName] ?: return null
+        return getDownloadProgress(downloadId)
+    }
+
+    /**
+     * Check if a model is actively being downloaded.
+     */
+    fun isDownloading(fileName: String): Boolean {
+        val downloadId = activeDownloads[fileName] ?: return false
+        val progress = getDownloadProgress(downloadId)
+        val isActive = progress.status == DownloadManager.STATUS_RUNNING || progress.status == DownloadManager.STATUS_PENDING
+
+        // Clean up completed/failed downloads
+        if (!isActive) {
+            activeDownloads.remove(fileName)
+        }
+        return isActive
+    }
+
+    /**
+     * Clear tracking for a completed download.
+     */
+    fun clearDownload(fileName: String) {
+        activeDownloads.remove(fileName)
     }
 
     /**
@@ -81,13 +193,17 @@ class ModelProvisioner @Inject constructor(
      * Deletes a model file from disk.
      */
     fun deleteModel(fileName: String): Boolean {
+        activeDownloads.remove(fileName)
         val file = getModelPath(fileName)
-        return if (file.exists()) file.delete() else false
+        return if (file.exists()) {
+            val deleted = file.delete()
+            if (deleted) Timber.i("📦 [PROVISION] Deleted: $fileName")
+            deleted
+        } else false
     }
 
     /**
      * Queries the status of a download ID from DownloadManager.
-     * Returns: DownloadManager.STATUS_SUCCESSFUL, STATUS_RUNNING, etc. or -1 if not found.
      */
     fun getDownloadStatus(downloadId: Long): Int {
         val query = DownloadManager.Query().setFilterById(downloadId)
@@ -110,6 +226,51 @@ class ModelProvisioner @Inject constructor(
             EngineType.LITE_RT
         } else {
             EngineType.LLAMA_CPP
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Helpers
+    // ═══════════════════════════════════════════════════════════════
+
+    private fun formatSize(bytes: Long): String {
+        val gb = bytes / 1_000_000_000.0
+        return if (gb >= 1) "%.1f GB".format(gb) else "%.0f MB".format(bytes / 1_000_000.0)
+    }
+
+    private fun Cursor.getLongSafe(column: String): Long {
+        val idx = getColumnIndex(column)
+        return if (idx >= 0) getLong(idx) else 0L
+    }
+
+    private fun Cursor.getIntSafe(column: String): Int {
+        val idx = getColumnIndex(column)
+        return if (idx >= 0) getInt(idx) else -1
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Data Classes
+    // ═══════════════════════════════════════════════════════════════
+
+    data class DownloadProgress(
+        val bytesDownloaded: Long,
+        val totalBytes: Long,
+        val percentage: Float,   // 0.0 to 1.0
+        val status: Int,         // DownloadManager.STATUS_*
+        val reason: Int          // DownloadManager.ERROR_* or PAUSED_*
+    ) {
+        val isComplete: Boolean get() = status == DownloadManager.STATUS_SUCCESSFUL
+        val isFailed: Boolean get() = status == DownloadManager.STATUS_FAILED
+        val isRunning: Boolean get() = status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING
+
+        fun formatDownloaded(): String {
+            val mb = bytesDownloaded / 1_000_000.0
+            return if (mb >= 1000) "%.1f GB".format(mb / 1000.0) else "%.0f MB".format(mb)
+        }
+
+        fun formatTotal(): String {
+            val mb = totalBytes / 1_000_000.0
+            return if (mb >= 1000) "%.1f GB".format(mb / 1000.0) else "%.0f MB".format(mb)
         }
     }
 }

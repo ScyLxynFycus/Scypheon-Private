@@ -17,11 +17,33 @@ import com.scypheon.sdk.core.model.ScypheonConfig
 class AegisVault @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
+    private val isMainProcess by lazy {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val myPid = android.os.Process.myPid()
+        activityManager.runningAppProcesses?.any { it.pid == myPid && !it.processName.contains(":") } ?: true
+    }
 
-    private val sharedPrefs = EncryptedSharedPreferences.create(
+    private val masterKey by lazy {
+        if (!isMainProcess) {
+            timber.log.Timber.w("AegisVault: Access attempted from non-main process. Redirecting to Sandbox Protocol.")
+        }
+        MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+    }
+
+    private val sharedPrefs by lazy {
+        try {
+            createSharedPrefs()
+        } catch (e: Exception) {
+            timber.log.Timber.e(e, "AegisVault: EncryptedSharedPreferences initialization failed. Purging corrupted vault.")
+            // The nuclear option: delete the file and start fresh
+            context.deleteSharedPreferences(VAULT_NAME)
+            createSharedPrefs()
+        }
+    }
+
+    private fun createSharedPrefs() = EncryptedSharedPreferences.create(
         context,
         VAULT_NAME,
         masterKey,
@@ -86,6 +108,7 @@ class AegisVault @Inject constructor(
             putFloat(KEY_TEMP, config.temperature)
             putInt(KEY_BACKEND, config.selectedBackendMode)
             putBoolean(KEY_THINKING, config.enableThinking)
+            putBoolean(KEY_ONLINE_SEARCH, config.enableOnlineSearch)
         }.apply()
     }
 
@@ -100,7 +123,8 @@ class AegisVault @Inject constructor(
             topP = sharedPrefs.getFloat(KEY_TOP_P, 0.95f),
             temperature = sharedPrefs.getFloat(KEY_TEMP, 0.8f),
             selectedBackendMode = sharedPrefs.getInt(KEY_BACKEND, 0),
-            enableThinking = sharedPrefs.getBoolean(KEY_THINKING, true)
+            enableThinking = sharedPrefs.getBoolean(KEY_THINKING, true),
+            enableOnlineSearch = sharedPrefs.getBoolean(KEY_ONLINE_SEARCH, true)
         )
     }
 
@@ -125,5 +149,6 @@ class AegisVault @Inject constructor(
         private const val KEY_TEMP = "cfg_temp"
         private const val KEY_BACKEND = "cfg_backend"
         private const val KEY_THINKING = "cfg_thinking"
+        private const val KEY_ONLINE_SEARCH = "cfg_online_search"
     }
 }

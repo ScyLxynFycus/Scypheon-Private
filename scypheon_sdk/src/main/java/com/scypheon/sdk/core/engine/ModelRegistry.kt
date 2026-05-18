@@ -53,12 +53,18 @@ class ModelRegistry @Inject constructor(
     private fun scanModelsDirectory(): List<ModelCandidate> {
         val modelList = mutableListOf<ModelCandidate>()
         val dir = File(context.filesDir, "models")
-        if (dir.exists()) {
-            dir.listFiles { f -> f.extension == "gguf" }?.forEach { file ->
-                val parts = file.name.lowercase().split("-", "_", ".")
-                val quant = parts.find { it.startsWith("q") } ?: "unknown"
-                val arch = parts.find { it in listOf("gemma", "llama", "phi") } ?: "unknown"
-                modelList.add(ModelCandidate(file.absolutePath, file.name, file.length() / 1048576, quant, arch))
+        if (dir.exists() && dir.isDirectory) {
+            try {
+                dir.listFiles()?.forEach { file ->
+                    if (file.name.endsWith(".gguf")) {
+                        val parts = file.name.lowercase().split("-", "_", ".")
+                        val quant = parts.find { it.startsWith("q") } ?: "unknown"
+                        val arch = parts.find { it in listOf("gemma", "llama", "phi") } ?: "unknown"
+                        modelList.add(ModelCandidate(file.absolutePath, file.name, file.length() / 1048576, quant, arch))
+                    }
+                }
+            } catch (e: Exception) {
+                // Log failure
             }
         }
         return modelList.sortedByDescending { it.sizeMb }

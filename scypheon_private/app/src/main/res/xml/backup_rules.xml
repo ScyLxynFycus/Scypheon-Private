@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="database" path="scypheon_secure.db"/>
+    <exclude domain="database" path="scypheon_secure.db-wal"/>
+    <exclude domain="database" path="scypheon_secure.db-shm"/>
+    <exclude domain="sharedpref" path="hardware_prefs.xml"/>
+    <exclude domain="file" path="models/"/>
+</full-backup-content>

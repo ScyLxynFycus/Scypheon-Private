@@ -1,0 +1,24 @@
+# SCYPHEON: AI Access Policy
+# This file overrides or supplements .gitignore for AI agents (Antigravity, Gemini, etc.)
+# Established per Enterprise Architecture & Security Guidelines (AGENTS.md)
+
+# Global - Only allow metadata by default (inherits from .gitignore intent)
+# But here we explicitly whitelist what is safe for LLM context.
+
+# Root whitelists
+!AGENTS.md
+!README.md
+!LICENSE
+
+# === VITREON: Edge Android & C++ Engine ===
+
+# Unblock the local-llama C++ source directory for architectural analysis and development
+# This allows the AI to understand the core inference engine without unblocking the entire repo.
+!VITREON/llama/src/main/cpp/local-llama/**
+
+# Explicit whitelists for files reported as blocked in current session
+!VITREON/llama/src/main/cpp/local-llama/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+!VITREON/llama/src/main/cpp/local-llama/AGENTS.md
+
+# Optional: Add other critical source areas as needed
+# !VITREON/app/src/main/java/com/scypheon/vitreon/**

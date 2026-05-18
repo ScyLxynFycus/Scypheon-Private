@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.reduce
 import kotlinx.coroutines.launch
+import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 import java.util.Locale
 
@@ -24,7 +25,7 @@ import java.util.Locale
  * and extracts significant biographical facts into the SQLite Vector DB (RAG) to remember them forever.
  */
 class ReminiscenceCompanion(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
     private val gateway: NeuralGateway,
     private val memoryManager: DualMemoryManager,
     private val onMessageGenerated: (String) -> Unit
@@ -118,7 +119,7 @@ class ReminiscenceCompanion(
 
         scope.launch {
             // 1. Retrieve any past context about them using vector search
-            val historicalContext = memoryManager.searchSimilarMemories(story, 2).joinToString(" ")
+            val historicalContext = memoryManager.searchSimilarMemories(story, limit = 2).joinToString(" ")
             
             val prompt = """
                 You are a patient, warm, and highly empathetic companion for an elderly person undergoing reminiscence therapy.

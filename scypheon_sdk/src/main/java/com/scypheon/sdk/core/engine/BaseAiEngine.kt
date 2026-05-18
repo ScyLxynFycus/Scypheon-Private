@@ -29,7 +29,8 @@ interface BaseAiEngine {
         topK: Int = 51,
         topP: Float = 0.95f,
         temp: Float = 0.8f,
-        maxTokens: Int = 1024
+        maxTokens: Int = 1024,
+        enableThinking: Boolean = true
     ): Flow<String>
 
     /**

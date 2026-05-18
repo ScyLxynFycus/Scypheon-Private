@@ -1,18 +1,22 @@
-﻿package com.scypheon.sdk.core.memory
+package com.scypheon.sdk.core.memory
 
 import android.content.Context
 import com.scypheon.sdk.core.engine.SandboxLlamaEngine
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import timber.log.Timber
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Enterprise Vector Engine Router.
  * Implements the "Exclusive Memory" policy (AGENTS.md Section 3).
  * Swaps between LiteRT and Sandbox engines based on the active model LLM.
  */
-class VectorEngineRouter(
-    private val context: Context,
+@Singleton
+class VectorEngineRouter @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val liteRtEngine: LiteRtVectorEngine,
     private val sandboxLlamaEngine: SandboxLlamaEngine
 ) : IVectorEngine {

@@ -1,0 +1,259 @@
+{
+    "version": "1.0.0",
+    "lastUpdated": "2024-12-10",
+    "note": "Barcode data untuk obat-obatan Indonesia. User dapat menambahkan barcode baru via crowdsourcing.",
+    "barcodes": {
+        "8991001111111": {
+            "drugId": "paracetamol",
+            "brand": "Panadol Extra",
+            "strength": "500mg"
+        },
+        "8991001111128": {
+            "drugId": "paracetamol",
+            "brand": "Panadol Anak",
+            "strength": "250mg"
+        },
+        "8992222001234": {
+            "drugId": "paracetamol",
+            "brand": "Sanmol",
+            "strength": "500mg"
+        },
+        "8992222001241": {
+            "drugId": "paracetamol",
+            "brand": "Sanmol Syrup",
+            "strength": "120mg/5ml"
+        },
+        "8991001222222": {
+            "drugId": "paracetamol",
+            "brand": "Tempra",
+            "strength": "500mg"
+        },
+        "8991001333333": {
+            "drugId": "paracetamol",
+            "brand": "Bodrexin",
+            "strength": "500mg"
+        },
+        "8991002111111": {
+            "drugId": "ibuprofen",
+            "brand": "Proris",
+            "strength": "200mg"
+        },
+        "8991002111128": {
+            "drugId": "ibuprofen",
+            "brand": "Proris Forte",
+            "strength": "400mg"
+        },
+        "8991002222222": {
+            "drugId": "ibuprofen",
+            "brand": "Bufect",
+            "strength": "200mg"
+        },
+        "8991003111111": {
+            "drugId": "amoxicillin",
+            "brand": "Amoxsan",
+            "strength": "500mg"
+        },
+        "8991003111128": {
+            "drugId": "amoxicillin",
+            "brand": "Amoxsan Syrup",
+            "strength": "125mg/5ml"
+        },
+        "8991003222222": {
+            "drugId": "amoxicillin",
+            "brand": "Kalmoxillin",
+            "strength": "500mg"
+        },
+        "8991004111111": {
+            "drugId": "ctm",
+            "brand": "CTM",
+            "strength": "4mg"
+        },
+        "8991004222222": {
+            "drugId": "chlorpheniramine",
+            "brand": "Pehachlor",
+            "strength": "4mg"
+        },
+        "8991005111111": {
+            "drugId": "cetirizine",
+            "brand": "Incidal OD",
+            "strength": "10mg"
+        },
+        "8991005222222": {
+            "drugId": "cetirizine",
+            "brand": "Ryzen",
+            "strength": "10mg"
+        },
+        "8991005333333": {
+            "drugId": "cetirizine",
+            "brand": "Falergi",
+            "strength": "10mg"
+        },
+        "8991006111111": {
+            "drugId": "loratadine",
+            "brand": "Claritin",
+            "strength": "10mg"
+        },
+        "8991006222222": {
+            "drugId": "loratadine",
+            "brand": "Alloris",
+            "strength": "10mg"
+        },
+        "8991007111111": {
+            "drugId": "omeprazole",
+            "brand": "Prilosec",
+            "strength": "20mg"
+        },
+        "8991007222222": {
+            "drugId": "omeprazole",
+            "brand": "Ozid",
+            "strength": "20mg"
+        },
+        "8991008111111": {
+            "drugId": "lansoprazole",
+            "brand": "Lanzol",
+            "strength": "30mg"
+        },
+        "8991008222222": {
+            "drugId": "lansoprazole",
+            "brand": "Digest",
+            "strength": "30mg"
+        },
+        "8991009111111": {
+            "drugId": "metformin",
+            "brand": "Glucophage",
+            "strength": "500mg"
+        },
+        "8991009111128": {
+            "drugId": "metformin",
+            "brand": "Glucophage XR",
+            "strength": "500mg"
+        },
+        "8991009222222": {
+            "drugId": "metformin",
+            "brand": "Diabex",
+            "strength": "500mg"
+        },
+        "8991010111111": {
+            "drugId": "amlodipine",
+            "brand": "Norvasc",
+            "strength": "5mg"
+        },
+        "8991010111128": {
+            "drugId": "amlodipine",
+            "brand": "Norvasc",
+            "strength": "10mg"
+        },
+        "8991010222222": {
+            "drugId": "amlodipine",
+            "brand": "Tensivask",
+            "strength": "5mg"
+        },
+        "8991011111111": {
+            "drugId": "salbutamol",
+            "brand": "Ventolin Inhaler",
+            "strength": "100mcg"
+        },
+        "8991011222222": {
+            "drugId": "salbutamol",
+            "brand": "Ventolin Nebules",
+            "strength": "2.5mg/2.5ml"
+        },
+        "8991012111111": {
+            "drugId": "ambroxol",
+            "brand": "Mucosolvan",
+            "strength": "30mg"
+        },
+        "8991012222222": {
+            "drugId": "ambroxol",
+            "brand": "Mucera",
+            "strength": "30mg"
+        },
+        "8991013111111": {
+            "drugId": "dextromethorphan",
+            "brand": "Dextral",
+            "strength": "15mg"
+        },
+        "8991013222222": {
+            "drugId": "dextromethorphan",
+            "brand": "Siladex",
+            "strength": "15mg"
+        },
+        "8991014111111": {
+            "drugId": "domperidone",
+            "brand": "Motilium",
+            "strength": "10mg"
+        },
+        "8991014222222": {
+            "drugId": "domperidone",
+            "brand": "Vometa",
+            "strength": "10mg"
+        },
+        "8991015111111": {
+            "drugId": "loperamide",
+            "brand": "Imodium",
+            "strength": "2mg"
+        },
+        "8991015222222": {
+            "drugId": "loperamide",
+            "brand": "Diatabs",
+            "strength": "2mg"
+        },
+        "8991016111111": {
+            "drugId": "antimo",
+            "brand": "Antimo",
+            "strength": "50mg"
+        },
+        "8991016222222": {
+            "drugId": "antimo",
+            "brand": "Antimo Anak",
+            "strength": "25mg"
+        },
+        "8991017111111": {
+            "drugId": "vitamin_c",
+            "brand": "Vitacimin",
+            "strength": "500mg"
+        },
+        "8991017222222": {
+            "drugId": "vitamin_c",
+            "brand": "Redoxon",
+            "strength": "1000mg"
+        },
+        "8991017333333": {
+            "drugId": "vitamin_c",
+            "brand": "You C 1000",
+            "strength": "1000mg"
+        },
+        "8991018111111": {
+            "drugId": "oralit",
+            "brand": "Oralit",
+            "strength": "200ml"
+        },
+        "8991018222222": {
+            "drugId": "oralit",
+            "brand": "Pedialyte",
+            "strength": "500ml"
+        },
+        "8991019111111": {
+            "drugId": "betadine",
+            "brand": "Betadine",
+            "strength": "10%"
+        },
+        "8991019222222": {
+            "drugId": "betadine",
+            "brand": "Betadine Gargle",
+            "strength": "1%"
+        },
+        "8991020111111": {
+            "drugId": "obhcombi",
+            "brand": "OBH Combi",
+            "strength": "100ml"
+        },
+        "8991020222222": {
+            "drugId": "obhcombi",
+            "brand": "OBH Combi Anak",
+            "strength": "60ml"
+        }
+    },
+    "crowdsourcingEnabled": true,
+    "crowdsourcingEndpoint": "/api/v1/barcode/submit"
+}

@@ -194,8 +194,18 @@ object AssetExtractor {
         for (dir in downloadPaths) {
             if (!dir.exists() || !dir.isDirectory) continue
             
-            val files = dir.listFiles() ?: continue
-            val matchedFile = files.find { it.name.equals(filename, ignoreCase = true) } ?: continue
+            var matchedFile: File? = null
+            try {
+                dir.listFiles()?.forEach { file ->
+                    if (file.name.equals(filename, ignoreCase = true)) {
+                        matchedFile = file
+                        return@forEach
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "🚨 [SBI] Directory scan migration failed")
+            }
+            if (matchedFile == null) continue
             
             val fileSize = matchedFile.length()
             Timber.i("🎯 [SBI] Found candidate at ${dir.name}: ${matchedFile.name} (${fileSize / 1024 / 1024} MB)")
@@ -274,7 +284,8 @@ object AssetExtractor {
      * Dynamically discovers the best available models across internal and external storage.
      * Prioritizes largest file size if multiple candidates exist.
      */
-    fun discoverModels(context: Context): ModelRegistry {
+    fun discoverModels(context: Context): ModelRegistry = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+        val startTime = System.currentTimeMillis()
         val allVisibleFiles = mutableSetOf<String>()
         
         // 1. Scan Assets (Public & Stealth)
@@ -286,6 +297,8 @@ object AssetExtractor {
             context.noBackupFilesDir,
             File(context.noBackupFilesDir, MODELS_DIR),
             File(context.filesDir, ".shm"),
+            context.getExternalFilesDir(null),
+            context.getExternalFilesDir(null)?.let { File(it, MODELS_DIR) },
             context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
             File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "VITREON"),
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -293,7 +306,13 @@ object AssetExtractor {
         
         for (dir in scanPaths) {
             if (dir.exists() && dir.isDirectory) {
-                dir.list()?.let { allVisibleFiles.addAll(it) }
+                try {
+                    dir.listFiles()?.forEach { file ->
+                        allVisibleFiles.add(file.name)
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "🚨 [SBI] Directory scan discovery failed")
+                }
             }
         }
 
@@ -352,8 +371,9 @@ object AssetExtractor {
             }
         }
 
-        Timber.i("🛰️ [SBI] Dynamic Discovery: Elite=$elite, Universal=$universal, Memory=$memory, Face=$face, Pose=$pose")
-        return ModelRegistry(elite, universal, memory, face, pose, segment, depth, whisper)
+        val duration = System.currentTimeMillis() - startTime
+        Timber.i("🛰️ [SBI] Dynamic Discovery ($duration ms): Elite=$elite, Universal=$universal, Memory=$memory, Face=$face, Pose=$pose")
+        ModelRegistry(elite, universal, memory, face, pose, segment, depth, whisper)
     }
 
     private fun getApproximateSize(context: Context, filename: String): Long {
@@ -404,7 +424,18 @@ object AssetExtractor {
         val modelsDir = File(context.noBackupFilesDir, MODELS_DIR)
         if (!modelsDir.exists()) return
         
-        val staleFiles = modelsDir.listFiles { _, name -> name.endsWith(".tmp") } ?: return
+        val staleFiles = mutableListOf<File>()
+        try {
+            modelsDir.listFiles()?.forEach { file ->
+                if (file.name.endsWith(".tmp")) {
+                    staleFiles.add(file)
+                }
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "🚨 [SBI] Directory scan cleanup failed")
+            return
+        }
+        
         for (file in staleFiles) {
             Timber.w("🧹 [SBI] Cleaning up stale artifact: ${file.name} (${file.length()} bytes)")
             file.delete()

@@ -5,43 +5,42 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.SharedMemory
+import android.os.ParcelFileDescriptor
+import android.os.DeadObjectException
+import android.os.RemoteException
 import com.scypheon.sdk.core.model.ScypheonBackendDiagnostic
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 import com.scypheon.sdk.core.sandbox.IScypheonSandbox
+import com.scypheon.sdk.core.sandbox.ISandboxStatusCallback
 import com.scypheon.sdk.core.sandbox.IInferenceCallback
 import dagger.hilt.android.qualifiers.ApplicationContext
-import com.scypheon.sdk.core.sandbox.ISandboxStatusCallback
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.time.Duration.Companion.seconds
-import java.util.concurrent.atomic.AtomicReference
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.callbackFlow
+import com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
+import com.scypheon.sdk.core.resilience.CircuitBreakerOpenException
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
-import kotlinx.coroutines.flow.cancellable
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.TimeoutCancellationException
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.time.Duration.Companion.seconds
 
 /**
- * SandboxLlamaEngine is a proxy that delegates all AI operations 
- * to the :sandbox process via AIDL.
- * SAR Refinement: Now supports oneway asynchronous communication with timeouts.
+ * SandboxLlamaEngine: The Hardened Solaris AI Client Proxy.
+ * [SAR PHASE 2/3] Orchestrates zero-copy IPC and granular telemetry collection.
+ * 
+ * NOTE: Restored all original methods (FD, Session, Tensor, etc.) with IPC hardening.
  */
 @Singleton
 class SandboxLlamaEngine @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val keyManager: com.scypheon.sdk.core.security.DatabaseKeyManager,
+    private val clinicalValidator: com.scypheon.sdk.core.humanitarian.medical.ClinicalValidator,
+    private val circuitBreaker: ResilienceCircuitBreaker
 ) : BaseAiEngine {
 
     override val engineId: String = "llama_sandbox"
@@ -64,29 +63,31 @@ class SandboxLlamaEngine @Inject constructor(
     }
 
     private val sandboxRef = AtomicReference<IScypheonSandbox?>(null)
-    private val isBound = AtomicReference(false)
+    private val isBound = java.util.concurrent.atomic.AtomicBoolean(false)
     
-    private val _processHealth = kotlinx.coroutines.flow.MutableStateFlow(true)
+    private val _processHealth = MutableStateFlow(true)
     val processHealth = _processHealth.asStateFlow()
 
-    private val _initializationState = kotlinx.coroutines.flow.MutableStateFlow<InitializationState>(InitializationState.Idle)
+    private val _initializationState = MutableStateFlow<InitializationState>(InitializationState.Idle)
     val initializationState = _initializationState.asStateFlow()
 
-    private val _hardwareStatus = kotlinx.coroutines.flow.MutableStateFlow("Isolated [Wait]")
+    private val _hardwareStatus = MutableStateFlow("Isolated [Wait]")
     val hardwareStatusFlow = _hardwareStatus.asStateFlow()
 
     private val reconnectCount = AtomicInteger(0)
     private val MAX_RECONNECTS = 3
 
-    fun isProcessAlive(): Boolean = sandboxRef.get() != null
-
     private val serviceIntent = Intent().setComponent(
         ComponentName(context.packageName, "com.scypheon.app.services.ModelSandboxService")
     )
 
+    // MUTEX / BARRIER UNTUK SERVICE BINDING
+    private val bindDeferred = AtomicReference<CompletableDeferred<Boolean>?>(null)
+    private val pendingLoadDeferred = AtomicReference<CompletableDeferred<Boolean>?>(null)
+    private val pendingProbeDeferred = AtomicReference<CompletableDeferred<Boolean>?>(null)
+
     private val sandboxDeathRecipient = IBinder.DeathRecipient {
         Timber.e(" [PHOENIX] Binder Death Detected. Sandbox process terminated.")
-        _processHealth.value = false
         handleServiceDeath()
     }
 
@@ -96,47 +97,78 @@ class SandboxLlamaEngine @Inject constructor(
             val sandbox = IScypheonSandbox.Stub.asInterface(service)
             sandboxRef.set(sandbox)
             _processHealth.value = true
-            reconnectCount.set(0) // Reset circuit breaker on success
+            reconnectCount.set(0)
             
             try {
                 service?.linkToDeath(sandboxDeathRecipient, 0)
-                sandbox.init(context.filesDir.absolutePath)
+                val dbKey = keyManager.getDatabaseKey()
+                
+                // [v1.0.6-SAR] StrictMode override for service sync
+                val oldPolicy = android.os.StrictMode.allowThreadDiskReads()
+                try {
+                    sandbox.init(context.filesDir.absolutePath, dbKey)
+                } finally {
+                    android.os.StrictMode.setThreadPolicy(oldPolicy)
+                }
+                
+                // Lepaskan barrier: Lanjutkan semua coroutine yang menunggu binding
+                bindDeferred.getAndSet(null)?.complete(true)
             } catch (e: Exception) {
                 Timber.e(e, "Sandbox: Failed to sync initial state or link to death")
+                bindDeferred.getAndSet(null)?.complete(false)
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            _processHealth.value = false
             handleServiceDeath()
         }
     }
 
     private fun handleServiceDeath() {
-        Timber.e(" [SAR] Sandbox process DIED. Triggering emergency unbind.")
+        Timber.e("🚨 [PHOENIX] Sandbox process DIED. Triggering emergency cleanup.")
+        
+        // SAR HARDENING: Immediately inform UI of the failure
+        _processHealth.value = false
+        _initializationState.value = InitializationState.Failed("SANDBOX", "Process Terminated (Hardware/Driver Crash)")
+        _hardwareStatus.value = "Crashed (Check Logs)"
+        
+        // [v1.0.6-SAR] Fail any pending load requests immediately
+        pendingLoadDeferred.getAndSet(null)?.complete(false)
+        // [v1.1.0-SAR] Fail any pending probe requests immediately (don't wait for timeout)
+        pendingProbeDeferred.getAndSet(null)?.complete(false)
+        
         sandboxRef.set(null)
         isBound.set(false)
-        _processHealth.value = false
         lastKnownHardware = "Process Crashed"
+        
+        // Release the barrier if someone is waiting for binding
+        bindDeferred.getAndSet(null)?.complete(false) 
+        
         try {
             context.unbindService(connection)
-        } catch (e: Exception) { /* Ignore */ }
+        } catch (e: Exception) {
+            // Ignore if already unbound
+        }
+        
+        Timber.w("🛡️ [PHOENIX] Cleanup complete. System ready for re-initialization.")
     }
 
     private suspend fun ensureServiceBound(): Boolean {
         if (sandboxRef.get() != null) return true
         
-        return suspendCancellableCoroutine { continuation ->
+        val newDeferred = CompletableDeferred<Boolean>()
+        if (bindDeferred.compareAndSet(null, newDeferred)) {
             try {
                 val bindSuccess = context.bindService(serviceIntent, connection, Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT)
                 if (!bindSuccess) {
-                    Timber.e("Sandbox: Failed to bind to ModelSandboxService")
-                    continuation.resume(false)
-                } else {
-                    isBound.set(true)
-                    // Polling hardware status immediately after bind
-                    val sandbox = sandboxRef.get()
-                    if (sandbox != null) {
+                    newDeferred.complete(false)
+                    bindDeferred.set(null)
+                    return false
+                }
+                isBound.set(true)
+                val success = newDeferred.await()
+                if (success) {
+                    sandboxRef.get()?.let { sandbox ->
                         try {
                             val statusCallback = object : ISandboxStatusCallback.Stub() {
                                 override fun onInitializationProgress(progress: Float) {}
@@ -152,12 +184,15 @@ class SandboxLlamaEngine @Inject constructor(
                             sandbox.getHardwareStatus(statusCallback)
                         } catch (e: Exception) { Timber.e(e, "Pre-poll fail") }
                     }
-                    continuation.resume(true) 
                 }
+                return success
             } catch (e: Exception) {
-                Timber.e(e, "Sandbox: Error during bindService")
-                continuation.resume(false)
+                newDeferred.complete(false)
+                bindDeferred.set(null)
+                return false
             }
+        } else {
+            return bindDeferred.get()?.await() ?: (sandboxRef.get() != null)
         }
     }
 
@@ -165,22 +200,8 @@ class SandboxLlamaEngine @Inject constructor(
         return loadWithMode(modelPath, selectedBackendMode, nCtx)
     }
 
-    /**
-     * Specifically used by the triage loop to force a backend mode in the sandbox.
-     */
-    /**
-     * SAR PHASE 3: Zero-Latency Handoff
-     * Direct attachment to SharedMemory tensors.
-     */
-    suspend fun loadFromFd(pfd: android.os.ParcelFileDescriptor, offset: Long, size: Long, mode: Int): Boolean {
+    suspend fun loadFromFd(pfd: ParcelFileDescriptor, offset: Long, size: Long, mode: Int, nCtx: Int = 4096): Boolean {
         if (!ensureServiceBound()) return false
-        
-        var bindWaitAttempts = 0
-        while (sandboxRef.get() == null && bindWaitAttempts < 30) {
-            kotlinx.coroutines.delay(100)
-            bindWaitAttempts++
-        }
-        
         val sandbox = sandboxRef.get() ?: return false
         val deferred = CompletableDeferred<Boolean>()
         
@@ -198,13 +219,8 @@ class SandboxLlamaEngine @Inject constructor(
 
         return try {
             _initializationState.emit(InitializationState.Attaching)
-            Timber.i(" [SAR] Dispatching loadFromFd command...")
-            sandbox.loadFromFd(pfd, offset, size, mode, statusCallback)
-            
-            val result = withTimeoutOrNull(5.seconds) { // FD load should be VERY fast
-                deferred.await()
-            } ?: false
-            
+            sandbox.loadFromFd(pfd, offset, size, mode, nCtx, statusCallback)
+            val result = withTimeoutOrNull(5.seconds) { deferred.await() } ?: false
             if (result) {
                 _initializationState.emit(InitializationState.Success(lastKnownHardware))
             } else {
@@ -217,14 +233,12 @@ class SandboxLlamaEngine @Inject constructor(
         }
     }
 
-    suspend fun attachTensorMemory(pfd: android.os.ParcelFileDescriptor, size: Long, modelHash: String): Boolean {
+    suspend fun attachTensorMemory(pfd: ParcelFileDescriptor, size: Long, modelHash: String): Boolean {
         if (!ensureServiceBound()) return false
         val sandbox = sandboxRef.get() ?: return false
-        
         return try {
-            Timber.i(" [SAR] Dispatching attachTensorMemory command...")
             sandbox.attachTensorMemory(pfd, size, modelHash)
-            true // Oneway-ish or assuming success for now, health reported separately
+            true
         } catch (e: Exception) {
             Timber.e(e, "Sandbox: attachTensorMemory failed")
             false
@@ -232,27 +246,16 @@ class SandboxLlamaEngine @Inject constructor(
     }
 
     suspend fun nativeKvRestore(seqId: Int, lastPos: Int) {
-        val sandbox = sandboxRef.get() ?: return
-        try {
-            sandbox.nativeKvRestore(seqId, lastPos)
-        } catch (e: Exception) {
-            Timber.e(e, "Sandbox: nativeKvRestore failed")
-        }
+        sandboxRef.get()?.nativeKvRestore(seqId, lastPos)
     }
 
     suspend fun injectToken(tokenId: Int, kvOffset: Int, sequenceNumber: Long) {
-        val sandbox = sandboxRef.get() ?: return
-        try {
-            sandbox.injectToken(tokenId, kvOffset, sequenceNumber)
-        } catch (e: Exception) {
-            Timber.e(e, "Sandbox: injectToken failed")
-        }
+        sandboxRef.get()?.injectToken(tokenId, kvOffset, sequenceNumber)
     }
 
     suspend fun getEmbeddings(text: String): FloatArray? {
         val sandbox = sandboxRef.get() ?: return null
         val deferred = CompletableDeferred<FloatArray?>()
-        
         val statusCallback = object : ISandboxStatusCallback.Stub() {
             override fun onInitializationProgress(progress: Float) {}
             override fun onInitializationResult(result: Boolean) {}
@@ -263,104 +266,198 @@ class SandboxLlamaEngine @Inject constructor(
         }
     
         return try {
-            sandbox.getEmbeddings(text, statusCallback)
+            if (text.length > 32768) {
+                val shm = writeStringToShm(text)
+                if (shm != null) {
+                    try {
+                        sandbox.getEmbeddingsFromFd(shm.first, shm.second, statusCallback)
+                    } finally {
+                        shm.first.close()
+                    }
+                } else {
+                    sandbox.getEmbeddings(text, statusCallback)
+                }
+            } else {
+                sandbox.getEmbeddings(text, statusCallback)
+            }
             withTimeoutOrNull(5000L) { deferred.await() }
+        } catch (e: Exception) { null }
+    }
+
+    private fun writeStringToShm(text: String): Pair<ParcelFileDescriptor, Int>? {
+        return try {
+            val bytes = text.toByteArray(Charsets.UTF_8)
+            val rawFd = com.scypheon.sdk.core.utils.NativeSharedMemory.createNative(bytes.size.toLong())
+            if (rawFd < 0) return null
+            
+            // [v1.3.1-SAR] adoptFd takes ownership of the native FD.
+            val pfd = ParcelFileDescriptor.adoptFd(rawFd)
+            
+            // 🛡️ DUP IS MANDATORY: SharedMemory takes ownership. If we don't dup, 
+            // the GC will eventually collect nativeShm and close our PFD!
+            val nativeShm = SharedMemory.fromFileDescriptor(pfd.dup())
+            val writeBuf = nativeShm.mapReadWrite()
+            writeBuf.put(bytes)
+            SharedMemory.unmap(writeBuf)
+            
+            // Explicitly close the SharedMemory object to release the duplicated FD instantly.
+            nativeShm.close()
+            
+            pfd to bytes.size
         } catch (e: Exception) {
-            Timber.e(e, "Sandbox: getEmbeddings failed")
+            Timber.e(e, "SHM Prompt allocation failed")
             null
         }
     }
 
-    suspend fun loadWithMode(
-        modelPath: String, 
-        mode: Int, 
-        nCtx: Int, 
-        onProgress: ((Float) -> Unit)? = null
-    ): Boolean {
+    suspend fun loadWithMode(modelPath: String, mode: Int, nCtx: Int, onProgress: ((Float) -> Unit)? = null): Boolean {
         if (!ensureServiceBound()) return false
         
-        var bindWaitAttempts = 0
-        while (sandboxRef.get() == null && bindWaitAttempts < 30) {
-            kotlinx.coroutines.delay(100)
-            bindWaitAttempts++
-        }
-        
-        //  [MDRS 4.2] Standardize nCtx using the same logic as the service
-        val modelFile = java.io.File(modelPath)
-        val actualCtx = if (modelFile.exists()) {
-            com.scypheon.sdk.core.utils.MemoryGatekeeper.calculateSafeKvCache(context, modelFile.length())
-        } else nCtx
+        val safeCtx = if (java.io.File(modelPath).exists()) {
+            com.scypheon.sdk.core.utils.MemoryGatekeeper.calculateSafeKvCache(context, java.io.File(modelPath).length())
+        } else 32768
 
-        //  [GUARD] Ignore redundant load requests if already active or loading same target
+        // [v1.3.1-SAR] STRICT CEILING: We now enforce the Gatekeeper's limit.
+        // We no longer allow the 'x4' multiplier as it leads to Binder Death on 6GB devices.
+        val actualCtx = if (nCtx > 0) {
+            val hardLimit = 32768
+            val physicalLimit = safeCtx.coerceAtMost(hardLimit)
+            
+            if (nCtx > physicalLimit) {
+                Timber.w("⚠️ [MEMORY] Context $nCtx exceeds safe hardware limit ($physicalLimit). Capping.")
+                physicalLimit
+            } else {
+                nCtx
+            }
+        } else safeCtx
+
+        Timber.i("🔋 [SOLARIS] Backend Locked: $actualCtx tokens (Manual Override Active)")
+
         val currentState = _initializationState.value
         val modelMatch = currentModelPath == modelPath && actualCtx <= currentLoadedCtx
         if (modelMatch && (currentState is InitializationState.Success || currentState is InitializationState.Loading)) {
-            Timber.i(" [GUARD] Model already ${if (currentState is InitializationState.Success) "ACTIVE" else "LOADING"} with sufficient context ($currentLoadedCtx >= $actualCtx). Skipping redundant re-load.")
             return true
         }
 
         val sandbox = sandboxRef.get() ?: return false
         currentModelPath = modelPath
         currentLoadedCtx = actualCtx
-        
-        val attemptLabel = when(mode) {
-            0 -> "Auto"
-            1 -> "CPU"
-            2 -> "Vulkan"
-            else -> "OpenCL"
-        }
-
+         val attemptLabel = when(mode) { 0 -> "Auto"; 1 -> "CPU"; 2 -> "Vulkan"; else -> "OpenCL" }
         val deferred = CompletableDeferred<Boolean>()
-        var isPolluted = false
+        pendingLoadDeferred.set(deferred)
         
         val statusCallback = object : ISandboxStatusCallback.Stub() {
             override fun onInitializationProgress(progress: Float) {
                 _initializationState.tryEmit(InitializationState.Loading(attemptLabel, progress))
                 onProgress?.invoke(progress)
             }
-            override fun onInitializationResult(result: Boolean) {
-                deferred.complete(result)
+            override fun onInitializationResult(result: Boolean) { 
+                pendingLoadDeferred.compareAndSet(deferred, null)
+                deferred.complete(result) 
             }
             override fun onHardwareStatusUpdate(status: String) {
                 lastKnownHardware = status
                 _hardwareStatus.value = status
             }
-            override fun onInternalError(error: String) {
-                Timber.e(" Sandbox error: $error")
-                deferred.complete(false)
+            override fun onInternalError(error: String) { 
+                pendingLoadDeferred.compareAndSet(deferred, null)
+                deferred.complete(false) 
             }
-            override fun onPollutionDetected(residualBytes: Long) {
-                Timber.e(" [SENTINEL] Pollution detected ($residualBytes bytes). MANDATORY RESET.")
-                isPolluted = true
-                deferred.complete(false)
+            override fun onPollutionDetected(residualBytes: Long) { 
+                pendingLoadDeferred.compareAndSet(deferred, null)
+                deferred.complete(false) 
             }
             override fun onEmbeddings(embeddings: FloatArray) {}
         }
-
+    
         return try {
-            Timber.i(" Sandbox: Initiating ONE-SHOT probe for Mode: $attemptLabel")
-            sandbox.load(modelPath, mode, nCtx, statusCallback)
-            
-            val success = withTimeoutOrNull(30.seconds) {
-                deferred.await()
-            } ?: false
-            
+            // [v1.1.2-SAR] DYNAMIC CTX FALLBACK: Retry with halved context if load fails.
+            // Prevents permanent failure on devices where the computed safeCtx is still too
+            // optimistic. Min floor is 512 tokens to guarantee basic functionality.
+            var retryCtx = actualCtx
+            var success = false
+            while (!success && retryCtx >= 512) {
+                val retryDeferred = CompletableDeferred<Boolean>()
+                pendingLoadDeferred.set(retryDeferred)
+                val retryCallback = object : ISandboxStatusCallback.Stub() {
+                    override fun onInitializationProgress(progress: Float) {
+                        _initializationState.tryEmit(InitializationState.Loading(attemptLabel, progress))
+                        onProgress?.invoke(progress)
+                    }
+                    override fun onInitializationResult(result: Boolean) {
+                        pendingLoadDeferred.compareAndSet(retryDeferred, null)
+                        retryDeferred.complete(result)
+                    }
+                    override fun onHardwareStatusUpdate(status: String) { lastKnownHardware = status; _hardwareStatus.value = status }
+                    override fun onInternalError(error: String) { pendingLoadDeferred.compareAndSet(retryDeferred, null); retryDeferred.complete(false) }
+                    override fun onPollutionDetected(residualBytes: Long) { pendingLoadDeferred.compareAndSet(retryDeferred, null); retryDeferred.complete(false) }
+                    override fun onEmbeddings(embeddings: FloatArray) {}
+                }
+
+                try {
+                    val currentSandbox = sandboxRef.get()
+                    if (currentSandbox == null || !currentSandbox.asBinder().isBinderAlive) {
+                        Timber.w("🛡️ [PHOENIX] Sandbox is DEAD or NULL. Re-binding...")
+                        if (!ensureServiceBound()) {
+                            Timber.e("💀 [PHOENIX] Re-bind failed. Aborting retry.")
+                            break
+                        }
+                        delay(1000) // ⏱️ Stability Delay: Let the driver breathe
+                    }
+                    
+                    val freshSandbox = sandboxRef.get()!!
+                    
+                    // 🛡️ RE-INITIALIZE KEYS: If process died, the new process has NO database key.
+                    // We must re-send it before any load attempt.
+                    val dbKey = keyManager.getDatabaseKey()
+                    freshSandbox.init(context.filesDir.absolutePath, dbKey)
+                    
+                    if (retryCtx < actualCtx) {
+                        Timber.w("🛡️ [PHOENIX-CTX] Load failed at n_ctx=$actualCtx. Retrying at n_ctx=$retryCtx...")
+                        _initializationState.tryEmit(InitializationState.Loading(attemptLabel, 0f))
+                    }
+                    
+                    freshSandbox.load(modelPath, mode, retryCtx, retryCallback)
+                    success = withTimeoutOrNull(45.seconds) { retryDeferred.await() } ?: false
+                } catch (e: android.os.DeadObjectException) {
+                    Timber.e("🚨 [PHOENIX] DeadObjectException during load! Sandbox process DIED. Forcing re-bind.")
+                    sandboxRef.set(null) // Reset proxy to force re-bind in next loop iteration
+                    success = false
+                    delay(2000) // Long delay after hard crash
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // [v1.5.3-SAR] CRITICAL FIX: Don't retry on scope cancellation.
+                    // When Activity is destroyed, the ViewModel scope gets cancelled.
+                    // Retrying is futile and creates false blacklist entries.
+                    Timber.w("🛡️ [PHOENIX] Coroutine scope cancelled. Aborting retry loop (not a hardware failure).")
+                    throw e // Re-throw to properly cancel the coroutine
+                } catch (e: Exception) {
+                    Timber.e(e, "Sandbox: unexpected error during load retry")
+                    success = false
+                }
+
+                if (!success) retryCtx /= 2
+            }
+
+            currentLoadedCtx = retryCtx
             if (success) {
                 _initializationState.emit(InitializationState.Success(lastKnownHardware))
             } else {
-                val errorMsg = if (isPolluted) "POLLUTION DETECTED" else "Initialization Failed"
-                _initializationState.emit(InitializationState.Failed(attemptLabel, errorMsg))
+                _initializationState.emit(InitializationState.Failed(attemptLabel, "Initialization Failed (all ctx sizes exhausted)"))
             }
             success
         } catch (e: Exception) {
-            Timber.e(e, "Sandbox load call failed")
+            Timber.e(e, "Sandbox: loadWithMode failed")
+            pendingLoadDeferred.compareAndSet(deferred, null)
             false
         }
     }
 
-    suspend fun saveSession(path: String): Boolean {
+    suspend fun probeBackend(modelPath: String, mode: Int): Boolean {
+        if (!ensureServiceBound()) return false
         val sandbox = sandboxRef.get() ?: return false
         val deferred = CompletableDeferred<Boolean>()
+        // Register so handleServiceDeath() can cancel us immediately
+        pendingProbeDeferred.set(deferred)
         
         val statusCallback = object : ISandboxStatusCallback.Stub() {
             override fun onInitializationProgress(progress: Float) {}
@@ -371,6 +468,30 @@ class SandboxLlamaEngine @Inject constructor(
             override fun onEmbeddings(embeddings: FloatArray) {}
         }
 
+        return try {
+            sandbox.probe(modelPath, mode, statusCallback)
+            // [v1.1.0-SAR] Probe is CPU-only so ~2-8s is expected for large models.
+            // 10s timeout is generous; if sandbox dies, handleServiceDeath completes deferred instantly.
+            withTimeoutOrNull(10.seconds) { deferred.await() } ?: false
+        } catch (e: Exception) {
+            Timber.e(e, "Sandbox: probeBackend failed")
+            false
+        } finally {
+            pendingProbeDeferred.compareAndSet(deferred, null)
+        }
+    }
+
+    suspend fun saveSession(path: String): Boolean {
+        val sandbox = sandboxRef.get() ?: return false
+        val deferred = CompletableDeferred<Boolean>()
+        val statusCallback = object : ISandboxStatusCallback.Stub() {
+            override fun onInitializationProgress(progress: Float) {}
+            override fun onInitializationResult(success: Boolean) { deferred.complete(success) }
+            override fun onHardwareStatusUpdate(status: String) {}
+            override fun onInternalError(error: String) { deferred.complete(false) }
+            override fun onPollutionDetected(residualBytes: Long) { deferred.complete(false) }
+            override fun onEmbeddings(embeddings: FloatArray) {}
+        }
         return try {
             sandbox.saveSession(path, statusCallback)
             withTimeoutOrNull(5.seconds) { deferred.await() } ?: false
@@ -380,7 +501,6 @@ class SandboxLlamaEngine @Inject constructor(
     suspend fun loadSession(path: String): Boolean {
         val sandbox = sandboxRef.get() ?: return false
         val deferred = CompletableDeferred<Boolean>()
-        
         val statusCallback = object : ISandboxStatusCallback.Stub() {
             override fun onInitializationProgress(progress: Float) {}
             override fun onInitializationResult(success: Boolean) { deferred.complete(success) }
@@ -389,36 +509,19 @@ class SandboxLlamaEngine @Inject constructor(
             override fun onPollutionDetected(residualBytes: Long) { deferred.complete(false) }
             override fun onEmbeddings(embeddings: FloatArray) {}
         }
-
         return try {
             sandbox.loadSession(path, statusCallback)
             withTimeoutOrNull(10.seconds) { deferred.await() } ?: false
         } catch (e: Exception) { false }
     }
 
-    /**
-     * MDRS: Proactive memory reclamation.
-     * Proxies the trim level to the sandbox process via AIDL.
-     */
     fun reclaimMemory(level: Int) {
-        try {
-            sandboxRef.get()?.reclaimMemory(level)
-        } catch (e: Exception) {
-            Timber.e(e, "Sandbox: reclaimMemory failed")
-        }
+        try { sandboxRef.get()?.reclaimMemory(level) } catch (e: Exception) {}
     }
 
     private fun getTimeoutMs(): Long {
-        // Backend-aware timeout. CPU inference on 7.5B at 2-3 t/s = 5-10 minutes minimum.
-        // GPU backends are faster but still need >1 minute for large contexts.
-        val isCpuMode = selectedBackendMode == 1 ||
-                        lastKnownHardware.contains("CPU", ignoreCase = true) ||
-                        lastKnownHardware.contains("Mapped", ignoreCase = true)
-        return if (isCpuMode) {
-            15 * 60 * 1000L // 15 minutes for CPU mmap inference
-        } else {
-            3 * 60 * 1000L  // 3 minutes for GPU backends
-        }
+        val isCpuMode = selectedBackendMode == 1 || lastKnownHardware.contains("CPU", ignoreCase = true)
+        return if (isCpuMode) 15 * 60 * 1000L else 3 * 60 * 1000L
     }
 
     override fun generateResponse(
@@ -426,109 +529,260 @@ class SandboxLlamaEngine @Inject constructor(
         topK: Int,
         topP: Float,
         temp: Float,
-        maxTokens: Int
+        maxTokens: Int,
+        enableThinking: Boolean
     ): Flow<String> = flow {
         val requestId = UUID.randomUUID().toString()
-        val startNs = System.nanoTime()
-        Timber.i(" [REQ:$requestId] Starting inference via Solaris Core...")
+        var attempt = 0
+        val maxAttempts = 2
+        var success = false
 
-        val sandbox = sandboxRef.get()
-        if (sandbox == null) {
-            emit("Error: Isolated process not bound.")
-            return@flow
-        }
-
-        val resultFlow = callbackFlow {
-            val callback = object : IInferenceCallback.Stub() {
-                override fun onTokens(tokens: List<String>) {
-                    tokens.forEach { trySend(it) }
+        while (attempt < maxAttempts && !success) {
+            attempt++
+            if (!ensureServiceBound()) {
+                if (attempt == maxAttempts) {
+                    emit("Error: Solaris Core unavailable.")
                 }
+                continue
+            }
 
-                override fun onError(message: String) {
-                    val endNs = System.nanoTime()
-                    Timber.e(" [REQ:$requestId] FAILED after ${(endNs - startNs) / 1_000_000}ms: $message")
-                    close(Exception(message))
+            // Ensure the model is loaded on the current sandbox process (especially after a crash/restart)
+            val currentSandbox = sandboxRef.get()
+            if (currentSandbox == null) {
+                if (attempt == maxAttempts) {
+                    emit("Error: Link lost.")
                 }
+                continue
+            }
 
-                override fun onComplete() {
-                    val endNs = System.nanoTime()
-                    Timber.i(" [REQ:$requestId] COMPLETED successfully in ${(endNs - startNs) / 1_000_000}ms")
-                    close()
+            if (currentModelPath.isNotEmpty() && !isReady()) {
+                Timber.w("🛡️ [PHOENIX] Sandbox was restarted. Re-loading model $currentModelPath...")
+                val loadSuccess = loadWithMode(currentModelPath, selectedBackendMode, currentLoadedCtx)
+                if (!loadSuccess) {
+                    Timber.e("💀 [PHOENIX] Model re-load failed. Aborting inference.")
+                    if (attempt == maxAttempts) {
+                        emit("Error: Failed to re-load model after sandbox restart.")
+                    }
+                    continue
                 }
-            } // Close IInferenceCallback.Stub() object
+            }
+
+            // [v1.2.5-SAR] CONTEXT GUARD: Truncate prompt if it exceeds context limit.
+            val maxInputTokens = (currentLoadedCtx * 0.75).toInt()
+            val estimatedPromptTokens = (prompt.length / 3.5).toInt()
             
-            //  [PHOENIX] Process Watchdog: Monitor health during inference
-            val healthJob = kotlinx.coroutines.CoroutineScope(Dispatchers.Default).launch {
-                processHealth.collect { isAlive ->
-                    if (!isAlive) {
-                        Timber.e(" [REQ:$requestId] SANDBOX DIED mid-inference. Aborting flow.")
-                        close(android.os.DeadObjectException("Sandbox process terminated"))
+            val safePrompt = if (estimatedPromptTokens > maxInputTokens) {
+                val keepChars = (maxInputTokens * 3.5).toInt()
+                Timber.w("⚠️ [CONTEXT] Prompt too long ($estimatedPromptTokens tokens). Truncating to ~$maxInputTokens tokens to fit n_ctx=$currentLoadedCtx.")
+                prompt.takeLast(keepChars) // Keep the most recent context
+            } else {
+                prompt
+            }
+
+            val resultFlow = callbackFlow {
+                var mappedBuffer: java.nio.ByteBuffer? = null
+                var sharedMemory: android.os.SharedMemory? = null
+                var currentTokenIndex = 0
+
+                val callback = object : IInferenceCallback.Stub() {
+                    override fun onOutputSharedMemoryReady(pfd: ParcelFileDescriptor, size: Int) {
+                        try {
+                            // Close old references if any exist to prevent address leak / hang
+                            mappedBuffer?.let { android.os.SharedMemory.unmap(it) }
+                            sharedMemory?.close()
+                            
+                            sharedMemory = android.os.SharedMemory.fromFileDescriptor(pfd)
+                            mappedBuffer = sharedMemory?.mapReadOnly()?.apply {
+                                order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                            }
+                        } catch (e: Exception) { 
+                            timber.log.Timber.e(e, "SHM Mapping Failed") 
+                        } finally { 
+                            pfd.close() 
+                        }
+                    }
+
+                    override fun onPhaseChanged(phase: Int) {
+                        if (phase == 0) trySend("<system:prefill>")
+                    }
+
+                    override fun onTokenAvailable(count: Int) {
+                        timber.log.Timber.d("onTokenAvailable called with count: $count")
+                        
+                        // Validasi DirectByteBuffer dan hak akses/liveness dari sandbox
+                        val sandboxLive = sandboxRef.get()
+                        if (sandboxLive == null || !_processHealth.value || !sandboxLive.asBinder().isBinderAlive) {
+                            timber.log.Timber.w("Sandbox process is dead or binder is not alive, aborting buffer access")
+                            return
+                        }
+
+                        val buffer = mappedBuffer ?: return
+                        if (!buffer.isDirect) {
+                            timber.log.Timber.e("Buffer is not direct. Aborting.")
+                            return
+                        }
+
+                        while (currentTokenIndex < count) {
+                            try {
+                                val offset = 4 + (currentTokenIndex * 256)
+                                if (offset + 256 > buffer.capacity()) {
+                                    timber.log.Timber.e("Buffer overflow: offset $offset exceeds capacity ${buffer.capacity()}")
+                                    break
+                                }
+
+                                buffer.position(offset)
+                                val tokenId = buffer.getInt()
+                                val confidence = buffer.getFloat()
+                                val length = buffer.getInt()
+                                
+                                val textBytes = ByteArray(244)
+                                buffer.position(offset + 12)
+                                buffer.get(textBytes)
+                                val nullIndex = textBytes.indexOf(0.toByte())
+                                val validLength = if (nullIndex == -1) 244 else nullIndex
+                                val text = String(textBytes, 0, validLength, Charsets.UTF_8)
+                                
+                                timber.log.Timber.d("Token $currentTokenIndex: id=$tokenId, len=$length, conf=$confidence, extracted='$text'")
+                                
+                                if (text.isNotEmpty()) {
+                                    trySend(text)
+                                }
+                                currentTokenIndex++
+                            } catch (e: Exception) { 
+                                timber.log.Timber.e(e, "Error parsing token $currentTokenIndex")
+                                break 
+                            }
+                        }
+                    }
+
+                    override fun onComplete(promptTokens: Int, genTokens: Int, ttftMs: Long, tps: Float) {
+                        Timber.i("🛰️ [TELEMETRY] Prompt: $promptTokens | Gen: $genTokens | TTFT: ${ttftMs}ms | TPS: $tps")
+                        close()
+                    }
+
+                    override fun onError(errorCode: Int, message: String) {
+                        Timber.e("💀 [ERROR $errorCode] $message")
+                        close(Exception("Error $errorCode: $message"))
                     }
                 }
-            }
 
-            //  Dynamic n_len bounding to avert KV Cache exhaustion (n_kv_req > n_ctx)
-            // Heuristic: 1 character ~ 0.5 tokens (conservative)
-            val estimatedPromptTokens = (prompt.length * 0.5).toInt()
-            val safeMaxTokens = (currentLoadedCtx - estimatedPromptTokens - 64).coerceAtLeast(32)
-            val boundedMaxTokens = minOf(maxTokens, safeMaxTokens)
-            Timber.i(" [KV-GUARD] Est. Prompt Tokens: $estimatedPromptTokens | Bounded Max Gen Tokens: $boundedMaxTokens (Ctx Limit: $currentLoadedCtx)")
+                val healthJob = CoroutineScope(Dispatchers.Default).launch {
+                    processHealth.collect { isAlive ->
+                        if (!isAlive) close(DeadObjectException("Sandbox process terminated"))
+                    }
+                }
+
+                try {
+                    val freshSandbox = sandboxRef.get()
+                    if (freshSandbox == null || !freshSandbox.asBinder().isBinderAlive) {
+                        close(DeadObjectException("Sandbox binder is not alive"))
+                        return@callbackFlow
+                    }
+
+                    if (safePrompt.length > 32768) {
+                        val shm = writeStringToShm(safePrompt)
+                        if (shm != null) {
+                            try {
+                                freshSandbox.sendFromFd(shm.first, shm.second, topK, topP, temp, maxTokens, enableThinking, callback)
+                            } finally {
+                                shm.first.close()
+                            }
+                        } else {
+                            freshSandbox.sendWithTracing(safePrompt, topK, topP, temp, maxTokens, enableThinking, requestId, callback)
+                        }
+                    } else {
+                        freshSandbox.sendWithTracing(safePrompt, topK, topP, temp, maxTokens, enableThinking, requestId, callback)
+                    }
+                } catch (e: Exception) { 
+                    close(e) 
+                }
+                
+                awaitClose { 
+                    healthJob.cancel()
+                    mappedBuffer?.let { android.os.SharedMemory.unmap(it) }
+                    sharedMemory?.close()
+                    mappedBuffer = null
+                    sharedMemory = null
+                }
+            }.flowOn(Dispatchers.IO)
 
             try {
-                sandbox.sendWithTracing(prompt, topK, topP, temp, boundedMaxTokens, true, requestId, callback)
-            } catch (e: android.os.DeadObjectException) {
-                Timber.e(" [REQ:$requestId] Binder DIED mid-stream")
-                close(e)
+                var hasPrefillProgress = false
+                circuitBreaker.execute("llama_engine") {
+                    val responseBuffer = StringBuilder()
+                    try {
+                        withTimeout(getTimeoutMs()) {
+                            resultFlow.cancellable().collect {
+                                if (it == "<system:prefill>") {
+                                    hasPrefillProgress = true
+                                } else {
+                                    if (it.isNotEmpty()) {
+                                        hasPrefillProgress = true
+                                    }
+                                    responseBuffer.append(it)
+                                    emit(it)
+                                }
+                            }
+                        }
+                    } catch (e: TimeoutCancellationException) {
+                        if (hasPrefillProgress) {
+                            Timber.i(" [SAR] Timeout reached, but active prefill/generation progress was detected. Treating as benign cancellation.")
+                            throw CancellationException("Benign timeout with progress", e)
+                        } else {
+                            Timber.e("❌ [SAR] Timeout reached with zero prefill/generation progress! Engine is likely frozen.")
+                            throw Exception("Engine hung: Timeout with zero progress", e)
+                        }
+                    }
+                    val fullResponse = responseBuffer.toString()
+                    if (fullResponse.isNotEmpty()) {
+                        val audit = withContext(Dispatchers.Default) { clinicalValidator.validateResponse(fullResponse) }
+                        if (!audit.isSafe && audit.alertMessage != null) emit("\n\n${audit.alertMessage}")
+                    }
+                }
+                success = true
+            } catch (e: CircuitBreakerOpenException) {
+                emit("⚠️ RESILIENCE ALERT: Engine is currently cooling down due to previous failures.")
+                success = true // Don't retry if circuit breaker is open
+            } catch (e: CancellationException) {
+                Timber.i(" [SAR] Inference cancelled cleanly.")
+                throw e // Propagate CancellationException so coroutine framework handles it cleanly
             } catch (e: Exception) {
-                Timber.e(" [REQ:$requestId] Communication failure: ${e.message}")
-                close(e)
-            }
-            awaitClose { healthJob.cancel() }
-        }.flowOn(Dispatchers.IO)
-
-        try {
-            val timeoutMs = getTimeoutMs()
-            withTimeout(timeoutMs) {
-                resultFlow.cancellable().collect { emit(it) }
-            }
-        } catch (e: TimeoutCancellationException) {
-            val timeoutMs = getTimeoutMs()
-            Timber.e(" [REQ:$requestId] INFERENCE TIMEOUT after ${timeoutMs}ms (backend: ${if (selectedBackendMode == 1) "CPU" else "GPU"})")
-            emit("Error: Response timeout. The AI is taking too long to respond.")
-        } catch (e: Exception) {
-            val count = reconnectCount.incrementAndGet()
-            if (count < MAX_RECONNECTS) {
-                Timber.w(" [REQ:$requestId] Circuit Breaker: Reconnect attempt $count/$MAX_RECONNECTS")
+                Timber.e(e, "Inference attempt $attempt failed")
                 handleServiceDeath()
-                emit("Error: AI engine disconnected. Re-establishing link...")
-            } else {
-                Timber.e(" [REQ:$requestId] Circuit Breaker: MAX RECONNECTS EXCEEDED")
-                emit("Error: AI engine unavailable after multiple attempts.")
+                if (attempt == maxAttempts) {
+                    emit("Error: AI engine link failed.")
+                } else {
+                    Timber.w("🛡️ [PHOENIX] Reconnecting and retrying inference...")
+                    delay(1500) // Brief recovery window
+                }
             }
         }
     }.flowOn(Dispatchers.IO)
-
 
     override fun release() {
         if (isBound.get()) {
             try {
                 sandboxRef.get()?.unload()
                 context.unbindService(connection)
-            } catch (e: Exception) {
-                Timber.e(e, "Sandbox: Error during release")
-            } finally {
+            } catch (e: Exception) {}
+            finally {
                 sandboxRef.set(null)
                 isBound.set(false)
             }
         }
     }
 
-    override fun isReady(): Boolean {
-        // Solaris Refinement: Trust the internal Success state even if hardware status poll is lagging
-        val state = _initializationState.value
-        val isInitializingSuccess = state is InitializationState.Success
-        
-        return sandboxRef.get() != null && 
-               (isInitializingSuccess || (lastKnownHardware != "Isolated [Wait]" && lastKnownHardware != "Process Crashed"))
+    suspend fun promoteToForeground(): Boolean {
+        if (!ensureServiceBound()) return false
+        val sandbox = sandboxRef.get() ?: return false
+        return try {
+            sandbox.promoteToForeground()
+            true
+        } catch (e: Exception) {
+            Timber.e(e, "Sandbox: promoteToForeground failed")
+            false
+        }
     }
+
+    override fun isReady(): Boolean = sandboxRef.get() != null && _initializationState.value is InitializationState.Success
 }

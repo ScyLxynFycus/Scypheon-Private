@@ -10,8 +10,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.map
-import com.scypheon.sdk.core.humanitarian.accessibility.DeafEnvironmentGuardian
-import com.scypheon.sdk.core.memory.toTriplets
+import com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
+import com.scypheon.sdk.core.utils.SolarisTelemetry
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
@@ -21,17 +21,28 @@ import javax.inject.Singleton
 /**
  * LiteRtEliteEngine implements optimized inference for Gemma 3/4 models
  * using the modern LiteRT-LM framework. It prioritizes GPU/NPU acceleration.
+ * Fully hardened with resilience circuit-breaker recovery and telemetry integration.
  */
 @Singleton
-class LiteRtEliteEngine @Inject constructor() : BaseAiEngine {
+class LiteRtEliteEngine @Inject constructor(
+    private val circuitBreaker: ResilienceCircuitBreaker
+) : BaseAiEngine {
     
     companion object {
-        init {
-            try {
-                System.loadLibrary("litertlm_jni")
-                Timber.i("✅ LiteRT-LM JNI Library loaded successfully.")
-            } catch (e: UnsatisfiedLinkError) {
-                Timber.e(e, "❌ Failed to load litertlm_jni. Ensure the .so is bundled in the APK.")
+        private val isLibraryLoaded = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        private fun ensureLibraryLoaded() {
+            if (isLibraryLoaded.get()) return
+            synchronized(this) {
+                if (isLibraryLoaded.get()) return
+                try {
+                    System.loadLibrary("litertlm_jni")
+                    isLibraryLoaded.set(true)
+                    Timber.i("✅ LiteRT-LM JNI Library loaded successfully.")
+                } catch (e: UnsatisfiedLinkError) {
+                    Timber.e(e, "❌ Failed to load litertlm_jni. Ensure the .so is bundled in the APK.")
+                    throw e
+                }
             }
         }
     }
@@ -46,21 +57,37 @@ class LiteRtEliteEngine @Inject constructor() : BaseAiEngine {
     private var isInitialized = false
 
     override suspend fun initialize(modelPath: String, nCtx: Int): Boolean = withContext(Dispatchers.IO) {
-        Timber.i("Initializing LiteRT-LM Elite Engine with model: $modelPath")
         try {
-            if (modelPath.isBlank() || !java.io.File(modelPath).exists()) {
-                Timber.e("LiteRT-LM Model file not found or path is empty: $modelPath")
-                return@withContext false
+            circuitBreaker.execute("litert_engine") {
+                ensureLibraryLoaded()
+                Timber.i("Initializing LiteRT-LM Elite Engine with model: $modelPath")
+                if (modelPath.isBlank() || !java.io.File(modelPath).exists()) {
+                    throw java.io.FileNotFoundException("LiteRT-LM Model file not found or path is empty: $modelPath")
+                }
+                
+                // If there was an existing engine, close it first to prevent native memory leaks
+                try {
+                    engine?.close()
+                } catch (closeEx: Exception) {
+                    // Ignored
+                }
+                engine = null
+                isInitialized = false
+                
+                val config = EngineConfig(modelPath)
+                engine = Engine(config)
+                engine?.initialize()
+                isInitialized = true
+                
+                // Record telemetry success
+                SolarisTelemetry.record("litert_init", 1L, mapOf("model" to modelPath))
+                true
             }
-            
-            val config = EngineConfig(modelPath)
-            engine = Engine(config)
-            engine?.initialize()
-            isInitialized = true
-            true
         } catch (e: Exception) {
-            Timber.e(e, "Failed to initialize LiteRT-LM Elite Engine")
+            Timber.e(e, "Failed to initialize LiteRT-LM Elite Engine via circuit breaker")
             isInitialized = false
+            // Record telemetry failure
+            SolarisTelemetry.record("litert_init_fail", 0L, mapOf("error" to (e.message ?: "Unknown")))
             false
         }
     }
@@ -70,7 +97,8 @@ class LiteRtEliteEngine @Inject constructor() : BaseAiEngine {
         topK: Int,
         topP: Float,
         temp: Float,
-        maxTokens: Int
+        maxTokens: Int,
+        enableThinking: Boolean
     ): Flow<String> {
         // NOTE: LiteRt (Gemma 4 Elite) uses its own internal state management 
         // for generation length, but we accept maxTokens for API parity.
@@ -79,38 +107,52 @@ class LiteRtEliteEngine @Inject constructor() : BaseAiEngine {
 
     /**
      * Generates a multimodal response (text + image).
+     * Wrapped in a resilient circuit-breaker wrapper to catch native/JNI crash cascades.
      */
     fun generateMultimodalResponse(prompt: String, image: android.graphics.Bitmap?): Flow<String> = flow {
         val currentEngine = engine ?: throw IllegalStateException("LiteRT Engine not initialized")
         val conversation = currentEngine.createConversation()
         
         try {
-            if (image != null) {
-                val stream = ByteArrayOutputStream()
-                image.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, stream)
-                val imageBytes = stream.toByteArray()
-                
-                val multimodalContents = Contents.of(
-                    Content.ImageBytes(imageBytes),
-                    Content.Text(prompt)
-                )
-                
-                emitAll(conversation.sendMessageAsync(multimodalContents).map { it.toString() })
-            } else {
-                emitAll(conversation.sendMessageAsync(prompt).map { it.toString() })
+            circuitBreaker.execute("litert_engine") {
+                if (image != null) {
+                    val stream = ByteArrayOutputStream()
+                    image.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, stream)
+                    val imageBytes = stream.toByteArray()
+                    
+                    val multimodalContents = Contents.of(
+                        Content.ImageBytes(imageBytes),
+                        Content.Text(prompt)
+                    )
+                    
+                    emitAll(conversation.sendMessageAsync(multimodalContents).map { it.toString() })
+                } else {
+                    emitAll(conversation.sendMessageAsync(prompt).map { it.toString() })
+                }
+                // Record telemetry success
+                SolarisTelemetry.record("litert_inference_success", 1L)
             }
         } catch (e: Exception) {
-            Timber.e(e, "Error during LiteRT multimodal inference")
+            Timber.e(e, "Error during LiteRT multimodal inference via circuit breaker")
+            SolarisTelemetry.record("litert_inference_fail", 0L, mapOf("error" to (e.message ?: "Unknown")))
             throw e
         }
     }.flowOn(Dispatchers.Default)
 
     override fun release() {
         Timber.i("Releasing LiteRT-LM Elite Engine resources")
-        engine?.close()
+        try {
+            engine?.close()
+        } catch (e: Exception) {
+            // Ignored
+        }
         engine = null
         isInitialized = false
     }
 
-    override fun isReady(): Boolean = isInitialized
+    override fun isReady(): Boolean = isInitialized && try {
+        circuitBreaker.allowRequest("litert_engine")
+    } catch (e: Exception) {
+        true
+    }
 }

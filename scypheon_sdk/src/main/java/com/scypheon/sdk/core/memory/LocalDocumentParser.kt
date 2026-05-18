@@ -23,7 +23,7 @@ class LocalDocumentParser(
      * Reads a document from a URI (e.g., from Intent.ACTION_GET_CONTENT),
      * chunks it using a sliding window approach, and ingests it into the Vector Memory.
      */
-    fun ingestDocument(uri: Uri, documentTitle: String) {
+    suspend fun ingestDocument(uri: Uri, documentTitle: String) {
         Timber.i("📄 Starting local document ingestion for: $documentTitle")
 
         try {

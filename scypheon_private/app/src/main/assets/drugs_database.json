@@ -1,0 +1,580 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2024-12-10",
+  "disclaimer": "Informasi ini hanya alat bantu baca, BUKAN pengganti saran dokter/apoteker.",
+  
+  "drugs": [
+    {
+      "id": "paracetamol",
+      "brandNames": ["Panadol", "Sanmol", "Tempra", "Dumin", "Bodrexin"],
+      "genericName": "Paracetamol",
+      "category": "B",
+      "categoryDesc": "Bebas",
+      "usage": "Pereda nyeri dan demam",
+      "dosageAdult": "500-1000mg setiap 4-6 jam, maksimal 4g/hari",
+      "dosageChild": "10-15mg/kg setiap 4-6 jam",
+      "warnings": ["Jangan melebihi dosis maksimal", "Hindari alkohol"],
+      "contraindications": ["Gangguan hati berat"],
+      "pregnancySafe": true,
+      "barcodes": ["8991103100018", "8992222001234"]
+    },
+    {
+      "id": "ibuprofen",
+      "brandNames": ["Proris", "Bufect", "Brufen", "Advil"],
+      "genericName": "Ibuprofen",
+      "category": "B",
+      "categoryDesc": "Bebas Terbatas",
+      "usage": "Anti nyeri, anti radang, penurun demam",
+      "dosageAdult": "200-400mg setiap 4-6 jam",
+      "dosageChild": "5-10mg/kg setiap 6-8 jam",
+      "warnings": ["Minum setelah makan", "Risiko perdarahan lambung"],
+      "contraindications": ["Tukak lambung", "Gagal ginjal"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100025"]
+    },
+    {
+      "id": "amoxicillin",
+      "brandNames": ["Amoxsan", "Kalmoxillin", "Opimox", "Yusimox"],
+      "genericName": "Amoxicillin",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Antibiotik infeksi bakteri",
+      "dosageAdult": "500mg setiap 8 jam",
+      "dosageChild": "25-50mg/kg/hari dibagi 3 dosis",
+      "warnings": ["Habiskan seluruh obat", "Risiko resistensi jika berhenti sebelum habis"],
+      "contraindications": ["Alergi penisilin"],
+      "pregnancySafe": true,
+      "barcodes": ["8991103100032"]
+    },
+    {
+      "id": "ctm",
+      "brandNames": ["CTM", "Chlorpheniramine", "Pehachlor"],
+      "genericName": "Chlorpheniramine Maleate",
+      "category": "B",
+      "categoryDesc": "Bebas Terbatas",
+      "usage": "Anti alergi, anti gatal, pilek",
+      "dosageAdult": "4mg setiap 4-6 jam",
+      "dosageChild": "2mg setiap 4-6 jam",
+      "warnings": ["Menyebabkan kantuk", "Jangan mengemudi setelah minum"],
+      "contraindications": ["Glaukoma"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100049"]
+    },
+    {
+      "id": "antimo",
+      "brandNames": ["Antimo", "Antimo Anak"],
+      "genericName": "Dimenhydrinate",
+      "category": "B",
+      "categoryDesc": "Bebas",
+      "usage": "Anti mabuk perjalanan",
+      "dosageAdult": "50mg 30 menit sebelum perjalanan",
+      "dosageChild": "25mg 30 menit sebelum perjalanan",
+      "warnings": ["Menyebabkan kantuk"],
+      "contraindications": [],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100056"]
+    },
+    {
+      "id": "omeprazole",
+      "brandNames": ["Prilosec", "Losec", "Omeprazole", "Ozid"],
+      "genericName": "Omeprazole",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Asam lambung, GERD, tukak lambung",
+      "dosageAdult": "20mg sekali sehari sebelum makan",
+      "dosageChild": "Sesuai resep dokter",
+      "warnings": ["Minum sebelum makan", "Jangan digunakan jangka panjang tanpa pengawasan"],
+      "contraindications": [],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100063"]
+    },
+    {
+      "id": "metformin",
+      "brandNames": ["Glucophage", "Metformin", "Diabex", "Glumin"],
+      "genericName": "Metformin",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Diabetes tipe 2",
+      "dosageAdult": "500-850mg 2-3x sehari bersama makan",
+      "dosageChild": "Tidak direkomendasikan",
+      "warnings": ["Minum bersama makan", "Hindari alkohol"],
+      "contraindications": ["Gagal ginjal", "Asidosis laktat"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100070"]
+    },
+    {
+      "id": "amlodipine",
+      "brandNames": ["Norvasc", "Amlodipine", "Tensivask"],
+      "genericName": "Amlodipine",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Tekanan darah tinggi, angina",
+      "dosageAdult": "5-10mg sekali sehari",
+      "dosageChild": "Tidak direkomendasikan",
+      "warnings": ["Dapat menyebabkan bengkak kaki"],
+      "contraindications": ["Hipotensi berat"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100087"]
+    },
+    {
+      "id": "cetirizine",
+      "brandNames": ["Incidal", "Cetirizine", "Ryzen", "Falergi"],
+      "genericName": "Cetirizine",
+      "category": "B",
+      "categoryDesc": "Bebas Terbatas",
+      "usage": "Anti alergi, gatal, biduran",
+      "dosageAdult": "10mg sekali sehari",
+      "dosageChild": "5mg sekali sehari (2-6 tahun)",
+      "warnings": ["Dapat menyebabkan kantuk ringan"],
+      "contraindications": ["Gagal ginjal berat"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100094"]
+    },
+    {
+      "id": "loratadine",
+      "brandNames": ["Claritin", "Loratadine", "Alloris"],
+      "genericName": "Loratadine",
+      "category": "B",
+      "categoryDesc": "Bebas Terbatas",
+      "usage": "Anti alergi, tidak mengantuk",
+      "dosageAdult": "10mg sekali sehari",
+      "dosageChild": "5mg sekali sehari (2-6 tahun)",
+      "warnings": [],
+      "contraindications": [],
+      "pregnancySafe": true,
+      "barcodes": ["8991103100100"]
+    },
+    {
+      "id": "obhcombi",
+      "brandNames": ["OBH Combi", "OBH Combi Anak"],
+      "genericName": "Succus Liquiritiae + Ammonium Chloride",
+      "category": "B",
+      "categoryDesc": "Bebas",
+      "usage": "Batuk berdahak",
+      "dosageAdult": "15ml 3x sehari",
+      "dosageChild": "5-10ml 3x sehari",
+      "warnings": [],
+      "contraindications": [],
+      "pregnancySafe": true,
+      "barcodes": ["8991103100117"]
+    },
+    {
+      "id": "dextromethorphan",
+      "brandNames": ["Dextral", "Vicks Formula 44", "Siladex"],
+      "genericName": "Dextromethorphan",
+      "category": "B",
+      "categoryDesc": "Bebas Terbatas",
+      "usage": "Batuk kering",
+      "dosageAdult": "10-20mg setiap 4-6 jam",
+      "dosageChild": "5-10mg setiap 4-6 jam (6-12 tahun)",
+      "warnings": ["Jangan kombinasi dengan MAOI"],
+      "contraindications": ["Asma berat"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100124"]
+    },
+    {
+      "id": "vitamin_c",
+      "brandNames": ["Vitacimin", "Redoxon", "You C 1000", "Enervon-C"],
+      "genericName": "Ascorbic Acid",
+      "category": "B",
+      "categoryDesc": "Bebas",
+      "usage": "Suplemen vitamin C, daya tahan tubuh",
+      "dosageAdult": "500-1000mg sekali sehari",
+      "dosageChild": "250-500mg sekali sehari",
+      "warnings": ["Dosis tinggi dapat menyebabkan diare"],
+      "contraindications": [],
+      "pregnancySafe": true,
+      "barcodes": ["8991103100131"]
+    },
+    {
+      "id": "vitamin_d",
+      "brandNames": ["Blackmores D3", "Nature's Plus Vitamin D3"],
+      "genericName": "Cholecalciferol",
+      "category": "B",
+      "categoryDesc": "Bebas",
+      "usage": "Kesehatan tulang, imunitas",
+      "dosageAdult": "400-1000 IU sekali sehari",
+      "dosageChild": "400 IU sekali sehari",
+      "warnings": [],
+      "contraindications": ["Hiperkalsemia"],
+      "pregnancySafe": true,
+      "barcodes": ["8991103100148"]
+    },
+    {
+      "id": "simvastatin",
+      "brandNames": ["Zocor", "Simvastatin", "Cholestat"],
+      "genericName": "Simvastatin",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Kolesterol tinggi",
+      "dosageAdult": "10-40mg malam hari",
+      "dosageChild": "Tidak direkomendasikan",
+      "warnings": ["Minum malam hari", "Hindari grapefruit"],
+      "contraindications": ["Penyakit hati aktif", "Kehamilan"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100155"]
+    },
+    {
+      "id": "captopril",
+      "brandNames": ["Capoten", "Captopril", "Tensicap"],
+      "genericName": "Captopril",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Tekanan darah tinggi, gagal jantung",
+      "dosageAdult": "25-50mg 2-3x sehari",
+      "dosageChild": "Sesuai resep dokter",
+      "warnings": ["Minum 1 jam sebelum makan", "Batuk kering umum terjadi"],
+      "contraindications": ["Kehamilan", "Angioedema"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100162"]
+    },
+    {
+      "id": "warfarin",
+      "brandNames": ["Simarc", "Warfarin", "Coumadin"],
+      "genericName": "Warfarin",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Pengencer darah, pencegah pembekuan",
+      "dosageAdult": "Sesuai INR (2-10mg/hari)",
+      "dosageChild": "Tidak direkomendasikan",
+      "warnings": ["Perlu monitoring INR rutin", "Banyak interaksi obat"],
+      "contraindications": ["Perdarahan aktif", "Kehamilan"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100179"]
+    },
+    {
+      "id": "aspirin",
+      "brandNames": ["Aspirin", "Aspilets", "Cardio Aspirin"],
+      "genericName": "Acetylsalicylic Acid",
+      "category": "B",
+      "categoryDesc": "Bebas Terbatas",
+      "usage": "Nyeri ringan, demam, pengencer darah dosis rendah",
+      "dosageAdult": "300-600mg setiap 4-6 jam (nyeri), 75-100mg/hari (jantung)",
+      "dosageChild": "Tidak direkomendasikan (Reye syndrome)",
+      "warnings": ["Minum setelah makan", "Risiko perdarahan"],
+      "contraindications": ["Tukak lambung", "Alergi NSAID", "Anak <16 tahun"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100186"]
+    },
+    {
+      "id": "diazepam",
+      "brandNames": ["Valium", "Diazepam", "Valisanbe"],
+      "genericName": "Diazepam",
+      "category": "P",
+      "categoryDesc": "Psikotropika (Resep Khusus)",
+      "usage": "Cemas, kejang, relaksasi otot",
+      "dosageAdult": "2-10mg 2-4x sehari",
+      "dosageChild": "Sesuai resep dokter",
+      "warnings": ["Menyebabkan kantuk berat", "Risiko ketergantungan", "Jangan mengemudi"],
+      "contraindications": ["Gagal napas", "Sleep apnea"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100193"]
+    },
+    {
+      "id": "alprazolam",
+      "brandNames": ["Xanax", "Alprazolam", "Alganax"],
+      "genericName": "Alprazolam",
+      "category": "P",
+      "categoryDesc": "Psikotropika (Resep Khusus)",
+      "usage": "Gangguan cemas, panik",
+      "dosageAdult": "0.25-0.5mg 3x sehari",
+      "dosageChild": "Tidak direkomendasikan",
+      "warnings": ["Risiko ketergantungan tinggi", "Jangan berhenti mendadak"],
+      "contraindications": ["Glaukoma sudut sempit"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100209"]
+    },
+    {
+      "id": "ranitidine",
+      "brandNames": ["Zantac", "Ranitidine", "Rantin"],
+      "genericName": "Ranitidine",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Asam lambung, tukak lambung",
+      "dosageAdult": "150mg 2x sehari",
+      "dosageChild": "2-4mg/kg 2x sehari",
+      "warnings": ["Ditarik dari pasar di beberapa negara"],
+      "contraindications": [],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100216"]
+    },
+    {
+      "id": "lansoprazole",
+      "brandNames": ["Lanzol", "Lansoprazole", "Digest"],
+      "genericName": "Lansoprazole",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "GERD, tukak lambung",
+      "dosageAdult": "30mg sekali sehari sebelum makan",
+      "dosageChild": "Sesuai resep dokter",
+      "warnings": ["Minum sebelum makan"],
+      "contraindications": [],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100223"]
+    },
+    {
+      "id": "domperidone",
+      "brandNames": ["Motilium", "Vometa", "Vomitas"],
+      "genericName": "Domperidone",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Mual, muntah, kembung",
+      "dosageAdult": "10mg 3x sehari sebelum makan",
+      "dosageChild": "0.25mg/kg 3x sehari",
+      "warnings": ["Risiko aritmia jantung"],
+      "contraindications": ["Prolaktinoma", "Perdarahan GI"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100230"]
+    },
+    {
+      "id": "loperamide",
+      "brandNames": ["Imodium", "Lodia", "Diatabs"],
+      "genericName": "Loperamide",
+      "category": "B",
+      "categoryDesc": "Bebas Terbatas",
+      "usage": "Diare akut",
+      "dosageAdult": "4mg awal, lalu 2mg setiap diare",
+      "dosageChild": "Tidak untuk <6 tahun",
+      "warnings": ["Jangan gunakan jika diare berdarah"],
+      "contraindications": ["Disentri", "Kolitis"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100247"]
+    },
+    {
+      "id": "oralit",
+      "brandNames": ["Oralit", "Pedialyte", "Renalyte"],
+      "genericName": "Oral Rehydration Salt",
+      "category": "B",
+      "categoryDesc": "Bebas",
+      "usage": "Rehidrasi saat diare",
+      "dosageAdult": "200ml setiap diare",
+      "dosageChild": "50-100ml setiap diare",
+      "warnings": [],
+      "contraindications": [],
+      "pregnancySafe": true,
+      "barcodes": ["8991103100254"]
+    },
+    {
+      "id": "betadine",
+      "brandNames": ["Betadine", "Povidone Iodine"],
+      "genericName": "Povidone-Iodine",
+      "category": "B",
+      "categoryDesc": "Bebas",
+      "usage": "Antiseptik luka, kumur",
+      "dosageAdult": "Oleskan tipis pada luka",
+      "dosageChild": "Sama dengan dewasa",
+      "warnings": ["Hanya untuk pemakaian luar"],
+      "contraindications": ["Alergi iodine", "Gangguan tiroid"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100261"]
+    },
+    {
+      "id": "salbutamol",
+      "brandNames": ["Ventolin", "Salbutamol", "Azmacon"],
+      "genericName": "Salbutamol",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Asma, sesak napas",
+      "dosageAdult": "2-4mg 3-4x sehari (tablet), 1-2 semprot saat sesak (inhaler)",
+      "dosageChild": "Sesuai resep dokter",
+      "warnings": ["Dapat menyebabkan jantung berdebar"],
+      "contraindications": [],
+      "pregnancySafe": true,
+      "barcodes": ["8991103100278"]
+    },
+    {
+      "id": "ambroxol",
+      "brandNames": ["Mucosolvan", "Ambroxol", "Mucera"],
+      "genericName": "Ambroxol",
+      "category": "B",
+      "categoryDesc": "Bebas Terbatas",
+      "usage": "Pengencer dahak",
+      "dosageAdult": "30mg 3x sehari",
+      "dosageChild": "15mg 2-3x sehari",
+      "warnings": [],
+      "contraindications": [],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100285"]
+    },
+    {
+      "id": "methylprednisolone",
+      "brandNames": ["Medrol", "Methylprednisolone", "Metilprednisolon"],
+      "genericName": "Methylprednisolone",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Anti radang, alergi berat, asma",
+      "dosageAdult": "4-48mg/hari tergantung kondisi",
+      "dosageChild": "Sesuai resep dokter",
+      "warnings": ["Jangan berhenti mendadak", "Efek samping jangka panjang"],
+      "contraindications": ["Infeksi jamur sistemik"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100292"]
+    },
+    {
+      "id": "dexamethasone",
+      "brandNames": ["Dexamethasone", "Dexacortal", "Oradexon"],
+      "genericName": "Dexamethasone",
+      "category": "K",
+      "categoryDesc": "Keras (Resep Dokter)",
+      "usage": "Anti radang kuat, alergi berat",
+      "dosageAdult": "0.5-9mg/hari",
+      "dosageChild": "Sesuai resep dokter",
+      "warnings": ["Jangan berhenti mendadak", "Menurunkan imunitas"],
+      "contraindications": ["Infeksi aktif tanpa antibiotik"],
+      "pregnancySafe": false,
+      "barcodes": ["8991103100308"]
+    }
+  ],
+
+  "interactions": [
+    {
+      "drug1": "warfarin",
+      "drug2": "aspirin",
+      "severity": "HIGH",
+      "description": "Meningkatkan risiko perdarahan berbahaya"
+    },
+    {
+      "drug1": "warfarin",
+      "drug2": "ibuprofen",
+      "severity": "HIGH",
+      "description": "Meningkatkan risiko perdarahan"
+    },
+    {
+      "drug1": "warfarin",
+      "drug2": "paracetamol",
+      "severity": "MODERATE",
+      "description": "Dosis tinggi paracetamol dapat meningkatkan efek warfarin"
+    },
+    {
+      "drug1": "metformin",
+      "drug2": "alkohol",
+      "severity": "HIGH",
+      "description": "Risiko asidosis laktat yang mengancam jiwa"
+    },
+    {
+      "drug1": "simvastatin",
+      "drug2": "grapefruit",
+      "severity": "MODERATE",
+      "description": "Grapefruit meningkatkan kadar statin, risiko efek samping otot"
+    },
+    {
+      "drug1": "captopril",
+      "drug2": "potassium",
+      "severity": "MODERATE",
+      "description": "Risiko hiperkalemia (kalium darah tinggi)"
+    },
+    {
+      "drug1": "amlodipine",
+      "drug2": "simvastatin",
+      "severity": "MODERATE",
+      "description": "Amlodipine meningkatkan kadar simvastatin"
+    },
+    {
+      "drug1": "omeprazole",
+      "drug2": "clopidogrel",
+      "severity": "HIGH",
+      "description": "Omeprazole mengurangi efektivitas clopidogrel"
+    },
+    {
+      "drug1": "alprazolam",
+      "drug2": "alkohol",
+      "severity": "CRITICAL",
+      "description": "Kombinasi berbahaya, risiko depresi napas dan kematian"
+    },
+    {
+      "drug1": "diazepam",
+      "drug2": "alkohol",
+      "severity": "CRITICAL",
+      "description": "Kombinasi berbahaya, risiko depresi napas dan kematian"
+    },
+    {
+      "drug1": "aspirin",
+      "drug2": "ibuprofen",
+      "severity": "MODERATE",
+      "description": "Ibuprofen mengurangi efek pelindung jantung aspirin"
+    },
+    {
+      "drug1": "metformin",
+      "drug2": "contrast_dye",
+      "severity": "HIGH",
+      "description": "Hentikan metformin sebelum CT scan dengan kontras"
+    },
+    {
+      "drug1": "salbutamol",
+      "drug2": "propranolol",
+      "severity": "HIGH",
+      "description": "Beta blocker mengurangi efektivitas salbutamol"
+    },
+    {
+      "drug1": "dextromethorphan",
+      "drug2": "maoi",
+      "severity": "CRITICAL",
+      "description": "Risiko serotonin syndrome yang mengancam jiwa"
+    },
+    {
+      "drug1": "loratadine",
+      "drug2": "erythromycin",
+      "severity": "MODERATE",
+      "description": "Erythromycin meningkatkan kadar loratadine"
+    }
+  ],
+
+  "allergyGroups": [
+    {
+      "group": "penicillin",
+      "members": ["amoxicillin", "ampicillin", "penicillin", "amoxsan", "kalmoxillin"],
+      "crossReact": ["cephalosporin"]
+    },
+    {
+      "group": "sulfa",
+      "members": ["sulfamethoxazole", "cotrimoxazole", "bactrim"],
+      "crossReact": []
+    },
+    {
+      "group": "nsaid",
+      "members": ["aspirin", "ibuprofen", "naproxen", "piroxicam", "meloxicam", "ketorolac"],
+      "crossReact": []
+    },
+    {
+      "group": "cephalosporin",
+      "members": ["cefadroxil", "cefixime", "ceftriaxone", "cephalexin"],
+      "crossReact": ["penicillin"]
+    }
+  ],
+
+  "categories": {
+    "B": {
+      "name": "Bebas",
+      "color": "#4CAF50",
+      "description": "Dapat dibeli tanpa resep",
+      "symbol": "●"
+    },
+    "BT": {
+      "name": "Bebas Terbatas",
+      "color": "#2196F3",
+      "description": "Dapat dibeli tanpa resep dengan peringatan",
+      "symbol": "●●"
+    },
+    "K": {
+      "name": "Keras",
+      "color": "#F44336",
+      "description": "HARUS dengan resep dokter",
+      "symbol": "K",
+      "warning": "⚠️ OBAT KERAS - Harus dengan resep dokter!"
+    },
+    "P": {
+      "name": "Psikotropika",
+      "color": "#9C27B0",
+      "description": "Psikotropika, resep khusus",
+      "symbol": "P",
+      "warning": "🔒 PSIKOTROPIKA - Memerlukan resep khusus dan pengawasan ketat!"
+    },
+    "N": {
+      "name": "Narkotika",
+      "color": "#000000",
+      "description": "Narkotika, sangat terbatas",
+      "symbol": "N",
+      "warning": "⛔ NARKOTIKA - Penggunaan sangat terbatas dan diawasi ketat!"
+    }
+  }
+}

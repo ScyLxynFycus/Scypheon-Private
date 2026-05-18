@@ -11,14 +11,15 @@ import android.os.ParcelFileDescriptor;
 oneway interface IScypheonSandbox {
     /**
      * Initializes the native backend and sets the persistent data directory.
+     * Includes the database key for secure cross-process access.
      */
-    void init(String filesDir);
+    void init(String filesDir, in byte[] dbKey);
 
     /**
      * SAR PHASE 3: Zero-Latency Handoff
      * Allows loading the model from a shared memory file descriptor.
      */
-    void loadFromFd(in ParcelFileDescriptor pfd, long offset, long size, int backend, ISandboxStatusCallback callback);
+    void loadFromFd(in ParcelFileDescriptor pfd, long offset, long size, int backend, int nCtx, ISandboxStatusCallback callback);
 
     /**
      * Loads the AI model from the given path in an isolated sandbox.
@@ -88,4 +89,27 @@ oneway interface IScypheonSandbox {
      * Impacts thread priority and Samsung PerfHint cluster assignment.
      */
     void setPerformanceMode(int mode);
+
+    /**
+     * [v1.0.6-SAR] Pre-flight Backend Probe.
+     * Tests if a specific backend can handle the model before full load.
+     * Prevents UI process death by isolating hardware/driver crash in sandbox.
+     */
+    void probe(String modelPath, int backendMode, ISandboxStatusCallback callback);
+    /**
+     * [v1.1.0-SAR] Shared Memory Prompting.
+     * Allows passing large prompts via FD to bypass Binder's 1MB transaction limit.
+     */
+    void sendFromFd(in ParcelFileDescriptor pfd, int length, int topK, float topP, float temp, int maxTokens, boolean enableThinking, IInferenceCallback callback);
+
+    /**
+     * [v1.1.0-SAR] Shared Memory Embeddings.
+     */
+    void getEmbeddingsFromFd(in ParcelFileDescriptor pfd, int length, ISandboxStatusCallback callback);
+
+    /**
+     * [v1.0.8-SAR] V.I.I.P Shield Protection.
+     * Promotes the sandbox service to a foreground service to prevent LMK termination.
+     */
+    void promoteToForeground();
 }
