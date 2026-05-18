@@ -426,6 +426,16 @@ class DualMemoryManager @Inject constructor(
         // Skip messages that are clearly system/error content
         if (text.startsWith("[") || text.startsWith("⚠") || text.startsWith("Error:")) return
 
+        // [v1.5.1-SAR] Concurrency Hardening: Add delay to prevent resource contention.
+        // Fact extraction uses background LLM routes. Under on-device mobile architectures,
+        // running concurrent inference tasks causes resource lockouts, engine timeouts,
+        // and cancellation cascades. We delay extraction until the main conversation flow is idle.
+        if (isUser) {
+            kotlinx.coroutines.delay(12000L) // Wait 12s for assistant generation to complete
+        } else {
+            kotlinx.coroutines.delay(4000L)  // Wait 4s for assistant UI streams to settle
+        }
+
         val gw = gateway ?: run {
             Timber.w("[MEMORY] Gateway not set — falling back to heuristic extraction")
             extractFactsHeuristic(text, isUser)
