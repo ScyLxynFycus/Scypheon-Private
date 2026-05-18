@@ -1586,13 +1586,14 @@ class MainViewModel @Inject constructor(
                 PERSONALITY: Warm, intelligent, and versatile. You can engage in creative roleplay and storytelling.
                 SAFETY: You MUST refuse any request involving real violence, self-harm, illegal activity, or sexually explicit content.
                 OUTPUT RULE: Never emit structural tokens like <eos>, <start_of_turn>, User:, AI:, or any role markers in your response.
+                LANGUAGE RULE: Always respond in the same language as the user's query (e.g., if the user asks in English, reply in English; if the user asks in Indonesian, reply in Indonesian).
                 VERIFICATION: ShieldGemma-verified.
                 [/SYSTEM_MANDATE]
                 """.trimIndent())
                 
                 // [v1.4.0-SAR] Reasoning Activation: Inject thinking instruction when enabled
                 if (config.enableThinking) {
-                    append("\n\n[REASONING_PROTOCOL]\nSEBELUM menjawab, Anda WAJIB berpikir langkah demi langkah di dalam tag <thought>...</thought>. Tulis proses penalaran Anda di dalam tag tersebut, lalu berikan jawaban final di luar tag. Format:\n<thought>\nAnalisis dan penalaran langkah demi langkah...\n</thought>\nJawaban final Anda di sini.\n[/REASONING_PROTOCOL]")
+                    append("\n\n[REASONING_PROTOCOL]\nBEFORE answering, you MUST think step-by-step inside the <thought>...</thought> tags. Write your reasoning process inside these tags, and then provide your final response outside the tags. Example format:\n<thought>\nStep-by-step analysis and reasoning...\n</thought>\nYour final response here.\nKeep the language of your thoughts and final response consistent with the user's query language.\n[/REASONING_PROTOCOL]")
                 }
             }
             
