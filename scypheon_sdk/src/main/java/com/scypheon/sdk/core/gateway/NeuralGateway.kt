@@ -90,13 +90,13 @@ class NeuralGateway @Inject constructor(
     ): Flow<String> {
         val modelPath = llamaEngine.currentModelPath.lowercase()
         
-        val baseSystemPrompt = "Anda adalah Scypheon, asisten AI humaniter yang cerdas dan serbaguna. Anda bisa membantu percakapan, kreativitas, roleplay, belajar, dan dukungan triase. Anda HARUS menolak permintaan yang melibatkan kekerasan nyata, self-harm, aktivitas ilegal, atau konten seksual eksplisit. JANGAN pernah menulis token struktural seperti 'User:', 'AI:', '<eos>', atau penanda giliran lainnya dalam respons Anda."
+        val baseSystemPrompt = "You are Scypheon, a highly intelligent and versatile humanitarian AI assistant. You can assist with conversation, creativity, roleplay, learning, and triage support. You MUST refuse requests involving real-world violence, self-harm, illegal activities, or sexually explicit content. NEVER write structural tokens like 'User:', 'AI:', '<eos>', or any other turn markers in your responses. Always respond in the same language as the user's query (e.g., if the user asks in English, reply in English; if the user asks in Indonesian, reply in Indonesian)."
         
         // [v1.4.0-SAR] Reasoning Activation: Inject thinking instruction when enabled
         val thinkingInstruction = if (enableThinking) {
-            "\n\nSEBELUM menjawab, Anda WAJIB berpikir langkah demi langkah di dalam tag <thought>...</thought>. Tulis proses penalaran Anda di dalam tag tersebut, lalu berikan jawaban final di luar tag. Contoh format:\n<thought>\nAnalisis langkah demi langkah...\n</thought>\nJawaban final Anda di sini."
+            "\n\nBEFORE answering, you MUST think step-by-step inside <thought>...</thought> tags. Write your reasoning process inside these tags, and then provide your final answer outside the tags. Example format:\n<thought>\nStep-by-step analysis...\n</thought>\nYour final answer here. Keep the language of your thoughts and final response consistent with the user's query language."
         } else {
-            "\n\nJANGAN gunakan tag <thought>...</thought> dan JANGAN menuliskan proses penalaran Anda. Jawab secara langsung secara lugas."
+            "\n\nDO NOT use <thought>...</thought> tags and DO NOT write out your reasoning process. Answer directly and concisely in the same language as the user's query."
         }
         
         val systemPrompt = baseSystemPrompt + thinkingInstruction
