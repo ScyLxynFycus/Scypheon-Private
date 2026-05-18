@@ -59,7 +59,7 @@ class StreamingToolParser {
 
     private fun parseJson(json: String): ToolCall {
         val obj = JSONObject(json)
-        val name = obj.getString("name")
+        val name = if (obj.has("toolName")) obj.getString("toolName") else obj.getString("name")
         val args = mutableMapOf<String, String>()
         
         val argsObj = obj.optJSONObject("arguments")

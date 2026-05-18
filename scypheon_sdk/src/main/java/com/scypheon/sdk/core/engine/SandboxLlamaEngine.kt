@@ -376,6 +376,7 @@ class SandboxLlamaEngine @Inject constructor(
             // optimistic. Min floor is 512 tokens to guarantee basic functionality.
             var retryCtx = actualCtx
             var success = false
+            var isHardError = false
             while (!success && retryCtx >= 512) {
                 val retryDeferred = CompletableDeferred<Boolean>()
                 pendingLoadDeferred.set(retryDeferred)
@@ -389,7 +390,13 @@ class SandboxLlamaEngine @Inject constructor(
                         retryDeferred.complete(result)
                     }
                     override fun onHardwareStatusUpdate(status: String) { lastKnownHardware = status; _hardwareStatus.value = status }
-                    override fun onInternalError(error: String) { pendingLoadDeferred.compareAndSet(retryDeferred, null); retryDeferred.complete(false) }
+                    override fun onInternalError(error: String) { 
+                        if (error == "HARD_LOAD_ERROR") {
+                            isHardError = true
+                        }
+                        pendingLoadDeferred.compareAndSet(retryDeferred, null)
+                        retryDeferred.complete(false) 
+                    }
                     override fun onPollutionDetected(residualBytes: Long) { pendingLoadDeferred.compareAndSet(retryDeferred, null); retryDeferred.complete(false) }
                     override fun onEmbeddings(embeddings: FloatArray) {}
                 }
@@ -420,10 +427,11 @@ class SandboxLlamaEngine @Inject constructor(
                     freshSandbox.load(modelPath, mode, retryCtx, retryCallback)
                     success = withTimeoutOrNull(45.seconds) { retryDeferred.await() } ?: false
                 } catch (e: android.os.DeadObjectException) {
-                    Timber.e("🚨 [PHOENIX] DeadObjectException during load! Sandbox process DIED. Forcing re-bind.")
-                    sandboxRef.set(null) // Reset proxy to force re-bind in next loop iteration
+                    Timber.e("🚨 [PHOENIX] DeadObjectException during load! Sandbox process DIED. Aborting GPU retry loop.")
+                    sandboxRef.set(null) // Reset proxy
                     success = false
-                    delay(2000) // Long delay after hard crash
+                    isHardError = true // Process death is a hard load/driver failure
+                    break
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     // [v1.5.3-SAR] CRITICAL FIX: Don't retry on scope cancellation.
                     // When Activity is destroyed, the ViewModel scope gets cancelled.
@@ -435,7 +443,13 @@ class SandboxLlamaEngine @Inject constructor(
                     success = false
                 }
 
-                if (!success) retryCtx /= 2
+                if (!success) {
+                    if (isHardError) {
+                        Timber.w("🛡️ [PHOENIX] Hard loading or driver failure detected. Aborting retry loop.")
+                        break
+                    }
+                    retryCtx /= 2
+                }
             }
 
             currentLoadedCtx = retryCtx

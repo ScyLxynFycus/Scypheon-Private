@@ -100,7 +100,19 @@ class NeuralGateway @Inject constructor(
         }
         
         val systemPrompt = baseSystemPrompt + thinkingInstruction
-        val hasSystemTurn = history.any { it.role == NeuralTurn.Role.SYSTEM }
+
+        // [v1.6.1-SAR] Unified System Prompt Merging:
+        // If history already has a SYSTEM turn (e.g., prepended by AgenticSkillOrchestrator for tool calling),
+        // we must merge the core system instructions (role, language, thinking guidelines) into it.
+        // Otherwise, the model loses safety rules, language guidelines, and the critical thinking instruction.
+        val processedHistory = history.map { turn ->
+            if (turn.role == NeuralTurn.Role.SYSTEM && !turn.content.contains("You are Scypheon") && !turn.content.contains("[SYSTEM_MANDATE]")) {
+                turn.copy(content = systemPrompt + "\n\n" + turn.content)
+            } else {
+                turn
+            }
+        }
+        val hasSystemTurn = processedHistory.any { it.role == NeuralTurn.Role.SYSTEM }
 
         val formattedPrompt = buildString {
             when {
@@ -112,7 +124,7 @@ class NeuralGateway @Inject constructor(
                         append(systemPrompt)
                         append("<|eot_id|>\n")
                     }
-                    history.forEach { turn ->
+                    processedHistory.forEach { turn ->
                         val role = when(turn.role) {
                             NeuralTurn.Role.USER -> "user"
                             NeuralTurn.Role.ASSISTANT -> "assistant"
@@ -129,7 +141,7 @@ class NeuralGateway @Inject constructor(
                     if (!hasSystemTurn) {
                         append("[INST] System: $systemPrompt\n")
                     }
-                    history.forEach { turn ->
+                    processedHistory.forEach { turn ->
                         when(turn.role) {
                             NeuralTurn.Role.USER -> append("[INST] ${turn.content.trim()} [/INST]\n")
                             NeuralTurn.Role.ASSISTANT -> append("${turn.content.trim()}\n")
@@ -149,14 +161,14 @@ class NeuralGateway @Inject constructor(
                         // as a preamble inside the first User message.
                         var systemInjected = false
                         
-                        history.forEach { turn ->
+                        processedHistory.forEach { turn ->
                             when(turn.role) {
                                 NeuralTurn.Role.SYSTEM -> {
                                     // DON'T emit as "System:" — save for injection into first User turn
                                 }
                                 NeuralTurn.Role.USER -> {
                                     if (!systemInjected) {
-                                        val sysContent = history.firstOrNull { it.role == NeuralTurn.Role.SYSTEM }?.content ?: ""
+                                        val sysContent = processedHistory.firstOrNull { it.role == NeuralTurn.Role.SYSTEM }?.content ?: ""
                                         val fullContext = if (sysContent.isNotBlank()) {
                                             "### SYSTEM INSTRUCTION:\n$systemPrompt\n$sysContent\n\nUser: ${turn.content.trim()}"
                                         } else {
@@ -180,14 +192,14 @@ class NeuralGateway @Inject constructor(
                         }
                     } else {
                         // Standard Gemma IT Format
-                        history.forEach { turn ->
+                        processedHistory.forEach { turn ->
                             val role = when(turn.role) {
                                 NeuralTurn.Role.USER -> "user"
                                 NeuralTurn.Role.ASSISTANT -> "model"
                                 NeuralTurn.Role.SYSTEM -> "user" // Gemma lumps system into user
                             }
                             append("<start_of_turn>$role\n")
-                            if (turn.role == NeuralTurn.Role.SYSTEM || (!hasSystemTurn && turn == history.first())) {
+                            if (turn.role == NeuralTurn.Role.SYSTEM || (!hasSystemTurn && turn == processedHistory.first())) {
                                 append(systemPrompt + "\n")
                             }
                             append(turn.content.trim())
@@ -203,7 +215,7 @@ class NeuralGateway @Inject constructor(
                         append(systemPrompt)
                         append("<|im_end|>\n")
                     }
-                    history.forEach { turn ->
+                    processedHistory.forEach { turn ->
                         val role = when(turn.role) {
                             NeuralTurn.Role.USER -> "user"
                             NeuralTurn.Role.ASSISTANT -> "assistant"

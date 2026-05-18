@@ -40,8 +40,8 @@ class SkillIntentRouter @Inject constructor(
          */
         private val CLASSIFICATION_PROMPT = """
             |Classify this user message. Reply with ONLY the letter A or B:
-            |A = You can answer directly from your knowledge (casual chat, opinions, greetings, creative writing)
-            |B = Needs external information, fact-checking, search, calculations, or tools (who is X, what happened, current events, specific data, medical info)
+            |A = Can be answered directly or via fast tool calls (conversational, general info, simple search, fast questions, medical lookup, facts)
+            |B = Requires deep step-by-step reasoning, multi-step planning, complex math derivation, or detailed clinical diagnostic reasoning.
             |
             |User message: "%s"
             |
@@ -49,8 +49,9 @@ class SkillIntentRouter @Inject constructor(
 
         // Precompiled safety-critical patterns that ALWAYS route to ORIGA
         // regardless of LLM classification (defense in depth)
+        // Strictly limited to extreme high-risk/life-threatening situations to prevent OODA lockout.
         private val SAFETY_CRITICAL_REGEX = Regex(
-            "(medical|medicine|meds|medication|dosage|drug interaction|side effect|prescription|resep|obat|dosis|overdose|suicide|bunuh diri|darurat|emergency|migrain|headache|sakit|disease|fever|demam|pain|nyeri|doctor|dokter|clinical|education|teach|learn|lesson|explain topic|school|study|sekolah|siswa|guru|ajar|belajar|pelajaran|jelaskan topik|paracetamol|panadol|ibuprofen|aspirin|acetaminophen|amoxicillin|antibiotic|antibiotik|insulin|vaccine|vaksin|health|kesehatan|hospital|rumah sakit|clinic|klinik|nurse|perawat|pharmacy|apotek|allergy|alergi|cough|batuk|flu|pilek|wound|luka|blood|darah|depress|depresi|anxiety|panic attack|self-harm|matematika|fisika|kimia|biologi)",
+            "(suicide|bunuh diri|overdose|overdosis|self-harm|gantung diri|racun|poisoning|darurat medis kritis|emergency vital)",
             RegexOption.IGNORE_CASE
         )
     }
@@ -155,33 +156,31 @@ class SkillIntentRouter @Inject constructor(
             result.contains("A") && !result.contains("B") -> "A"
             result.contains("B") && !result.contains("A") -> "B"
             else -> {
-                Timber.w("🧠 [ROUTER] LLM gave ambiguous classification: '$result'. Defaulting to ORIGA.")
-                "B" // Conservative: ambiguous → use tools
+                Timber.w("🧠 [ROUTER] LLM gave ambiguous classification: '$result'. Defaulting to OODA FAST.")
+                "A" // Highly permissive: default to OODA Fast for fast responses
             }
         }
     }
 
     /**
-     * Conservative heuristic fallback — routes knowledge-seeking queries to ORIGA.
-     * Used when LLM is unavailable or classification fails.
+     * Heuristic fallback — routes deep-reasoning or complex analytical queries to ORIGA.
+     * Defaults general search and conversations to OODA Fast.
      */
     private fun heuristicRoute(query: String): Pair<RoutingPath, AgentSkillRegistry.SkillType> {
         val lower = query.lowercase()
         
-        // Knowledge-seeking patterns → ORIGA
-        val needsResearch = lower.contains(Regex(
-            "(who is|what is|when did|where is|how to|how does|why does|" +
-            "siapa|apa itu|kapan|dimana|bagaimana|mengapa|kenapa|" +
-            "tell me about|explain|define|search|find|lookup|" +
-            "jelaskan|cari|carikan|tolong cari|tau ga|tau tidak|kau tau)"
+        // Only route to ORIGA for deep reasoning, multi-step calculations, or complex diagnostic analysis
+        val needsDeepReasoning = lower.contains(Regex(
+            "(step by step|explain step|detailed analysis|reasoning|derivation|analyze|diagnostic|diagnosis|diagnostic reasoning|" +
+            "langkah demi langkah|jelaskan detail|analisis|persamaan kompleks|rumus rumit|diagnosa)"
         ))
         
-        return if (needsResearch) {
+        return if (needsDeepReasoning) {
             val skill = classifySkillType(query)
-            Timber.i("🧠 [ROUTER] Heuristic: Knowledge-seeking query. Routing to ORIGA via $skill")
+            Timber.i("🧠 [ROUTER] Heuristic: Deep reasoning query. Routing to ORIGA via $skill")
             RoutingPath.ORIGA_REASONING to skill
         } else {
-            Timber.i("🏎️ [ROUTER] Heuristic: Casual/creative query. Routing to OODA Fast.")
+            Timber.i("🏎️ [ROUTER] Heuristic: Fast response query. Routing to OODA Fast.")
             RoutingPath.OODA_FAST to AgentSkillRegistry.SkillType.GENERAL
         }
     }

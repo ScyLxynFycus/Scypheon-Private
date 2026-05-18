@@ -30,7 +30,7 @@ class StreamingToolParser {
             val jsonText = currentText.substring(startIndex + 11, endIndex).trim()
             return try {
                 val json = JSONObject(jsonText)
-                val name = json.getString("name")
+                val name = if (json.has("toolName")) json.getString("toolName") else json.getString("name")
                 val argsJson = json.optJSONObject("arguments")
                 
                 val args = mutableMapOf<String, Any?>()

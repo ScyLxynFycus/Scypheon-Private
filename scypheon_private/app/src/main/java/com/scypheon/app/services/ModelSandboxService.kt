@@ -99,8 +99,14 @@ class ModelSandboxService : Service() {
                         )
                         
                         val success = result > 0
-                        callback.onInitializationResult(success)
-                        if (success) {
+                        if (!success) {
+                            if (result == -3L) {
+                                callback.onInternalError("CONTEXT_LIMIT")
+                            } else {
+                                callback.onInternalError("HARD_LOAD_ERROR")
+                            }
+                        } else {
+                            callback.onInitializationResult(true)
                             callback.onHardwareStatusUpdate(llama.getHardwareStatus())
                         }
                     } catch (e: Exception) {
@@ -130,8 +136,14 @@ class ModelSandboxService : Service() {
                         )
                         
                         val success = result > 0
-                        callback.onInitializationResult(success)
-                        if (success) {
+                        if (!success) {
+                            if (result == -3L) {
+                                callback.onInternalError("CONTEXT_LIMIT")
+                            } else {
+                                callback.onInternalError("HARD_LOAD_ERROR")
+                            }
+                        } else {
+                            callback.onInitializationResult(true)
                             callback.onHardwareStatusUpdate(llama.getHardwareStatus())
                         }
                     } catch (e: Exception) {
@@ -204,7 +216,7 @@ class ModelSandboxService : Service() {
                                     // 🛑 CRITICAL FIX: ZOMBIE INFERENCE KILLER
                                     Timber.w("💀 UI Client disconnected during inference! Sending hard kill signal to C++ engine.")
                                     llama.cancelInference()
-                                    this@launch.cancel() // Matikan coroutine ini secara paksa
+                                    cancel() // Matikan coroutine ini secara paksa
                                 }
                             }
                             
@@ -290,26 +302,36 @@ class ModelSandboxService : Service() {
 
         override fun saveSession(path: String, callback: ISandboxStatusCallback) {
             serviceScope.launch {
-                val success = llama.saveSession(path)
-                try { callback.onInitializationResult(success) } catch (e: RemoteException) {}
+                jobMutex.withLock {
+                    val success = llama.saveSession(path)
+                    try { callback.onInitializationResult(success) } catch (e: RemoteException) {}
+                }
             }
         }
 
         override fun loadSession(path: String, callback: ISandboxStatusCallback) {
             serviceScope.launch {
-                val success = llama.loadSession(path)
-                try { callback.onInitializationResult(success) } catch (e: RemoteException) {}
+                jobMutex.withLock {
+                    val success = llama.loadSession(path)
+                    try { callback.onInitializationResult(success) } catch (e: RemoteException) {}
+                }
             }
         }
 
         override fun reclaimMemory(level: Int) {
-            llama.setTrimLevel(level)
+            serviceScope.launch {
+                jobMutex.withLock {
+                    llama.setTrimLevel(level)
+                }
+            }
         }
 
         override fun getEmbeddings(text: String, callback: ISandboxStatusCallback) {
             serviceScope.launch {
-                val result = llama.getEmbeddings(text)
-                try { callback.onEmbeddings(result) } catch (e: RemoteException) {}
+                jobMutex.withLock {
+                    val result = llama.getEmbeddings(text)
+                    try { callback.onEmbeddings(result) } catch (e: RemoteException) {}
+                }
             }
         }
 
@@ -320,11 +342,13 @@ class ModelSandboxService : Service() {
 
         override fun attachTensorMemory(shmFd: ParcelFileDescriptor, tensorSize: Long, modelHash: String) {
             serviceScope.launch {
-                try {
-                    // C++ mengambil alih file descriptor
-                    llama.attachShm(shmFd.fd, tensorSize)
-                } finally {
-                    shmFd.close() 
+                jobMutex.withLock {
+                    try {
+                        // C++ mengambil alih file descriptor
+                        llama.attachShm(shmFd.fd, tensorSize)
+                    } finally {
+                        shmFd.close() 
+                    }
                 }
             }
         }
@@ -332,11 +356,19 @@ class ModelSandboxService : Service() {
         override fun reportShmHealth(healthCode: Int) { /* Logic for telemetry sync */ }
         
         override fun nativeKvRestore(seqId: Int, lastPos: Int) {
-            serviceScope.launch { llama.kvRestore(seqId, lastPos) }
+            serviceScope.launch {
+                jobMutex.withLock {
+                    llama.kvRestore(seqId, lastPos)
+                }
+            }
         }
         
         override fun injectToken(tokenId: Int, kvOffset: Int, sequenceNumber: Long) {
-            serviceScope.launch { llama.injectToken(tokenId, kvOffset) }
+            serviceScope.launch {
+                jobMutex.withLock {
+                    llama.injectToken(tokenId, kvOffset)
+                }
+            }
         }
         
         override fun setPerformanceMode(mode: Int) { /* TODO: Thread priority tuning */ }
@@ -366,8 +398,10 @@ class ModelSandboxService : Service() {
 
         override fun probe(modelPath: String, backendMode: Int, callback: ISandboxStatusCallback) {
             serviceScope.launch {
-                val success = llama.probe(modelPath, backendMode)
-                try { callback.onInitializationResult(success) } catch (e: RemoteException) {}
+                jobMutex.withLock {
+                    val success = llama.probe(modelPath, backendMode)
+                    try { callback.onInitializationResult(success) } catch (e: RemoteException) {}
+                }
             }
         }
     }

@@ -758,6 +758,8 @@ static void apply_backend_enforcement(int backend_mode, llama_model_params& mode
         setenv("GGML_VULKAN", "0", 1);
         setenv("GGML_OPENCL", "0", 1);
         g_vulkan_disabled = true;
+        g_opencl_disabled = true;
+        g_active_backend_trying = "NONE";
         model_params.n_gpu_layers = 0;
         active_hardware_status = "CPU [Forced]";
         LOGi("[SAR] Absolute Backend enforcement: FORCE_CPU (Drivers Purged)");
