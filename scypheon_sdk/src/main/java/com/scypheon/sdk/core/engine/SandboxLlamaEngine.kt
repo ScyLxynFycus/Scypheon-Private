@@ -521,7 +521,8 @@ class SandboxLlamaEngine @Inject constructor(
 
     private fun getTimeoutMs(): Long {
         val isCpuMode = selectedBackendMode == 1 || lastKnownHardware.contains("CPU", ignoreCase = true)
-        return if (isCpuMode) 15 * 60 * 1000L else 3 * 60 * 1000L
+        // Prevent timeout during long prefills by granting a 15-minute window for all backends
+        return 15 * 60 * 1000L
     }
 
     override fun generateResponse(

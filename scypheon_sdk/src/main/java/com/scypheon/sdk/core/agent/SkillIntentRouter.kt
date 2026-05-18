@@ -50,7 +50,7 @@ class SkillIntentRouter @Inject constructor(
         // Precompiled safety-critical patterns that ALWAYS route to ORIGA
         // regardless of LLM classification (defense in depth)
         private val SAFETY_CRITICAL_REGEX = Regex(
-            "(medicine|dosage|drug interaction|side effect|obat|dosis|overdose|suicide|bunuh diri|darurat|emergency)",
+            "(medicine|meds|medication|dosage|drug interaction|side effect|prescription|resep|obat|dosis|overdose|suicide|bunuh diri|darurat|emergency|migrain|headache|sakit|disease|fever|demam|pain|nyeri|doctor|dokter|clinical|education|teach|learn|lesson|explain topic|school|study|sekolah|siswa|guru|ajar|belajar|pelajaran|jelaskan topik)",
             RegexOption.IGNORE_CASE
         )
     }
@@ -192,9 +192,9 @@ class SkillIntentRouter @Inject constructor(
     private fun classifySkillType(query: String): AgentSkillRegistry.SkillType {
         val lower = query.lowercase()
         return when {
-            lower.contains(Regex("(drug|medicine|pill|dosage|side effect|obat|dosis|pil|efek samping|paracetamol|amoxicillin)")) -> AgentSkillRegistry.SkillType.MEDICAL
+            lower.contains(Regex("(drug|medicine|meds|medication|pill|dosage|side effect|prescription|resep|obat|dosis|pil|efek samping|paracetamol|amoxicillin|migrain|headache|pain|nyeri|sakit|fever|demam)")) -> AgentSkillRegistry.SkillType.MEDICAL
             lower.contains(Regex("(calculate|math|formula|equation|hitung|rumus|persamaan|kalkul)")) -> AgentSkillRegistry.SkillType.STEM
-            lower.contains(Regex("(teach|learn|lesson|explain topic|ajar|belajar|pelajaran|jelaskan topik)")) -> AgentSkillRegistry.SkillType.EDUCATION
+            lower.contains(Regex("(teach|learn|lesson|explain topic|education|school|study|sekolah|siswa|guru|ajar|belajar|pelajaran|jelaskan topik)")) -> AgentSkillRegistry.SkillType.EDUCATION
             lower.contains(Regex("(difficult to read|dyslexia|reformat|sulit baca|disleksia)")) -> AgentSkillRegistry.SkillType.ACCESSIBILITY
             lower.contains(Regex("(why|explain reasoning|how did you|kenapa|mengapa|jelaskan alasan)")) -> AgentSkillRegistry.SkillType.EXPLAINABILITY
             lower.contains(Regex("(wikipedia|wiki|search|lookup|who is|what is|find info|fandom|cari|siapa|apa itu)")) -> AgentSkillRegistry.SkillType.RESEARCH
