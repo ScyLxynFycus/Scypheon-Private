@@ -198,36 +198,36 @@ class AgenticSkillOrchestrator @Inject constructor(
         val userQuery = baseHistory.lastOrNull { it.role == NeuralGateway.NeuralTurn.Role.USER }?.content ?: ""
         val (path, skillType) = router.routeMission(userQuery)
 
-        if (path == SkillIntentRouter.RoutingPath.OODA_FAST) {
-            Timber.i("🏎️ [STREAM_ROUTER] Routing directly to direct generation (OODA Fast)")
-            // OODA Fast streaming: bypass all tools/prompts/thinking and generate response directly
-            gateway.generateResponse(baseHistory, topK, topP, temp, 2048, enableThinking = false).collect { token ->
-                emit(token)
-            }
-        } else {
-            Timber.i("🧠 [STREAM_ROUTER] Routing to deep agentic tool-aware generation (ORIGA Reasoning via $skillType)")
-            val toolPrompt = toolRegistry.generateToolDefinitionsPrompt()
+        // [v1.6.0-SAR] Unified Agentic Pipeline:
+        // OODA Fast can now dynamically call tools if confident/low-risk.
+        // Instead of completely bypassing tools, OODA Fast runs a fast-path tool execution loop
+        // without thinking blocks (enableThinking = false) for ultra-low TTFT.
+        val actualThinking = if (path == SkillIntentRouter.RoutingPath.OODA_FAST) false else enableThinking
+        val maxTurns = if (path == SkillIntentRouter.RoutingPath.OODA_FAST) 2 else 5
 
-            val history = baseHistory.toMutableList()
-            // Prepend tool definitions to the context if not already present
-            if (history.none { it.content.contains("Gunakan format XML <tool_call>") }) {
-                history.add(0, NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, toolPrompt))
-            }
+        Timber.i("🏎️ [STREAM_ROUTER] Running agentic stream (Path: $path, Thinking: $actualThinking, MaxTurns: $maxTurns)")
+        val toolPrompt = toolRegistry.generateToolDefinitionsPrompt()
 
-            var turns = 0
-            var isFinalResponse = false
+        val history = baseHistory.toMutableList()
+        // Prepend tool definitions to the context if not already present
+        if (history.none { it.content.contains("Gunakan format XML <tool_call>") }) {
+            history.add(0, NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, toolPrompt))
+        }
 
-            while (turns < 5 && !isFinalResponse) {
-                turns++
-                streamingToolParser.reset()
-                
-                var currentTurnText = ""
-                var pendingToolCall: ToolCall? = null
-                // [v1.4.0-SAR] Track tool_call XML so we can strip it from UI output
-                var toolCallStartIndex = -1
+        var turns = 0
+        var isFinalResponse = false
 
-                // 1. Generate stream from LLM using passed config
-                gateway.generateResponse(history, topK, topP, temp, 2048, enableThinking).collect { token ->
+        while (turns < maxTurns && !isFinalResponse) {
+            turns++
+            streamingToolParser.reset()
+            
+            var currentTurnText = ""
+            var pendingToolCall: ToolCall? = null
+            // [v1.4.0-SAR] Track tool_call XML so we can strip it from UI output
+            var toolCallStartIndex = -1
+
+            // 1. Generate stream from LLM using passed config
+            gateway.generateResponse(history, topK, topP, temp, 2048, actualThinking).collect { token ->
                     currentTurnText += token
 
                     // 2. Intercept Tool Calls in real-time — DON'T emit tool_call XML to UI
@@ -337,7 +337,6 @@ class AgenticSkillOrchestrator @Inject constructor(
                         }
                     }
                 }
-            }
         }
     }
 }
