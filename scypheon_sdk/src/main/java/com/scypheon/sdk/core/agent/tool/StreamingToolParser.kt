@@ -39,11 +39,13 @@ class StreamingToolParser {
                 }
 
                 Timber.i("🛠️ [TOOL_PARSER] Intercepted call: $name")
-                reset()
+                // BUG FIX: Do not clear the entire buffer. Delete only up to the end of the parsed tag.
+                // This prevents dropping tokens that arrive after the </tool_call> tag in the same chunk.
+                buffer.delete(0, endIndex + 12)
                 ToolCall(name, args)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to parse tool call JSON: $jsonText")
-                reset()
+                buffer.delete(0, endIndex + 12)
                 null
             }
         }

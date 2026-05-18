@@ -151,8 +151,9 @@ class LiteRtEliteEngine @Inject constructor(
     }
 
     override fun isReady(): Boolean = isInitialized && try {
+        // BUG FIX: Return false on exception, do not bypass the circuit breaker!
         circuitBreaker.allowRequest("litert_engine")
     } catch (e: Exception) {
-        true
+        false
     }
 }
