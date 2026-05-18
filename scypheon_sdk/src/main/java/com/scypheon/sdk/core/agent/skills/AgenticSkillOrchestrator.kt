@@ -195,134 +195,146 @@ class AgenticSkillOrchestrator @Inject constructor(
         enableThinking: Boolean = true,
         allowNetwork: Boolean = true
     ): Flow<String> = flow {
-        val toolPrompt = toolRegistry.generateToolDefinitionsPrompt()
+        val userQuery = baseHistory.lastOrNull { it.role == NeuralGateway.NeuralTurn.Role.USER }?.content ?: ""
+        val (path, skillType) = router.routeMission(userQuery)
 
-        val history = baseHistory.toMutableList()
-        // Prepend tool definitions to the context if not already present
-        if (history.none { it.content.contains("Gunakan format XML <tool_call>") }) {
-            history.add(0, NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, toolPrompt))
-        }
+        if (path == SkillIntentRouter.RoutingPath.OODA_FAST) {
+            Timber.i("🏎️ [STREAM_ROUTER] Routing directly to direct generation (OODA Fast)")
+            // OODA Fast streaming: bypass all tools/prompts/thinking and generate response directly
+            gateway.generateResponse(baseHistory, topK, topP, temp, 2048, enableThinking = false).collect { token ->
+                emit(token)
+            }
+        } else {
+            Timber.i("🧠 [STREAM_ROUTER] Routing to deep agentic tool-aware generation (ORIGA Reasoning via $skillType)")
+            val toolPrompt = toolRegistry.generateToolDefinitionsPrompt()
 
-        var turns = 0
-        var isFinalResponse = false
-
-        while (turns < 5 && !isFinalResponse) {
-            turns++
-            streamingToolParser.reset()
-            
-            var currentTurnText = ""
-            var pendingToolCall: ToolCall? = null
-            // [v1.4.0-SAR] Track tool_call XML so we can strip it from UI output
-            var toolCallStartIndex = -1
-
-            // 1. Generate stream from LLM using passed config
-            gateway.generateResponse(history, topK, topP, temp, 2048, enableThinking).collect { token ->
-                currentTurnText += token
-
-                // 2. Intercept Tool Calls in real-time — DON'T emit tool_call XML to UI
-                val toolCall = streamingToolParser.processToken(token)
-                if (toolCall != null) {
-                    pendingToolCall = toolCall
-                    // Mark where the <tool_call> started so we can strip it
-                    toolCallStartIndex = currentTurnText.indexOf("<tool_call>")
-                }
-                
-                // Only emit tokens to UI if we haven't entered a tool_call block
-                if (toolCallStartIndex == -1) {
-                    emit(token)
-                }
+            val history = baseHistory.toMutableList()
+            // Prepend tool definitions to the context if not already present
+            if (history.none { it.content.contains("Gunakan format XML <tool_call>") }) {
+                history.add(0, NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, toolPrompt))
             }
 
-            // 3. Handle Tool Execution if detected
-            if (pendingToolCall != null) {
-                val toolCall = pendingToolCall!!
-                Timber.i("🛠️ [STREAM_TOOL] Found tool call: ${toolCall.toolName}")
-                
-                // Strip the tool_call XML from the assistant turn text
-                val cleanAssistantText = if (toolCallStartIndex >= 0) {
-                    currentTurnText.substring(0, toolCallStartIndex).trim()
-                } else {
-                    currentTurnText
-                }
-                
-                // Brief UI status indicator (not raw data)
-                val toolActivity = toolRegistry.resolve(toolCall.toolName)?.getActivityDescription(toolCall.arguments)
-                    ?: "Processing ${toolCall.toolName}..."
-                emit("\n\n*🔍 $toolActivity*\n\n")
-                
-                val context = ExecutionContext(sessionId, 5000L, allowNetwork = allowNetwork)
-                val results = toolMesh.dispatch(listOf(toolCall), context)
-                val result = results.firstOrNull()
+            var turns = 0
+            var isFinalResponse = false
 
-                if (result is ToolResult.AwaitingApproval) {
-                    emit("\n⚠️ *This action requires your confirmation: ${result.reason}*\n")
-                    history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.ASSISTANT, cleanAssistantText))
-                    history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, "[AWAITING_APPROVAL] User must authorize ${result.toolName}"))
-                    isFinalResponse = true
-                } else {
-                    // [v1.4.0-SAR] Extract clean data and feed back to LLM for synthesis.
-                    // The LLM will CONTINUE generating to explain the results to the user.
-                    val resultText = when (result) {
-                        is ToolResult.Success -> result.data?.toString() ?: "No data returned"
-                        is ToolResult.Error -> "Error: ${result.reason}"
-                        is ToolResult.Fallback -> "Fallback: ${result.data?.toString() ?: "No data"}"
-                        else -> "Unknown result"
+            while (turns < 5 && !isFinalResponse) {
+                turns++
+                streamingToolParser.reset()
+                
+                var currentTurnText = ""
+                var pendingToolCall: ToolCall? = null
+                // [v1.4.0-SAR] Track tool_call XML so we can strip it from UI output
+                var toolCallStartIndex = -1
+
+                // 1. Generate stream from LLM using passed config
+                gateway.generateResponse(history, topK, topP, temp, 2048, enableThinking).collect { token ->
+                    currentTurnText += token
+
+                    // 2. Intercept Tool Calls in real-time — DON'T emit tool_call XML to UI
+                    val toolCall = streamingToolParser.processToken(token)
+                    if (toolCall != null) {
+                        pendingToolCall = toolCall
+                        // Mark where the <tool_call> started so we can strip it
+                        toolCallStartIndex = currentTurnText.indexOf("<tool_call>")
                     }
                     
-                    history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.ASSISTANT, cleanAssistantText))
-                    
-                    // [v1.5.0-SAR] Inject PostToolUse hook contexts (e.g., clinical disclaimers)
-                    val hookContexts = toolMesh.lastPostHookContexts
-                    val hookContextStr = if (hookContexts.isNotEmpty()) {
-                        "\n\nSYSTEM CONTEXT FROM SAFETY HOOKS:\n" + hookContexts.joinToString("\n")
-                    } else ""
-                    
-                    history.add(NeuralGateway.NeuralTurn(
-                        NeuralGateway.NeuralTurn.Role.SYSTEM, 
-                        "Tool '${toolCall.toolName}' returned: $resultText$hookContextStr\n\nNow explain this result to the user in a clear, helpful way. Do NOT emit another <tool_call>."
-                    ))
-                    
-                    // DON'T emit raw results — the while-loop continues and 
-                    // the LLM will generate a human-readable synthesis on the next turn.
+                    // Only emit tokens to UI if we haven't entered a tool_call block
+                    if (toolCallStartIndex == -1) {
+                        emit(token)
+                    }
                 }
-                
-                blackBoxVault.logEvent("STREAM_TOOL_EXEC", "Tool: ${toolCall.toolName} processed.")
-            } else {
-                // ── STOP HOOKS (Claude Code stopHooks.ts pattern) ──────────
-                // No tool calls detected — LLM responded directly.
-                // Before marking as final, run stop hooks to validate output quality.
-                val stopResult = hookEngine.executeStopHooks(
-                    currentTurnText,
-                    ExecutionContext(sessionId, 5000L, allowNetwork = allowNetwork)
-                )
-                
-                when (stopResult) {
-                    is ToolHookEngine.StopHookResult.Complete -> {
-                        // All quality checks passed — response is final.
-                        isFinalResponse = true
+
+                // 3. Handle Tool Execution if detected
+                if (pendingToolCall != null) {
+                    val toolCall = pendingToolCall!!
+                    Timber.i("🛠️ [STREAM_TOOL] Found tool call: ${toolCall.toolName}")
+                    
+                    // Strip the tool_call XML from the assistant turn text
+                    val cleanAssistantText = if (toolCallStartIndex >= 0) {
+                        currentTurnText.substring(0, toolCallStartIndex).trim()
+                    } else {
+                        currentTurnText
                     }
-                    is ToolHookEngine.StopHookResult.ForceContinuation -> {
-                        // Stop hook found issues (truncated, raw data, leaked markers).
-                        // Inject blocking errors and force the LLM to re-generate.
-                        if (turns < 5) { // Respect max turns to prevent infinite loops
-                            Timber.w("🔄 [STOP_HOOK] Forcing continuation: ${stopResult.blockingErrors.size} issues")
-                            history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.ASSISTANT, currentTurnText))
-                            history.add(NeuralGateway.NeuralTurn(
-                                NeuralGateway.NeuralTurn.Role.SYSTEM,
-                                stopResult.blockingErrors.joinToString("\n")
-                            ))
-                            blackBoxVault.logEvent("STOP_HOOK_RETRY", "Forcing LLM retry due to: ${stopResult.blockingErrors.first()}")
-                            // Loop continues — LLM will re-generate
-                        } else {
-                            Timber.w("🔄 [STOP_HOOK] Would force retry but max turns reached. Accepting response.")
+                    
+                    // Brief UI status indicator (not raw data)
+                    val toolActivity = toolRegistry.resolve(toolCall.toolName)?.getActivityDescription(toolCall.arguments)
+                        ?: "Processing ${toolCall.toolName}..."
+                    emit("\n\n*🔍 $toolActivity*\n\n")
+                    
+                    val context = ExecutionContext(sessionId, 5000L, allowNetwork = allowNetwork)
+                    val results = toolMesh.dispatch(listOf(toolCall), context)
+                    val result = results.firstOrNull()
+
+                    if (result is ToolResult.AwaitingApproval) {
+                        emit("\n⚠️ *This action requires your confirmation: ${result.reason}*\n")
+                        history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.ASSISTANT, cleanAssistantText))
+                        history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, "[AWAITING_APPROVAL] User must authorize ${result.toolName}"))
+                        isFinalResponse = true
+                    } else {
+                        // [v1.4.0-SAR] Extract clean data and feed back to LLM for synthesis.
+                        // The LLM will CONTINUE generating to explain the results to the user.
+                        val resultText = when (result) {
+                            is ToolResult.Success -> result.data?.toString() ?: "No data returned"
+                            is ToolResult.Error -> "Error: ${result.reason}"
+                            is ToolResult.Fallback -> "Fallback: ${result.data?.toString() ?: "No data"}"
+                            else -> "Unknown result"
+                        }
+                        
+                        history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.ASSISTANT, cleanAssistantText))
+                        
+                        // [v1.5.0-SAR] Inject PostToolUse hook contexts (e.g., clinical disclaimers)
+                        val hookContexts = toolMesh.lastPostHookContexts
+                        val hookContextStr = if (hookContexts.isNotEmpty()) {
+                            "\n\nSYSTEM CONTEXT FROM SAFETY HOOKS:\n" + hookContexts.joinToString("\n")
+                        } else ""
+                        
+                        history.add(NeuralGateway.NeuralTurn(
+                            NeuralGateway.NeuralTurn.Role.SYSTEM, 
+                            "Tool '${toolCall.toolName}' returned: $resultText$hookContextStr\n\nNow explain this result to the user in a clear, helpful way. Do NOT emit another <tool_call>."
+                        ))
+                        
+                        // DON'T emit raw results — the while-loop continues and 
+                        // the LLM will generate a human-readable synthesis on the next turn.
+                    }
+                    
+                    blackBoxVault.logEvent("STREAM_TOOL_EXEC", "Tool: ${toolCall.toolName} processed.")
+                } else {
+                    // ── STOP HOOKS (Claude Code stopHooks.ts pattern) ──────────
+                    // No tool calls detected — LLM responded directly.
+                    // Before marking as final, run stop hooks to validate output quality.
+                    val stopResult = hookEngine.executeStopHooks(
+                        currentTurnText,
+                        ExecutionContext(sessionId, 5000L, allowNetwork = allowNetwork)
+                    )
+                    
+                    when (stopResult) {
+                        is ToolHookEngine.StopHookResult.Complete -> {
+                            // All quality checks passed — response is final.
                             isFinalResponse = true
                         }
-                    }
-                    is ToolHookEngine.StopHookResult.PreventCompletion -> {
-                        // Safety violation — stop immediately.
-                        Timber.e("🛑 [STOP_HOOK] Response blocked: ${stopResult.reason}")
-                        emit("\n\n⚠️ *Response was blocked by a safety check. Please rephrase your query.*\n")
-                        isFinalResponse = true
+                        is ToolHookEngine.StopHookResult.ForceContinuation -> {
+                            // Stop hook found issues (truncated, raw data, leaked markers).
+                            // Inject blocking errors and force the LLM to re-generate.
+                            if (turns < 5) { // Respect max turns to prevent infinite loops
+                                Timber.w("🔄 [STOP_HOOK] Forcing continuation: ${stopResult.blockingErrors.size} issues")
+                                history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.ASSISTANT, currentTurnText))
+                                history.add(NeuralGateway.NeuralTurn(
+                                    NeuralGateway.NeuralTurn.Role.SYSTEM,
+                                    stopResult.blockingErrors.joinToString("\n")
+                                ))
+                                blackBoxVault.logEvent("STOP_HOOK_RETRY", "Forcing LLM retry due to: ${stopResult.blockingErrors.first()}")
+                                // Loop continues — LLM will re-generate
+                            } else {
+                                Timber.w("🔄 [STOP_HOOK] Would force retry but max turns reached. Accepting response.")
+                                isFinalResponse = true
+                            }
+                        }
+                        is ToolHookEngine.StopHookResult.PreventCompletion -> {
+                            // Safety violation — stop immediately.
+                            Timber.e("🛑 [STOP_HOOK] Response blocked: ${stopResult.reason}")
+                            emit("\n\n⚠️ *Response was blocked by a safety check. Please rephrase your query.*\n")
+                            isFinalResponse = true
+                        }
                     }
                 }
             }

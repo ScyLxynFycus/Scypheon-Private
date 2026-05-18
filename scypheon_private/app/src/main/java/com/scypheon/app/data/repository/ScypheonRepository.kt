@@ -56,6 +56,10 @@ class ScypheonRepository @Inject constructor(
     private var currentTensorSize: Long = 0
     private var lastTensorsHash: String = ""
 
+    init {
+        memoryManager.setGateway(gateway)
+    }
+
     private val cacheDir by lazy { context.cacheDir.absolutePath }
     private val sessionCheckpointPath by lazy { "$cacheDir/last_session.gguf.state" }
     private val scope = CoroutineScope(Dispatchers.IO)
