@@ -1,5 +1,5 @@
 # Scypheon Enterprise System Architecture
-**Version:** 4.0 (Production / Enterprise-Grade Comprehensive Reference)
+**Version:** 5.0 (Production / Enterprise-Grade Complete Reference)
 **Classification:** Technical / Architecture Reference
 
 This document provides an exhaustive, production-grade architectural analysis of the Scypheon subsystems. It details the core workflows, resilience mechanisms, security protocols, agentic intelligence models, and physical file locations that power the platform.
@@ -48,6 +48,11 @@ The gateway dynamically compiles multi-turn chat history into model-specific tok
 * **Gemma Standard:** Generates standard `<start_of_turn>user\n...<end_of_turn>\n<start_of_turn>model\n` structures.
 * **Gemma Unsloth LoRA Fine-tunes (Plain-Text):** fine-tuned Gemma models using Unsloth do not recognize standard system tokens and ignore separate system turns. To prevent prompt leakage or alignment bypass, the `NeuralGateway` compiles conversational turns into a unified plain-text format (`User:` and `AI:` turns) and injects system mandates directly inside the user's first query under a `### SYSTEM INSTRUCTION:` preamble.
 * **ChatML (Qwen/Gemma-4 Custom):** Wraps turns in `<|im_start|>` and `<|im_end|>` delimiters.
+
+### 2.3 JIT Model Loader Proxy Process (`ModelLoader`)
+To decouple heavy GGUF file descriptor allocations from the core inference sandbox, Scypheon routes model assets through an isolated auxiliary process (`:loader`) managed by the `ModelLoader` service connection:
+* **AIDL IPC Interface:** The `ModelLoader` class binds to `ModelLoaderService` via an AIDL interface `IModelLoader` under the `Context.BIND_AUTO_CREATE` flag. It provides robust model file descriptor (`ParcelFileDescriptor`) allocation, allowing high-performance, JIT zero-latency model loading or purging on-demand.
+* **Resident Memory Governance:** Users can configure `isEnabled` to instantly invoke `purge()`, wiping the resident model files from high-speed memory and immediately releasing target system RAM when the application transitions to standby.
 
 ---
 
@@ -196,8 +201,14 @@ The `ZeroKnowledgeEnclave` implements hardware-backed cryptography to secure cha
 * **Encryption Schema:** Plaintext data is encrypted using the generated hardware key under a 12-byte initialization vector (IV) and a 128-bit authentication tag. The output is persisted in SQLite as a base64-encoded string (`Base64(IV + CipherText)`).
 * **Decryption and Deserialization:** The enclave reads the base64 string from the database, strips any line breaks or whitespace, extracts the first 12 bytes as the IV, and decrypts the remaining payload. If decryption fails, the engine falls back to legacy plaintext reading to prevent database locking.
 
-### 7.2 Helios Defensive Architecture
-* **Layer 0 Normalizer:** Normalizes inputs via NFC/NFKC unicode normalization, strips hidden control characters, and truncates text to 2048 characters to prevent buffer attacks.
+### 7.2 Zero-Contention PBKDF2 Database Startup Sequence (`DatabaseReadySignal`)
+When using room databases secured by **SQLCipher** for AES-256 database-at-rest encryption, the database setup triggers heavy JNI startup latency during key derivation:
+* **Thread Contention Issue:** Initializing SQLCipher JNI operations on the main thread often results in long monitor contention (~518ms) and skipped frames, which degrades application start speed.
+* **Orchestration Gate:** Scypheon resolves this startup race condition using a process-scoped `DatabaseReadySignal` containing a Kotlin `CompletableDeferred<Unit>` block.
+* **Startup Synchronization:** Cryptographic key derivation runs entirely on a background thread (`Dispatchers.IO`). ViewModels that execute database queries immediately upon launch suspend their calls on `DatabaseReadySignal.awaitReady()`. The splash screen is held active until the pre-warming SELECT 1 completes, entirely eliminating main-thread monitor contention and ensuring a smooth startup sequence.
+
+### 7.3 Helios Defensive Architecture
+* **Layer 0 Normalizer:** Sanitizes inputs via NFC/NFKC unicode normalization, strips hidden control characters, and truncates text to 2048 characters to prevent buffer attacks.
 * **Layer 1 Entropy Guard:** Calculates the Shannon entropy of the input string. Inputs exceeding an entropy threshold of `4.8` are blocked, preventing obfuscated binary payloads or polymorphic shellcode injections.
 * **Layer 2 Deterministic Rule Engine:** Screens queries against known adversarial patterns (e.g., "ignore previous instructions", "bypass security", or roleplay exploits) using compiled regex matchers.
 * **Layer 3 Embedding Anomaly Detector:** Evaluates the semantic similarity of the query against a database of known threat vectors. If the vector similarity score exceeds a risk threshold, the engine blocks the input before it reaches the reasoning layer.
@@ -221,6 +232,11 @@ The `DefaultResilienceCircuitBreaker` isolates failing subsystems to prevent cas
 * **Subsystem Isolation:** When a subsystem records 5 consecutive failures, the circuit breaker opens the circuit for 30 seconds, automatically blocking execution attempts.
 * **Half-Open Probing:** Once the cooldown timer expires, the breaker transitions to a `HALF_OPEN` state. It allows exactly one probe request through while rejecting other parallel calls. If the probe succeeds, the circuit closes; if it fails, the circuit re-opens, and the cooldown timer is reset.
 * **System Cancellation Exclusions:** System cancellations (e.g. coroutines canceled due to UI lifecycle changes) are excluded from failure tracking to prevent false positive triggers.
+
+### 8.3 Idempotent Token Restoration & Context Replay Ring Buffer
+To avoid resending full prompt contexts during recovery, Scypheon tracks tokens using a rolling `ContextReplayBuffer` ring queue:
+* **Context Replay Ring Queue:** Tokens generated during active inference are captured within a `ContextReplayBuffer` sliding ring queue (defaulting to 2048 tokens). Each `TokenSnapshot` records the token ID, `kvOffset` (obtained via `llama_kv_cache_seq_pos`), and a monotonic sequence number.
+* **Idempotent Token Injector:** During sandbox recovery, the engine restores the KV state using the `IdempotentTokenInjector`. The injector tracks the `lastProcessedSeq` using an atomic CAS (`AtomicLong`). If a token with a sequence number lower than or equal to the processed sequence arrives during a re-injection run, it is immediately discarded. Only higher sequence numbers trigger the native JNI token injection, preventing race conditions or duplicated context segments during Lazarus recoveries.
 
 ---
 
@@ -387,3 +403,8 @@ The core components described in this document are mapped to the following locat
   * `SolarisTelemetry.kt` — Async Channel-based batched NDJSON flusher and ring-buffer ring file rotator.
   * `ShmLifecycleManager.kt` — Unix shared memory allocation lifecycle buffers.
   * `MemoryGatekeeper.kt` — Context budget limits.
+  * `ContextReplayBuffer.kt` — Replay buffer token ring and idempotent injector.
+* **App Startup Sequence:** `scypheon_private/app/src/main/java/com/scypheon/app/startup/`
+  * `DatabaseReadySignal.kt` — Process-scoped CompletableDeferred synchronization gate.
+* **Model Loader Proxy Process:** `scypheon_sdk/src/main/java/com/scypheon/sdk/core/engine/`
+  * `ModelLoader.kt` — Proxy service manager connecting to ModelLoaderService over IModelLoader AIDL interfaces.
