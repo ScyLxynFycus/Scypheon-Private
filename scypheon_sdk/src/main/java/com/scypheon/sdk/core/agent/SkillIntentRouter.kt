@@ -50,7 +50,7 @@ class SkillIntentRouter @Inject constructor(
         // Precompiled safety-critical patterns that ALWAYS route to ORIGA
         // regardless of LLM classification (defense in depth)
         private val SAFETY_CRITICAL_REGEX = Regex(
-            "(medicine|meds|medication|dosage|drug interaction|side effect|prescription|resep|obat|dosis|overdose|suicide|bunuh diri|darurat|emergency|migrain|headache|sakit|disease|fever|demam|pain|nyeri|doctor|dokter|clinical|education|teach|learn|lesson|explain topic|school|study|sekolah|siswa|guru|ajar|belajar|pelajaran|jelaskan topik)",
+            "(medical|medicine|meds|medication|dosage|drug interaction|side effect|prescription|resep|obat|dosis|overdose|suicide|bunuh diri|darurat|emergency|migrain|headache|sakit|disease|fever|demam|pain|nyeri|doctor|dokter|clinical|education|teach|learn|lesson|explain topic|school|study|sekolah|siswa|guru|ajar|belajar|pelajaran|jelaskan topik|paracetamol|panadol|ibuprofen|aspirin|acetaminophen|amoxicillin|antibiotic|antibiotik|insulin|vaccine|vaksin|health|kesehatan|hospital|rumah sakit|clinic|klinik|nurse|perawat|pharmacy|apotek|allergy|alergi|cough|batuk|flu|pilek|wound|luka|blood|darah|depress|depresi|anxiety|panic attack|self-harm|matematika|fisika|kimia|biologi)",
             RegexOption.IGNORE_CASE
         )
     }
