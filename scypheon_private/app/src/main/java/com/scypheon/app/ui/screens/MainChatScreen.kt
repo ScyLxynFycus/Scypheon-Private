@@ -315,7 +315,7 @@ fun MainChatScreen(
                                     ) {
                                         Spacer(Modifier.width(6.dp))
                                         Text(
-                                            text = if (activeModelName == "no models selected") "STANDBY" else activeModelName.uppercase(),
+                                            text = if (activeModelName == "no models selected" || activeModelName.contains("(STANDBY)", ignoreCase = true)) "STANDBY" else activeModelName.uppercase(),
                                             style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White, letterSpacing = 0.5.sp)
                                         )
                                     }
@@ -1113,10 +1113,11 @@ fun MainChatScreen(
                         } else {
                             LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
                                 items(localModels) { file ->
+                                    val isActive = activeModelName.removeSuffix(" (STANDBY)") == file.name
                                     Surface(
                                         onClick = { onSelectLocalModel(file) },
                                         shape = RoundedCornerShape(12.dp),
-                                        color = if (activeModelName == file.name) Color(0xFFF5F5F5) else Color.Transparent,
+                                        color = if (isActive) Color(0xFFF5F5F5) else Color.Transparent,
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Row(
@@ -1126,7 +1127,7 @@ fun MainChatScreen(
                                             Icon(
                                                 imageVector = if (file.name.endsWith(".task") || file.name.endsWith(".litertlm")) Icons.Default.Bolt else Icons.Default.Psychology,
                                                 contentDescription = null,
-                                                tint = if (activeModelName == file.name) Color(0xFF1F1F1F) else Color.Gray,
+                                                tint = if (isActive) Color(0xFF1F1F1F) else Color.Gray,
                                                 modifier = Modifier.size(24.dp)
                                             )
                                             Spacer(Modifier.width(16.dp))
@@ -1143,7 +1144,7 @@ fun MainChatScreen(
                                                     style = TextStyle(fontSize = 11.sp, color = Color.Gray)
                                                 )
                                             }
-                                            if (activeModelName == file.name) {
+                                            if (isActive) {
                                                 Icon(Icons.Default.Check, contentDescription = "Active", tint = Color(0xFF00E676))
                                             }
                                         }
