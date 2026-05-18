@@ -1,5 +1,5 @@
 # Scypheon Enterprise System Architecture
-**Version:** 5.0 (Production / Enterprise-Grade Complete Reference)
+**Version:** 6.0 (Production / Enterprise-Grade Comprehensive Reference)
 **Classification:** Technical / Architecture Reference
 
 This document provides an exhaustive, production-grade architectural analysis of the Scypheon subsystems. It details the core workflows, resilience mechanisms, security protocols, agentic intelligence models, and physical file locations that power the platform.
@@ -165,29 +165,49 @@ The `LiveSessionOrchestrator` implements a continuous voice-to-voice and vision-
 
 ---
 
-## 6. UI Automation Puppet Master
+## 6. HITL (Human-in-the-Loop) Puppet Subsystem
 
-For users with dexterity or cognitive impairments, Scypheon features a local automation engine, the `PuppetMasterAndroid`, which registers as an Android `AccessibilityService`.
+Within the `:app` client codebase, Scypheon enforces strict security boundaries on background agent swarm execution via the Human-in-the-Loop (HITL) Puppet Subsystem.
 
 ```
-                  Automation Command Ingested
+                  [VitreusFlowWorker] Background Run
                                |
-                       [PuppetMasterAndroid]
+                    Acquire Local LLM Mutex
                                |
-                   Exposes Accessibility Nodes?
-                  /                            \
-                Yes                             No
-                /                                 \
-               v                                   v
-     [Tier 2: Node Traversal]            [Tier 3: Coordinate Tap]
-  - Find nodes matching TargetText    - Build Path(x, y)
-  - Perform ACTION_CLICK              - Create GestureDescription
-  - Clickable Parent Fallback Lookup  - dispatchGesture (100ms)
+                  Run AgentOrchestrator Swarm
+                               |
+                  Scans Output for Risk Keywords
+                 (send, transfer, delete, pay etc.)
+                               |
+                     Risk Detected?
+                    /              \
+                  Yes               No
+                  /                   \
+                 v                     v
+     [Suspend & Raise HITL Alert]   [Save Success]
+  - DB Status: [STATUS_SYSTEM]
+  - Text: [AWAITING_APPROVAL]
+  - Issue Broadcast Notification
+                 |
+      User Clicks "APPROVE"
+                 |
+      [PuppetApprovalReceiver]
+  - DB Status: [STATUS_SUCCESS]
+  - Text: [USER_APPROVED]
+  - Cancel Notification ID 1338
 ```
 
-* **Tier 2 Node Traversal:** Scans the active window's `AccessibilityNodeInfo` tree to find nodes matching the target text or content description. When a match is found, the engine executes `node.performAction(AccessibilityNodeInfo.ACTION_CLICK)`.
-* **Clickable Parent Fallback:** If the target node itself is not clickable, the engine traverses up its parent tree, verifying parent nodes and clicking the first clickable ancestor to guarantee action execution.
-* **Tier 3 Physical Coordinate Tap:** When custom UI engines (e.g., Flutter or custom graphic layers) do not expose accessibility nodes, the engine executes a coordinate tap. It builds a `Path` at coordinates `(x, y)` and creates a `GestureDescription` description. This description is executed via `dispatchGesture` for 100 milliseconds, simulating a physical tap.
+### 6.1 Background Swarm Execution (`VitreusFlowWorker`)
+The background execution framework is managed by `VitreusFlowWorker`, implementing the following protocols:
+* **Foreground Service Promotion:** To evade Android's standard 10-minute OS task execution timeouts, the worker promotes itself to a Foreground service using `ForegroundInfo` configured under the `ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC` type (SDK 29+).
+* **JNI Kernel Panic Mitigation (LLM Mutex Serialization):** Running parallel native allocations can cause Mali graphics driver segmentation faults or kernel out-of-memory terminations. To secure the device's stability, all background inference tasks strictly serialize executions using a global static Kotlin `Mutex` block (`aiExecutionMutex.withLock`).
+* **Database TTL Sweep:** Cleans and prunes local SQLite datasets periodically. It executes a database Time-To-Live sweep that deletes historical conversation log records older than 30 days and expires zombie suspended approval tasks older than 15 minutes.
+* **Context-Aware Swarm Queries:** Aggregates recent conversation turns from `DualMemoryManager` (collecting up to 5 context-eligible successful messages from the last 3 sessions), dynamically compiles a comprehensive analysis prompt, and dispatches it to the `AgentOrchestrator` swarm.
+
+### 6.2 High-Risk Interception & Human Approval
+* **Keyword Risk Scanner:** Once the swarm generates the report, the worker parses the output for high-risk action keywords (`send`, `transfer`, `gmail`, `delete`, `remove`, `format`, `pay`).
+* **Suspended Approval Insertion:** If a match is triggered, the worker blocks the output, formats it under the `[AWAITING_APPROVAL]` tag, and persists the payload with status `STATUS_SYSTEM`. It then issues a high-priority system alarm notification with an interactive **APPROVE** action.
+* **Broadcast Authorization (`PuppetApprovalReceiver`):** When the user approves the action, the `PuppetApprovalReceiver` intercepts the `"com.scypheon.app.ACTION_APPROVE_PUPPET"` intent. It updates the database repository, transition-logging the message status to `STATUS_SUCCESS` under the `[USER_APPROVED]` header, and cancels active notification ID `1338`, allowing the background worker process to complete with verified operator consent.
 
 ---
 
@@ -272,7 +292,48 @@ The `SolarisTelemetry` engine manages high-performance, low-power telemetry coll
 
 ---
 
-## 10. Complete Comprehensive System Workflow Diagram
+## 10. GraphRAG Oracle & Spatial Physics Engine
+
+The visual representation of localized knowledge graphs is powered by a custom Compose-View drawing pipeline in `:app`, solving standard center-point collapsing anomalies through golden angle calculations.
+
+```
+        Raw Knowledge Edges -> physicsJob Launched (30Hz)
+                                       |
+                   Fermat's Spiral Angular Constellation Layout
+                            r = c * sqrt(i + 1)
+                                       |
+                   Breathing Swirl and Orbital swappings
+                                       |
+                       Emit Layout Snapshot (GraphLayout)
+                                       |
+                             Draw in Canvas (View)
+                                       |
+                        User Touch Screen Collision
+                                       |
+                         Matrix Coordinate Inverse
+                                       |
+                      O(1) Spatial Cell Grid Query
+```
+
+### 10.1 golden angle Fermat Constellation Layout (`GraphPhysicsEngine`)
+Standard physics layouts often collapse node relations into a single central cluster or trigger off-screen displacement. The `GraphPhysicsEngine` addresses this by applying a Fermat's Spiral math distribution:
+* **Fermat's Spiral Spacing:** Node positions are initialized using golden angle rotation spacing (`theta = i * 137.5f * (PI / 180f)`) and orbital spacing (`r = c * sqrt(i + 1f)`) under a strict separation constant `c = 160f`.
+* **Breathing & Swirl Animations:** Implements premium background micro-animations:
+  * `breathingScale = 1f + 0.04f * sin(time + i * 0.5f)`
+  * `orbitAngle = theta + 0.015f * cos(time * 0.3f + i * 0.2f)`
+* Nodes swirl and expand within stable coordinate bounds in `O(N)` linear rendering complexity on the `Dispatchers.Default` coroutine scope, executing at a fixed 30Hz timestep.
+
+### 10.2 Spatial Grid Indexing & Matrix Viewports (`NeuralGraphView`)
+* **Spatial Grid Indexing:** The `NeuralGraphView` handles large node sets through a grid-based spatial partitioner (`MutableGridSpatialIndex`). Nodes are bucketed into cell coordinate regions (size `150f`).
+* **Viewport Inverse Matrix Translation:** Standard canvas rendering scales and translates graphics through a Matrix. When touch gestures are captured, the view applies coordinate translation via an inverse matrix:
+  ```kotlin
+  inverseMatrix.mapPoints(touchPoint)
+  ```
+  It queries the matching cell bucket in `O(1)` constant lookup time instead of calculating distances for all active nodes on every single gesture, enabling frame-rate-free collision checking and instant haptic confirmation.
+
+---
+
+## 11. Complete Comprehensive System Workflow Diagram
 
 The diagram below illustrates the path of a query through the Scypheon system architecture:
 
@@ -354,7 +415,7 @@ graph TD
 
 ---
 
-## 11. Directory Mapping & Artifact Locations
+## 12. Directory Mapping & Artifact Locations
 
 The core components described in this document are mapped to the following locations in the source tree:
 
@@ -408,3 +469,9 @@ The core components described in this document are mapped to the following locat
   * `DatabaseReadySignal.kt` — Process-scoped CompletableDeferred synchronization gate.
 * **Model Loader Proxy Process:** `scypheon_sdk/src/main/java/com/scypheon/sdk/core/engine/`
   * `ModelLoader.kt` — Proxy service manager connecting to ModelLoaderService over IModelLoader AIDL interfaces.
+* **HITL (Human-in-the-Loop) Puppet Subsystem:** `scypheon_private/app/src/main/java/com/scypheon/app/workers/`
+  * `VitreusFlowWorker.kt` — Foreground-promoted background WorkManager orchestrator, global static LLM mutex lock-free synchronizer, database sweeps, and keyword risk interception.
+  * `PuppetApprovalReceiver.kt` — HITL approval intent BroadcastReceiver updating task message verification states.
+* **GraphRAG Constellation Engine:** `scypheon_private/app/src/main/java/com/scypheon/app/ui/`
+  * `viewmodel/GraphPhysicsEngine.kt` — Fermat's golden angle coordinate spiral layout engine with Breathing scale animations.
+  * `views/NeuralGraphView.kt` — Draw canvas viewer with inverse transform viewport matrix mapping and bucket Cell Spatial Grid O(1) Touch Indexing.
