@@ -1,304 +1,277 @@
 # Scypheon Enterprise System Architecture
-**Version:** 3.0 (Production / Enterprise-Grade)
+**Version:** 4.0 (Production / Enterprise-Grade Comprehensive Reference)
 **Classification:** Technical / Architecture Reference
 
-This document provides a highly comprehensive, enterprise-grade overview of the Scypheon architectural subsystems. It details the core workflows, resilience mechanisms, security protocols, and agentic intelligence models that power the platform.
+This document provides an exhaustive, production-grade architectural analysis of the Scypheon subsystems. It details the core workflows, resilience mechanisms, security protocols, agentic intelligence models, and physical file locations that power the platform.
 
 ---
 
 ## 1. Executive Summary
 
-Scypheon is a silcon-hardened, offline-native agentic AI platform engineered for humanitarian, medical, and disaster-response scenarios in edge environments. Departing from traditional reactive chatbot paradigms, Scypheon functions as an autonomous "Pocket Agent." The platform operates strictly under zero-knowledge privacy principles and relies on local inference, robust error recovery, and multi-modal context persistence.
+Scypheon is a silicon-hardened, offline-native agentic AI platform engineered for humanitarian, medical, and disaster-response operations in edge environments. Departing from traditional reactive chatbot paradigms, Scypheon functions as an autonomous "Pocket Agent." The system operates strictly under zero-knowledge privacy principles, local inference models, robust error recovery, and P2P mesh synchronization.
 
-The system is designed to maintain high operational availability in completely denied or degraded environments. This is accomplished through a suite of native resilience frameworks, an isolated sandboxed inference architecture, a multi-stage deterministic safety pipeline, and a dual-path orchestration engine that optimizes both low-latency decision-making and high-complexity reasoning.
-
----
-
-## 2. Agentic Intelligence & Orchestration
-
-Scypheon implements a dual-path orchestration architecture to balance fast execution speeds with deep, multi-step cognitive reasoning. The primary router dynamically delegates queries between two distinct execution models: the OODA Fast Engine and the ORRIGA Deep Reason Engine.
-
-### 2.1 The OODA Fast Engine
-
-The OODA (Observe, Orient, Decide, Act) loop is the primary execution path designed to handle standard user intent rapidly. Each stage is strictly isolated and hardened to ensure predictable execution times.
-
-```
-+-------------------------------------------------------------+
-|                     OODA Fast Engine                        |
-+-------------------------------------------------------------+
-| 1. OBSERVE                                                  |
-|    - Collects user query and last 3 conversation turns.      |
-|    - Assesses hardware snapshot (battery, thermals, network).|
-|    - Classifies urgency via rule-based UrgencyClassifier.   |
-+-------------------------------------------------------------+
-                              |
-                              v
-+-------------------------------------------------------------+
-| 2. ORIENT                                                   |
-|    - Normalizes and sanitizes input via InputSanitizer.     |
-|    - Matches query using pre-compiled regex (low memory).    |
-|    - Assesses environment constraint thresholds.             |
-|    - Resolves AgentSkillRegistry (fallback to General/NoOp).|
-+-------------------------------------------------------------+
-                              |
-                              v
-+-------------------------------------------------------------+
-| 3. DECIDE                                                   |
-|    - Filters available tools based on hardware constraints.  |
-|    - Ranks and scores candidate tools via ToolMatcher.      |
-|    - Extracts parameters using RegexParameterExtractor.      |
-|    - Validates schemas and applies medical safety gate.     |
-+-------------------------------------------------------------+
-                              |
-                              v
-+-------------------------------------------------------------+
-| 4. ACT                                                      |
-|    - Dispatches execution to sandbox via ToolMesh (5s cap).  |
-|    - Performs strict validation on outputs.                 |
-|    - Records trace telemetry cryptographically.             |
-+-------------------------------------------------------------+
-```
-
-#### ObserveStep
-The `ObserveStep` gathers all environmental and contextual telemetry needed to process a query.
-* **Context Retrieval:** Retreives up to 3 recent turns from the `ConversationRepository` within a strict 500ms timeout window.
-* **Environmental Snapshot:** Captures the `DeviceEnvironment` state, including battery percentage, charging state, thermal status (`NORMAL`, `WARM`, `CRITICAL`), and network type (`none`, `wifi`, `cellular`).
-* **Urgency Classification:** Invokes the `UrgencyClassifier` to determine if the query represents an immediate crisis. If classified as urgent, the system bypasses non-critical evaluation steps to expedite execution.
-
-#### OrientStep
-The `OrientStep` normalizes the query and resolves the required skill.
-* **Input Sanitization:** normalizes the query to NFC/NFKC form, removes invisible characters, and truncates text to a maximum of 2048 characters via the `InputSanitizer`.
-* **Regex Matchers:** Evaluates the query using pre-compiled, zero-allocation regular expressions (`MEDICAL_COMPLEX_REGEX`, `MEDICAL_FAST_REGEX`, `STEM_REGEX`, `EDUCATION_REGEX`) to map user intent directly to high-level skills.
-* **Hardware Constraints:** Translates the environmental snapshot into `EnvironmentConstraint` profiles:
-  * `CRITICAL_LOW_POWER`: Triggered when battery is below 10% and not charging.
-  * `THERMAL_THROTTLED`: Triggered when thermal status is critical.
-  * `NORMAL`: Default operational status.
-* **Skill Resolution:** Queries the `AgentSkillRegistry` to obtain the corresponding `SkillDefinition`. If the registry lacks the skill, it falls back to the `GENERAL` or `NoOp` skill. If the query complexity exceeds the high threshold or has no fast tools available, it is flagged for delegation to the ORRIGA engine.
-
-#### DecideStep
-The `DecideStep` selects the exact tool to execute based on active constraints and matching algorithms.
-* **Constraint Filtering:** Excludes tools that violate active constraints (e.g., blocking high-power tools during low power, or blocking network tools during offline operations).
-* **Tool Matching:** Evaluates the query against candidate fast tools using the `ToolMatcher` interface, ranking them by match scores.
-* **Parameter Extraction:** Extracts arguments from the query via `RegexParameterExtractor` based on the selected tool's definition.
-* **Validation & Safety Gates:** Validates parameters against the tool's JSON schema. If the selected tool is medical, schema validation is mandatory. The system applies a strict medical confidence gate; if the combined confidence (match score and validation status) falls below 0.80, the system blocks the tool and routes to a safe chat fallback.
-
-#### ActStep
-The `ActStep` executes the selected tool and validates its output.
-* **Sandboxed Execution:** Dispatches the execution request via `ToolMesh` using the dynamically generated `ExecutionContext` within a 5000ms timeout window.
-* **Output Validation:** Intercepts the execution output via `OutputValidator`. Output containing Personally Identifiable Information (PII) or showing high hallucination indices is automatically blocked.
-* **Telemetry & Cryptographic Tracing:** Logs execution latency, parameter configurations, and verification tokens via the `AuditLogger` interface.
-
-### 2.2 ORRIGA (Hybrid Graph Delegation)
-
-When the OODA loop encounters highly complex reasoning tasks (e.g., drug interaction analysis, disaster logistics, or advanced calculations), the router delegates execution to the `HybridGraphOrrigaEngine`. ORRIGA utilizes a Directed Acyclic Graph (DAG) cognitive flow consisting of five distinct phases.
-
-```
-               +--------------------------------------+
-               |             REFLECT                  |
-               | Retrieves historical context from   |
-               | semantic memory (MemoryReflector).   |
-               +--------------------------------------+
-                                  |
-                                  v
-               +--------------------------------------+
-               |             REASON                   |
-               | Decomposes complex tasks and        |
-               | extracts domains and entities.       |
-               +--------------------------------------+
-                                  |
-                                  v
-               +--------------------------------------+
-               |           INVESTIGATE                |
-               | Performs parallel local search and   |
-               | semantic factual extraction.         |
-               +--------------------------------------+
-                                  |
-                                  v
-               +--------------------------------------+
-               |             GROUND                   |
-               | Evaluates claims against knowledge   |
-               | bases via KnowledgeGuard.            |
-               +--------------------------------------+
-                                  |
-                                  v
-               +--------------------------------------+
-               |             ANSWER                   |
-               | Streams sanitized, grounded outputs  |
-               | to the user.                         |
-               +--------------------------------------+
-```
-
-1. **ReflectStep:** Accesses the `MemoryReflector` to retrieve past semantic memory fragments associated with the current session within a 3000ms window.
-2. **ReasonStep:** Decomposes the user query into logical steps, identifying the target domains and extracting entity keys.
-3. **InvestigateStep:** Conducts parallel factual queries across offline databases and local vector stores using the extracted entities and domain keywords.
-4. **GroundStep:** Passes the aggregated facts to the `KnowledgeGuardImpl` framework. Each claim is evaluated in parallel using structured coroutine concurrency. Invalid or highly speculative statements are filtered out, leaving only grounded, verified claims.
-5. **AnswerStep:** Synthesizes the verified facts and streams the final generated response to the user via the isolated sandboxed engine.
+To maintain high availability in completely denied or degraded environments, Scypheon integrates an isolated sandbox process inference gateway, a lock-free resilience circuit breaker, a multi-turn semantic memory graph, a real-time multimodal voice/vision pipeline, a hardware-backed cryptographic enclave, and an accessibility UI automation controller.
 
 ---
 
-## 3. Subsystems & Protocols Deep Dive
+## 2. Core Routing & Inference Gateway
 
-### 3.1 Phoenix Triage Protocol & MDRS
-
-The Phoenix Triage Protocol is a high-availability clinical triage workflow designed to assist medical personnel in edge environments. It relies on the Medical Data Retrieval System (MDRS) for local medical knowledge.
-
-#### MDRS Core Architecture
-MDRS indexes, stores, and retrieves local medical literature, including OpenFDA databases, and clinical guidelines.
-* **Vector Execution:** Utilizes a highly optimized local vector database (`LiteRtVectorEngine` / `SandboxVectorEngine`) to execute semantic searches across locally persisted medical literature.
-* **Relational Persistence:** Leverages `PharmacopeiaDao` and `AppDatabase` to match active substances, evaluate contraindications, and query standard dosage ranges.
-
-#### ClinicalValidator
-The `ClinicalValidator` is a safety enforcement layer that intercepts all generated text containing clinical recommendations before it reaches the user. It operates as a high-performance, single-pass validation engine:
+The entry point for all cognitive execution is the `NeuralGateway`. It acts as the primary dispatch and compilation layer for local LLM inference.
 
 ```
-+-----------------------------------------------------------------+
-|                    ClinicalValidator Pipeline                   |
-+-----------------------------------------------------------------+
-| 1. Text Tokenization & Extraction                               |
-|    - Normalizes text and splits it into alphanumeric tokens.    |
-|    - Filters duplicate words and runs batch queries.            |
-+-----------------------------------------------------------------+
-                                |
-                                v
-+-----------------------------------------------------------------+
-| 2. Database Grounding Verification                              |
-|    - Queries Pharmacopeia Database using extracted tokens.      |
-|    - Identifies active drug names and generic substances.       |
-+-----------------------------------------------------------------+
-                                |
-                                v
-+-----------------------------------------------------------------+
-| 3. Safety Violation Analysis                                    |
-|    - Checks active patient allergies.                           |
-|    - Detects High-Risk Classifications (disclaimer triggers).   |
-|    - Evaluates pregnancy contraindications (Category D & X).    |
-|    - Validates daily dosage limits (mg extraction & checking).  |
-+-----------------------------------------------------------------+
-                                |
-                                v
-+-----------------------------------------------------------------+
-| 4. Semantic Grounding Check                                     |
-|    - Evaluates semantic similarity of response against WHO      |
-|      indications database (threshold >= 0.60).                  |
-+-----------------------------------------------------------------+
-                                |
-                                v
-+-----------------------------------------------------------------+
-| 5. Output Hardening or Intercept                                |
-|    - Safe: Appends grounding verification token to text.        |
-|    - Unsafe: Intercepts and returns fail-closed warning message.|
-+-----------------------------------------------------------------+
+                  +--------------------------------+
+                  |         NeuralGateway          |
+                  +--------------------------------+
+                                   |
+                     Is LiteRT Elite Ready?
+                    /                      \
+                  Yes                       No
+                  /                           \
+                 v                             v
++-------------------------------+  +-------------------------------+
+|      LiteRtEliteEngine        |  |      SandboxLlamaEngine       |
+|  - Quantized Gemma-2B/4B NPU  |  |  - Sandbox Isolated Process   |
+|  - Fast Intent Classification |  |  - Zero-Copy Shared Memory    |
++-------------------------------+  +-------------------------------+
+                 | (Fallback)                  |
+                 +-----------> [Fail] -------->+
 ```
 
-* **Token Extraction:** Splits the generated text into alphanumeric tokens, normalizes the casing, filters out common words, and uses a unique `Set` mapping to deduplicate tokens.
-* **Single-Pass Database Grounding:** Queries the local database in a single transaction using the processed tokens to detect any documented pharmaceutical compounds.
-* **Allergy Check:** Compares identified substances against the user's allergy profile, throwing a safety block if a match is found.
-* **High-Risk Classifications:** Flags substances categorized as high-risk (e.g., narcotics or critical anesthetics), replacing the response with a strict medical disclaimer.
-* **Pregnancy Contraindications:** Blocks suggested use of drugs categorized under Pregnancy Category D or X if the patient is pregnant.
-* **Dosage Checker:** Uses regular expressions to scan the response for all occurrences of dosage values (e.g., `500 mg`, `1000mg`). It matches these values against the drug's daily limit in the database. Suggesting a dosage above the maximum safe limit triggers a critical safety override.
-* **Semantic Hallucination Filtering:** Evaluates the similarity between the generated response and the drug's official indications in the local database using the `EmbeddingGemmaAnomalyDetector`. A similarity score below `0.60` triggers a hallucination block, executing a fail-closed intercept that displays a standardized safety warning.
+### 2.1 Dual-Engine Dispatch & Fallback Cascade
+The gateway coordinates two native inference engines: the lightweight `LiteRtEliteEngine` (optimized for fast CPU/NPU processing) and the heavy `SandboxLlamaEngine` (isolated GGUF model loader running in a separate sandbox process).
+* **Deterministic Fallback Routing:** The gateway routes tokens using Kotlin Coroutines `Flow` streams. When a request is dispatched to `LiteRtEliteEngine`, any JNI memory failure, NPU timeout, or out-of-memory exception is caught via the `.catch` operator. The pipeline instantly triggers a cascade to the `SandboxLlamaEngine` to fulfill the prompt without disrupting the user experience.
 
-### 3.2 Lazarus Self-Healing Protocol (Binder Recovery)
-
-The Lazarus Protocol is a low-level self-healing mechanism that manages isolated process execution for heavy inference models. It separates the Kotlin application layer from the native C++ inference engine using a multi-process sandbox architecture.
-
-#### Multi-Process Isolation
-Heavy LLM inference runs inside an isolated process (`ModelSandboxService`) via Android's `isolatedProcess` attribute. If the C++ runtime encounters a segmentation fault, out-of-memory (OOM) error, or driver crash, the main application remains active.
-
-#### AIDL Proxy Pattern
-The application communicates with the sandbox via AIDL interfaces (`IScypheonSandbox`, `ISandboxStatusCallback`, and `IInferenceCallback`).
-* **Shared Memory (Zero-Copy):** Rather than copying large string objects across the Binder IPC boundary, the SDK allocates a Unix Shared Memory buffer (`android.os.SharedMemory`) and maps it into a direct ByteBuffer. Token generation writes directly to this shared memory buffer, and the Kotlin process reads it using a direct byte address.
-* **Token Extraction Security:** The consumer processes token extraction using null-terminated string parsing within a structured memory mapping, preventing buffer overflow vulnerabilities.
-
-#### Binder Death Recipient
-The `SandboxLlamaEngine` registers an `IBinder.DeathRecipient` on the sandbox binder interface:
-```kotlin
-private val sandboxDeathRecipient = IBinder.DeathRecipient {
-    handleServiceDeath()
-}
-```
-* **State Clean-up:** On process death, the system sets process health flags to false, cancels pending initialization or token generation jobs, releases active shared memory mappings, and unbinds from the dead service.
-* **Automatic Recovery:** When a new query is submitted, the engine binds to a new instance of the sandbox service, sends the decryption keys via the `DatabaseKeyManager`, and re-initializes the state.
-* **Dynamic Context Fallback:** To recover from out-of-memory crashes on resource-constrained devices, the recovery loop implements context-halving. If initialization fails at the requested context size (e.g., 4096 tokens), the system halves the context size on successive retries down to a minimum floor of 512 tokens.
-
-### 3.3 Resilience Circuit Breaker
-
-The `DefaultResilienceCircuitBreaker` prevents cascading failures across subsystems. It monitors consecutive failures of critical subsystems (e.g., local vector store searches, database queries, and inference engine initialization) and isolates failing components when threshold limits are reached.
-
-```
-                      +-------------------+
-                      |      CLOSED       | <-------------------+
-                      | (Normal Ops)      |                     |
-                      +-------------------+                     |
-                         |             ^                        |
-               Failure >= 5            | Probe Success          |
-                         |             |                        |
-                         v             |                        |
-                      +-------------------+                     |
-                      |       OPEN        |                     |
-                      | (Requests Blocked)|                     |
-                      +-------------------+                     |
-                         |                                      |
-               Recovery Timeout (30s)                           |
-                         |                                      |
-                         v                                      |
-                      +-------------------+                     |
-                      |     HALF-OPEN     | --------------------+
-                      | (Single Probe)    |   Probe Failure
-                      +-------------------+
-```
-
-#### Thread-Safe, Lock-Free Design
-The circuit breaker implements a lock-free architecture using Java atomic variables (`AtomicReference`, `AtomicInteger`, `AtomicLong`) to manage state transitions without thread contention:
-* `state`: An `AtomicReference` tracking the current state: `CLOSED`, `OPEN`, or `HALF_OPEN`.
-* `failures`: An `AtomicInteger` tracking consecutive errors.
-* `lastFailureTime`: An `AtomicLong` recording when the circuit was opened.
-
-#### State Transitions
-1. **CLOSED:** All requests pass through. If the failure count reaches 5, the state transitions to `OPEN`, and `lastFailureTime` is updated.
-2. **OPEN:** All requests are blocked. If the time elapsed since the last failure exceeds 30 seconds, a thread shifts the state to `HALF_OPEN` using `compareAndSet`.
-3. **HALF_OPEN:** The system permits exactly one probe request. While in this state, other incoming requests are rejected.
-   * If the probe succeeds, `failures` is reset to 0, and the state transitions back to `CLOSED`.
-   * If the probe fails, the state transitions back to `OPEN`, and the recovery timer is reset.
-
-#### System Cancellation Exclusions
-The circuit breaker distinguishes between operational failures (e.g., out-of-memory errors, service crashes, or timeouts) and system cancellations (e.g., a coroutine cancelled due to an Android fragment lifecycle change). System cancellations do not increment the failure counter, preventing false positive triggers.
-
-### 3.4 Helios (Security, Safety & Integrity)
-
-Helios is Scypheon's core security and safety enforcement subsystem. It operates locally on the edge device to secure inputs and outputs without relying on cloud-based guardrails.
-
-#### Layered Sanitization Pipeline
-Helios processes all inputs through a multi-stage validation sequence:
-* **Layer 0 (Normalization):** Sanitizes inputs via NFC/NFKC unicode normalization, strips hidden control characters, and truncates text to 2048 characters to prevent buffer attacks.
-* **Layer 1 (Entropy Guard):** Calculates the Shannon entropy of the input string. Inputs exceeding an entropy threshold of `4.8` are blocked, preventing obfuscated binary payloads or polymorphic shellcode injections.
-* **Layer 2 (Deterministic Rule Engine):** Screens queries against known adversarial patterns (e.g., "ignore previous instructions", "bypass security", or roleplay exploits) using compiled regex matchers.
-* **Layer 3 (Embedding Anomaly Detector):** Evaluates the semantic similarity of the query against a database of known threat vectors. If the vector similarity score exceeds a risk threshold, the engine blocks the input before it reaches the reasoning layer.
-* **Layer 4 (Tool Authorization Gateway):** Restricts tool execution based on the active security tier. Critical actions (e.g., broadcasting SOS alerts or updating medical profiles) require biometric verification or explicit user confirmation.
-
-#### Cryptographic Context Encapsulation
-Helios encapsulates system instructions and user queries within structured formatting constraints to prevent prompt injection attacks:
-* Cryptographic tags separate system mandates from user inputs.
-* The system enforces `[SYSTEM_MANDATE]` isolation, preventing user queries from modifying system configuration parameters.
+### 2.2 Dynamic Format Compilers
+The gateway dynamically compiles multi-turn chat history into model-specific token arrays based on the loaded model path:
+* **Llama-3 Format:** Generates standard header structures (`<|begin_of_text|>`, `<|start_header_id|>system<|end_header_id|>`, `<|eot_id|>`).
+* **Mistral Format:** Groups system and user messages inside `[INST]` wrappers.
+* **Gemma Standard:** Generates standard `<start_of_turn>user\n...<end_of_turn>\n<start_of_turn>model\n` structures.
+* **Gemma Unsloth LoRA Fine-tunes (Plain-Text):** fine-tuned Gemma models using Unsloth do not recognize standard system tokens and ignore separate system turns. To prevent prompt leakage or alignment bypass, the `NeuralGateway` compiles conversational turns into a unified plain-text format (`User:` and `AI:` turns) and injects system mandates directly inside the user's first query under a `### SYSTEM INSTRUCTION:` preamble.
+* **ChatML (Qwen/Gemma-4 Custom):** Wraps turns in `<|im_start|>` and `<|im_end|>` delimiters.
 
 ---
 
-## 4. Complete Execution Workflow Diagram
+## 3. Agentic OODA & ORRIGA Orchestration
+
+Scypheon utilizes a dual-path orchestration architecture to balance fast response times with deep cognitive reasoning.
+
+```
+                              User Query
+                                  |
+                           [Neural Gateway]
+                                  |
+                      Requires Deep Reasoning?
+                     /                        \
+                   Yes                         No
+                   /                             \
+                  v                               v
+       +--------------------+           +--------------------+
+       |  ORRIGA Deep Path  |           |   OODA Fast Path   |
+       +--------------------+           +--------------------+
+       | 1. REFLECT (Memory)|           | 1. OBSERVE (Turn)  |
+       | 2. REASON (Split)  |           | 2. ORIENT (Sanit)  |
+       | 3. INVESTIGATE     |           | 3. DECIDE (Tool)   |
+       | 4. GROUND (Check)  |           | 4. ACT (Execute)   |
+       | 5. ANSWER (Stream) |           +--------------------+
+       +--------------------+
+```
+
+### 3.1 The OODA Fast Engine
+The OODA loop intercepts standard queries to execute lightweight tool invocations rapidly.
+
+* **ObserveStep:** Gathers up to 3 recent conversation turns from `ConversationRepository` within a strict 500ms timeout window. It evaluates `DeviceEnvironment` telemetry (battery level, charging status, network type, and thermal levels) and classifies query urgency.
+* **OrientStep:** Truncates inputs to 2048 characters and normalizes the query via `InputSanitizer`. It performs intent classification using precompiled, zero-allocation regex pattern matchers (`MEDICAL_COMPLEX_REGEX`, `MEDICAL_FAST_REGEX`, `STEM_REGEX`, `EDUCATION_REGEX`) to map queries to available skills, assessing active hardware power and thermal constraints.
+* **DecideStep:** Excludes tools that violate active constraints (e.g. blocking power-intensive tools during critical low battery). It ranks available fast tools using the `ToolMatcher` and extracts parameters via `RegexParameterExtractor`. The extracted arguments are verified against JSON schemas; if a medical tool's combined confidence falls below `0.80`, it is blocked and falls back to a safe conversational response.
+* **ActStep:** Dispatches the tool call to the sandbox via the `Tool Mesh` framework, enforcing a 5000ms timeout window. It validates output via `OutputValidator` and logs execution telemetry cryptographically using the `AuditLogger`.
+
+### 3.2 The ORRIGA Deep Reason Engine
+When queries require deep reasoning, the router delegates execution to the `HybridGraphOrrigaEngine`, executing a Directed Acyclic Graph (DAG) cognitive flow:
+* **ReflectStep:** Accesses the `MemoryReflector` to retrieve past semantic memory fragments associated with the current session within a 3000ms window.
+* **ReasonStep:** Decomposes the user query into logical steps, identifying the target domains and extracting entity keys.
+* **InvestigateStep:** Conducts parallel factual queries across offline databases and local vector stores using the extracted entities and domain keywords.
+* **GroundStep:** Passes the aggregated facts to the `KnowledgeGuardImpl` framework. Each claim is evaluated in parallel using structured coroutine concurrency. Invalid or highly speculative statements are filtered out, leaving only grounded, verified claims.
+* **AnswerStep:** Synthesizes the verified facts and streams the final generated response to the user via the isolated sandboxed engine.
+
+---
+
+## 4. Multi-Agent Swarm Orchestrator & Critic Node
+
+For complex, multi-variable tasks requiring cooperative agents, Scypheon initiates the `AgentOrchestrator`.
+
+```
+                    Complex Swarm Request
+                              |
+                     [AgentOrchestrator]
+                              |
+               +--------------+--------------+
+               |                             |
+               v                             v
+        [Agent Node A]                [Agent Node B]
+       (executeTask)                 (executeTask)
+               |                             |
+         Max 300 Chars                 Max 300 Chars
+               |                             |
+               +--------------+--------------+
+                              |
+                              v
+                   Synthesize Agent Reports
+                              |
+                      Create Draft Reply
+                              |
+                     [Critic Audit Node]
+                    /                   \
+               Approved               Rejected
+                 /                         \
+                v                           v
+         Stream Draft Response      [REJECTED] Flag Intercept
+```
+
+* **RAM Optimization via Lazy Loading:** To prevent memory bloat during parallel swarm initialization, the orchestrator leverages Lazy injection properties (`Lazy<NeuralGateway>`, `Lazy<SafetyOrchestrator>`). Components are loaded into RAM only when the swarm execution begins.
+* **Context Explosion Protection:** To prevent context limit exhaustion when multiple agents run in parallel, the orchestrator truncates each agent's output to a maximum of 300 characters before synthesis.
+* **Critic Self-Reflection Audit:** Once the commander agent synthesizes the draft response, the orchestrator routes it to a dedicated **Critic Node** for self-reflection. The Critic audits the draft specifically for medical hallucinations or safety violations, responding with either `[APPROVED]` or `[REJECTED] <reason>`. If rejected, the orchestrator intercepts the output, blocks the draft, and returns a structured safety warning.
+
+---
+
+## 5. Multimodal Live Mode Subsystem
+
+The `LiveSessionOrchestrator` implements a continuous voice-to-voice and vision-to-voice interaction pipeline.
+
+```
+[ContinuousSpeechRecognizer] -> [STT] -> user text 
+                                           |
+[LiveVisionPipeline (CameraX)] -> Bitmap -> [LiveSessionOrchestrator] -> Gemma 4 -> tokens
+                                           |                                          |
+[Ambient Noise Classifier] ----> Context ->+                                          v
+                                                                                [TTS Audio Stream]
+                                                                                      |
+                                                                                [Auto-Listen]
+```
+
+* **Real-time State Machine:** The orchestrator maintains six conversational states to manage natural turn-taking:
+  * `Idle`: Initial inactive state.
+  * `Listening`: Actively recording user audio.
+  * `UserSpeaking`: User voice detected, streaming real-time STT fragments.
+  * `Processing`: Generating tokens through local inference.
+  * `AiSpeaking`: AI response streaming via TTS audio blocks.
+  * `Error`: Catching device, microphone, or safety pipeline failures.
+* **Proactive Multimodal Awareness:** Ingests direct CameraX frames (`injectCameraFrame`) as Bitmap caches and analyzes environmental audio (`injectAmbientContext`). These are injected into the LLM history using custom tags (e.g., `[VISION CONTEXT: ...]` and `[AMBIENT: ...]`). The system prompt instructs the model to proactively comment on dangerous or interesting sights in edge environments.
+* **Acoustic Level Feedback:** Normalizes incoming microphone RMS dB values into a continuous float scale (0.0 to 1.0) to drive a watercolor waveform visualization on the interface.
+* **Context Overrun Prevention:** Continuously prunes conversation history. It preserves active system instructions while maintaining only the last 20 conversation turns, avoiding performance degradation during extended sessions.
+
+---
+
+## 6. UI Automation Puppet Master
+
+For users with dexterity or cognitive impairments, Scypheon features a local automation engine, the `PuppetMasterAndroid`, which registers as an Android `AccessibilityService`.
+
+```
+                  Automation Command Ingested
+                               |
+                       [PuppetMasterAndroid]
+                               |
+                   Exposes Accessibility Nodes?
+                  /                            \
+                Yes                             No
+                /                                 \
+               v                                   v
+     [Tier 2: Node Traversal]            [Tier 3: Coordinate Tap]
+  - Find nodes matching TargetText    - Build Path(x, y)
+  - Perform ACTION_CLICK              - Create GestureDescription
+  - Clickable Parent Fallback Lookup  - dispatchGesture (100ms)
+```
+
+* **Tier 2 Node Traversal:** Scans the active window's `AccessibilityNodeInfo` tree to find nodes matching the target text or content description. When a match is found, the engine executes `node.performAction(AccessibilityNodeInfo.ACTION_CLICK)`.
+* **Clickable Parent Fallback:** If the target node itself is not clickable, the engine traverses up its parent tree, verifying parent nodes and clicking the first clickable ancestor to guarantee action execution.
+* **Tier 3 Physical Coordinate Tap:** When custom UI engines (e.g., Flutter or custom graphic layers) do not expose accessibility nodes, the engine executes a coordinate tap. It builds a `Path` at coordinates `(x, y)` and creates a `GestureDescription` description. This description is executed via `dispatchGesture` for 100 milliseconds, simulating a physical tap.
+
+---
+
+## 7. Security, Privacy & Zero-Knowledge Enclave
+
+Scypheon is designed to operate securely even if the hosting hardware is lost, compromised, or stolen in a crisis zone.
+
+### 7.1 Hardware-Backed Cryptographic Enclave
+The `ZeroKnowledgeEnclave` implements hardware-backed cryptography to secure chat logs, RAG indices, and medical telemetry data:
+* **Key Generation:** Generates a 256-bit AES symmetric key in the secure `AndroidKeyStore`, configuring GCM block modes and disabling padding (`AES/GCM/NoPadding`).
+* **Encryption Schema:** Plaintext data is encrypted using the generated hardware key under a 12-byte initialization vector (IV) and a 128-bit authentication tag. The output is persisted in SQLite as a base64-encoded string (`Base64(IV + CipherText)`).
+* **Decryption and Deserialization:** The enclave reads the base64 string from the database, strips any line breaks or whitespace, extracts the first 12 bytes as the IV, and decrypts the remaining payload. If decryption fails, the engine falls back to legacy plaintext reading to prevent database locking.
+
+### 7.2 Helios Defensive Architecture
+* **Layer 0 Normalizer:** Normalizes inputs via NFC/NFKC unicode normalization, strips hidden control characters, and truncates text to 2048 characters to prevent buffer attacks.
+* **Layer 1 Entropy Guard:** Calculates the Shannon entropy of the input string. Inputs exceeding an entropy threshold of `4.8` are blocked, preventing obfuscated binary payloads or polymorphic shellcode injections.
+* **Layer 2 Deterministic Rule Engine:** Screens queries against known adversarial patterns (e.g., "ignore previous instructions", "bypass security", or roleplay exploits) using compiled regex matchers.
+* **Layer 3 Embedding Anomaly Detector:** Evaluates the semantic similarity of the query against a database of known threat vectors. If the vector similarity score exceeds a risk threshold, the engine blocks the input before it reaches the reasoning layer.
+* **Layer 4 Tool Authorization Gateway:** Restricts tool execution based on the active security tier. Critical actions (e.g., broadcasting SOS alerts or updating medical profiles) require biometric verification or explicit user confirmation.
+
+---
+
+## 8. Hardware Governance, Lazarus & Circuit Breaker
+
+Edge deployment demands strict hardware control and fault isolation to ensure continuous operational availability.
+
+### 8.1 The Lazarus Protocol (Binder Death Recovery)
+Heavy C++ inference runs in an isolated service (`ModelSandboxService`) via Android's `isolatedProcess` attribute, protecting the main application from segmentation faults or driver crashes.
+* **Death Recipient Binding:** The `SandboxLlamaEngine` binds to the service and registers an `IBinder.DeathRecipient` interface. If the sandbox process terminates due to hardware strain, the death recipient triggers a cleanup sequence.
+* **Zero-Copy Shared Memory IPC:** Rather than copying large string objects across the Binder IPC boundary, the SDK allocates a Unix Shared Memory buffer (`android.os.SharedMemory`) and maps it into a direct ByteBuffer. Token generation writes directly to this shared memory buffer, and the Kotlin process reads it using a direct byte address.
+* **Context-Halving Recovery Loop:** Following a crash, the engine attempts to re-establish binding. If the crash was caused by an out-of-memory error at the requested context size (e.g., 4096 tokens), the recovery loop halving retry mechanism systematically reduces the target context size by half down to a minimum floor of 512 tokens to secure operational startup.
+
+### 8.2 Resilience Circuit Breaker
+The `DefaultResilienceCircuitBreaker` isolates failing subsystems to prevent cascading failures:
+* **Lock-Free Concurrency:** Implements a thread-safe, lock-free state engine using atomic reference variables (`AtomicReference`, `AtomicInteger`, `AtomicLong`).
+* **Subsystem Isolation:** When a subsystem records 5 consecutive failures, the circuit breaker opens the circuit for 30 seconds, automatically blocking execution attempts.
+* **Half-Open Probing:** Once the cooldown timer expires, the breaker transitions to a `HALF_OPEN` state. It allows exactly one probe request through while rejecting other parallel calls. If the probe succeeds, the circuit closes; if it fails, the circuit re-opens, and the cooldown timer is reset.
+* **System Cancellation Exclusions:** System cancellations (e.g. coroutines canceled due to UI lifecycle changes) are excluded from failure tracking to prevent false positive triggers.
+
+---
+
+## 9. Solaris Telemetry Engine
+
+The `SolarisTelemetry` engine manages high-performance, low-power telemetry collection under strict resource budgets.
+
+```
+       Metric Recorded -> channel.trySend(NDJSON Entry)
+                               |
+                  Buffer Capacity Saturated?
+                  /                        \
+                Yes                         No
+                /                             \
+        Drop Oldest Record               Enqueue Entry
+                |                              |
+                +--------------+---------------+
+                               |
+                      Drain Batch (Max 50)
+                               |
+                        [flushBatch]
+                               |
+                     File Exceeds 5MB Cap?
+                    /                      \
+                  Yes                       No
+                  /                           \
+         rotateFile (Prune 30%)          Write to File
+```
+
+* **Asynchronous Disk I/O Decoupling:** Decouples telemetry recording from the main inference pipeline using a Kotlin `Channel` buffer (500 capacity, `DROP_OLDEST` overflow strategy) running on the `Dispatchers.IO` coroutine context.
+* **Batched Flusher Pipeline:** Collects incoming metrics and flushes them to disk in batches of up to 50 records, minimizing disk write frequency to conserve battery.
+* **Atomic Ring Buffer Pruning:** Enforces a strict 5MB file cap on telemetry storage. When the `telemetry.ndjson` file exceeds this limit, the system prunes the oldest 30% of records in a single transaction, preventing storage depletion.
+
+---
+
+## 10. Complete Comprehensive System Workflow Diagram
 
 The diagram below illustrates the path of a query through the Scypheon system architecture:
 
 ```mermaid
 graph TD
     %% Input Layer
-    User[User Input / Telemetry] --> Helios{Helios Security Pipeline}
+    User[User Input / Sensory Telemetry] --> Helios{Helios Safety Pipeline}
 
     %% Helios Pipeline
     subgraph Helios Security Subsystem
-        Helios -- Blocked --> BlockOutput[Block & Record Audit]
+        Helios -- Violation --> AuditRedact[Audit Logger & Block]
         Helios -- Safe --> SanitizedInput[Sanitized Input]
     end
 
-    %% Routing
+    %% Routing Layer
     SanitizedInput --> AgenticRouter{Agentic Router}
 
     %% OODA Fast Path
@@ -311,14 +284,26 @@ graph TD
 
     %% ORRIGA Deep Path
     subgraph ORRIGA Graph Delegation
-        AgenticRouter -- Complex / Multi-domain --> Reflect2[ReflectStep]
+        AgenticRouter -- Complex Reasoning --> Reflect2[ReflectStep]
         Reflect2 --> Reason2[ReasonStep]
         Reason2 --> Investigate2[InvestigateStep]
         Investigate2 --> Ground2[GroundStep]
         Ground2 --> Answer2[AnswerStep]
     end
 
-    %% Circuit Breaker & Engine Execution
+    %% Swarm Path
+    subgraph Multi-Agent Swarm
+        AgenticRouter -- Multi-Agent Swarm --> Swarm[AgentOrchestrator]
+        Swarm --> AgentA[Agent A]
+        Swarm --> AgentB[Agent B]
+        AgentA --> SwarmCombine[Synthesized Context]
+        AgentB --> SwarmCombine
+        SwarmCombine --> CriticNode{Critic Node Audit}
+        CriticNode -- Approved --> Act1
+        CriticNode -- Rejected --> FailSwarm[Swarm Rejected Intercept]
+    end
+
+    %% Circuit Breaker & Sandbox Execution
     Act1 --> CB{Circuit Breaker}
     Answer2 --> CB
 
@@ -327,9 +312,13 @@ graph TD
         CB -- Blocked --> CoolDown[Circuit Breaker Cooldown Fallback]
     end
 
-    %% Lazarus link
+    %% Lazarus links
     SandboxEngine -. Process Crash .-> Lazarus[Lazarus Self-Healing]
     Lazarus -. Re-bind & Fallback Ctx .-> SandboxEngine
+    
+    %% Zero-copy shared memory
+    SandboxEngine -. Zero-Copy Shm .-> ShmBuffer[Shared Memory Direct Buffer]
+    ShmBuffer -. Token Extraction .-> SandboxEngine
 
     %% Output verification
     SandboxEngine --> ClinicalVal{Clinical Validator}
@@ -339,15 +328,17 @@ graph TD
         ClinicalVal -- Violation --> FailClosed[Fail-Closed Safety Override]
     end
 
-    %% Final output
+    %% Output Layer
     VerResult --> Output[Stream to User UI]
     FailClosed --> Output
     CoolDown --> Output
+    FailSwarm --> Output
+    AuditRedact --> Output
 ```
 
 ---
 
-## 5. Directory Mapping & Artifact Locations
+## 11. Directory Mapping & Artifact Locations
 
 The core components described in this document are mapped to the following locations in the source tree:
 
@@ -370,3 +361,29 @@ The core components described in this document are mapped to the following locat
 * **Helios Security Subsystem:** `scypheon_sdk/src/main/java/com/scypheon/sdk/core/safety/`
   * `SafetyPipelineImpl.kt` — Deterministic rules, entropy analyzer, and sanitization gates.
   * `InputSanitizerImpl.kt` — Normalization and truncation logic.
+  * `helios/EmbeddingGemmaAnomalyDetector.kt` — Semantic anomaly detection.
+  * `helios/Layer0Sanitizer.kt` — Normalization sanitizers.
+  * `helios/Layer1RuleEngine.kt` — Rule evaluation engine.
+  * `helios/Layer3BJailbreakDetector.kt` — Jailbreak roleplay detection.
+  * `helios/Layer5PrivacyShield.kt` — Metric/log scrubbing.
+  * `helios/PromptBuilder.kt` — System mandate encapsulation.
+* **Multi-Agent Swarm Orchestrator:** `scypheon_sdk/src/main/java/com/scypheon/sdk/core/swarm/`
+  * `AgentOrchestrator.kt` — Edge-optimized multi-agent commander and Critic self-reflection auditor.
+  * `BaseAgent.kt` — Dynamic agent base class.
+* **Multimodal Live Mode Subsystem:** `scypheon_sdk/src/main/java/com/scypheon/sdk/core/live/`
+  * `LiveSessionOrchestrator.kt` — Turn-taking state machine, vision context Bitmap extraction, and ambient noise integration.
+  * `ContinuousSpeechRecognizer.kt` — STT integration.
+  * `LiveAudioPipeline.kt` — Speech waveform audio analyzers.
+  * `LiveVisionPipeline.kt` — CameraX video frame processing.
+* **UI Automation Subsystem:** `scypheon_sdk/src/main/java/com/scypheon/sdk/core/automation/`
+  * `PuppetMasterAndroid.kt` — Accessibility Service automation, Tier 2 tree clicks, and Tier 3 dispatchGesture coordinate taps.
+  * `AccessibilityTreeParser.kt` — Accessibility tree node deserializers.
+  * `GestureInjector.kt` — Coordinate swipe and tap structures.
+* **Security & Privacy Subsystem:** `scypheon_sdk/src/main/java/com/scypheon/sdk/core/security/`
+  * `ZeroKnowledgeEnclave.kt` — Hardware-backed AES-256-GCM Keystore SQLite encryptor.
+  * `AegisVault.kt` — Encrypted local credential enclaves.
+  * `AuditChain.kt` — Cryptographic ledger audit loggers.
+* **Solaris Telemetry Subsystem:** `scypheon_sdk/src/main/java/com/scypheon/sdk/core/utils/`
+  * `SolarisTelemetry.kt` — Async Channel-based batched NDJSON flusher and ring-buffer ring file rotator.
+  * `ShmLifecycleManager.kt` — Unix shared memory allocation lifecycle buffers.
+  * `MemoryGatekeeper.kt` — Context budget limits.
