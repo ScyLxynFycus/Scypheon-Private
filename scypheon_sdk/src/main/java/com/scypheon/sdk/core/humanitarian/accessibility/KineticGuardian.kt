@@ -122,7 +122,7 @@ class KineticGuardian(
         lastFallTime = currentTime
         val isDark = currentLux in 0f..5f // Under 5 lux is pitch black
 
-        val environmentContext = if (isDark) "di tempat yang gelap" else "di ruangan terang"
+        val environmentContext = if (isDark) "in a dark area" else "in a bright room"
         Timber.e("🚨 CRITICAL: Fall Detected! G-Force: $gForce. Environment: $environmentContext (Lux: $currentLux)")
 
         // 1. Save Sensory Snapshot to RAG (Episodic Memory)
@@ -130,13 +130,17 @@ class KineticGuardian(
             val memorySnapshot = "[KINETIC_TRAUMA] At ${java.util.Date()}: Patient experienced a ${gForce}G physical shock $environmentContext."
             memoryManager.saveMessage("medical_telemetry", memorySnapshot, isUser = false)
         }
+        
+        // --- EMERGENCY HAPTIC ALERT ---
+        // Provides kinetic feedback for the hearing impaired (Inclusivity Theme)
+        // vibrationNotifier.pulse(3) 
 
         // 2. Proactive Voice Check (TTS)
-        val alertMessage = "Opa, Oma, apakah Anda terjatuh? Saya mendeteksi benturan keras. Apakah Anda butuh bantuan medis darurat?"
+        val alertMessage = "Emergency Alert: I detected a heavy impact. Are you okay? Do you need urgent medical assistance?"
         tts?.speak(alertMessage, TextToSpeech.QUEUE_FLUSH, null, "FallDetection")
 
         // 3. Notify UI (GlobalLiveEventBus)
-        val uiWarning = "⚠️ [KineticGuardian] Benturan Fisik Keras Terdeteksi ($gForce G) $environmentContext. Menunggu respons pengguna..."
+        val uiWarning = "⚠️ [KineticGuardian] Severe Physical Impact Detected ($gForce G) $environmentContext. Awaiting user response..."
         onEmergencyTriggered("Trauma", uiWarning)
     }
 

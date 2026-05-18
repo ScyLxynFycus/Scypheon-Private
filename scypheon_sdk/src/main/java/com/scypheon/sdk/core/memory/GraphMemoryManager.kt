@@ -4,6 +4,8 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import timber.log.Timber
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 
 /**
  * Edge Max: Local GraphRAG Storage.
@@ -21,9 +23,9 @@ class GraphMemoryManager(context: Context) : SQLiteOpenHelper(context, DATABASE_
 
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
-        // [QWEN CRITICAL FIX] Enable Write-Ahead Logging for better concurrency
-        db.execSQL("PRAGMA journal_mode=WAL")
-        db.execSQL("PRAGMA synchronous=NORMAL")
+        // [SAR Hardening] Standard SQLite initialization for concurrent GraphRAG traversal
+        db.enableWriteAheadLogging()
+        db.rawQuery("PRAGMA synchronous=NORMAL", null).close()
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -53,16 +55,15 @@ class GraphMemoryManager(context: Context) : SQLiteOpenHelper(context, DATABASE_
     /**
      * Checks if a new fact contradicts an existing one (Same Subject/Predicate, different Object).
      */
-    fun queryConflictingFact(subject: String, predicate: String, newObj: String): String? {
-        val db = this.readableDatabase
-        return try {
-            val cursor = db.rawQuery(
+    suspend fun queryConflictingFact(subject: String, predicate: String, newObj: String): String? = withContext(Dispatchers.IO) {
+        val db = readableDatabase
+        try {
+            db.rawQuery(
                 "SELECT object FROM $TABLE_GRAPH WHERE subject = ? AND predicate = ? AND object != ? COLLATE NOCASE",
                 arrayOf(subject.lowercase(), predicate.lowercase(), newObj.lowercase())
-            )
-            val conflict = if (cursor.moveToFirst()) cursor.getString(0) else null
-            cursor.close()
-            conflict
+            ).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
         } catch (e: Exception) {
             null
         }
@@ -71,8 +72,8 @@ class GraphMemoryManager(context: Context) : SQLiteOpenHelper(context, DATABASE_
     /**
      * Ingests a new fact into the Knowledge Graph.
      */
-    fun addFact(subject: String, predicate: String, obj: String, confidence: Float = 1.0f) {
-        val db = this.writableDatabase
+    suspend fun addFact(subject: String, predicate: String, obj: String, confidence: Float = 1.0f) = withContext(Dispatchers.IO) {
+        val db = writableDatabase
         try {
             db.execSQL(
                 "INSERT INTO $TABLE_GRAPH (subject, predicate, object, confidence, timestamp) VALUES (?, ?, ?, ?, ?)",
@@ -81,9 +82,6 @@ class GraphMemoryManager(context: Context) : SQLiteOpenHelper(context, DATABASE_
             Timber.i("🕸️ GraphRAG: Ingested Fact: [$subject] -> [$predicate] -> [$obj]")
         } catch (e: Exception) {
             Timber.e(e, "Failed to insert fact into Knowledge Graph")
-        } finally {
-            // Do not close the database helper here, as it may be used by other concurrent queries
-            // in the Swarm ecosystem.
         }
     }
 
@@ -91,71 +89,149 @@ class GraphMemoryManager(context: Context) : SQLiteOpenHelper(context, DATABASE_
      * Retrieves all facts related to a specific subject (Entity).
      * E.g., querying "Budi" might return ["budi is allergic to peanuts", "budi loves fishing"].
      */
-    fun querySubject(subject: String): List<String> {
+    suspend fun querySubject(subject: String): List<String> = withContext(Dispatchers.IO) {
         val facts = mutableListOf<String>()
-        val db = this.readableDatabase
+        val db = readableDatabase
         try {
-            val cursor = db.rawQuery(
+            db.rawQuery(
                 "SELECT subject, predicate, object FROM $TABLE_GRAPH WHERE subject = ? COLLATE NOCASE ORDER BY timestamp DESC LIMIT 10",
                 arrayOf(subject)
-            )
-            while (cursor.moveToNext()) {
-                val s = cursor.getString(0)
-                val p = cursor.getString(1)
-                val o = cursor.getString(2)
-                facts.add("$s $p $o")
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val s = cursor.getString(0)
+                    val p = cursor.getString(1)
+                    val o = cursor.getString(2)
+                    facts.add("$s $p $o")
+                }
             }
-            cursor.close()
         } catch (e: Exception) {
             Timber.e(e, "Failed to query Knowledge Graph")
-        } finally {
-            // Do not close DB to avoid concurrent IO crashing
         }
-        return facts
+        facts
+    }
+    
+    /**
+     * Retrieves all facts matching a specific predicate.
+     */
+    suspend fun queryByPredicate(predicate: String): List<Triple<String, String, String>> = withContext(Dispatchers.IO) {
+        val facts = mutableListOf<Triple<String, String, String>>()
+        val db = readableDatabase
+        try {
+            db.rawQuery(
+                "SELECT subject, predicate, object FROM $TABLE_GRAPH WHERE predicate = ? COLLATE NOCASE",
+                arrayOf(predicate)
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    facts.add(Triple(cursor.getString(0), cursor.getString(1), cursor.getString(2)))
+                }
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to query predicate from Knowledge Graph")
+        }
+        facts
     }
 
     /**
      * Retrieves the entire raw graph for visualization.
      */
-    fun getFullGraph(): List<Triple<String, String, String>> {
+    suspend fun getFullGraph(): List<Triple<String, String, String>> = withContext(Dispatchers.IO) {
         val graph = mutableListOf<Triple<String, String, String>>()
-        val db = this.readableDatabase
+        val db = readableDatabase
         try {
-            val cursor = db.rawQuery("SELECT subject, predicate, object FROM $TABLE_GRAPH ORDER BY timestamp DESC LIMIT 50", null)
-            while (cursor.moveToNext()) {
-                graph.add(Triple(cursor.getString(0), cursor.getString(1), cursor.getString(2)))
+            db.rawQuery("SELECT subject, predicate, object FROM $TABLE_GRAPH ORDER BY timestamp DESC LIMIT 50", null).use { cursor ->
+                while (cursor.moveToNext()) {
+                    graph.add(Triple(cursor.getString(0), cursor.getString(1), cursor.getString(2)))
+                }
             }
-            cursor.close()
         } catch (e: Exception) {
             Timber.e(e, "Failed to dump Knowledge Graph")
-        } finally {
-            // Do not close DB to avoid concurrent IO crashing
         }
-        return graph
+        graph
     }
 
     /**
      * Retrieves all known allergies across the graph.
      */
-    fun getAllergies(): String {
+    suspend fun getAllergies(): String = withContext(Dispatchers.IO) {
         val allergies = mutableListOf<String>()
-        val db = this.readableDatabase
+        val db = readableDatabase
         try {
-            val cursor = db.rawQuery(
+            db.rawQuery(
                 "SELECT subject, object FROM $TABLE_GRAPH WHERE predicate LIKE '%allergic%' OR predicate LIKE '%alergi%'",
                 null
-            )
-            while (cursor.moveToNext()) {
-                val s = cursor.getString(0)
-                val o = cursor.getString(1)
-                allergies.add("$s is allergic to $o")
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val s = cursor.getString(0)
+                    val o = cursor.getString(1)
+                    allergies.add("$s is allergic to $o")
+                }
             }
-            cursor.close()
         } catch (e: Exception) {
              Timber.e(e, "Failed to query allergies from Knowledge Graph")
-        } finally {
-            // Do not close DB to avoid concurrent IO crashing
         }
-        return if (allergies.isEmpty()) "No known allergies." else allergies.joinToString(", ")
+        if (allergies.isEmpty()) "No known allergies." else allergies.joinToString(", ")
+    }
+
+    /**
+     * [v1.5.0-SAR] Semantic search across ALL graph columns.
+     * 
+     * The old querySubject() only matched exact subject names.
+     * This fails when facts are stored as: user -> likes -> buah naga
+     * and the query keyword is "buah naga" (which is the object, not subject).
+     * 
+     * This method searches subject, predicate, AND object columns so the Oracle
+     * can surface relevant facts regardless of which field contains the keyword.
+     */
+    suspend fun semanticSearch(keyword: String, limit: Int = 10): List<String> = withContext(Dispatchers.IO) {
+        val facts = mutableListOf<String>()
+        if (keyword.isBlank()) return@withContext facts
+        
+        val db = readableDatabase
+        try {
+            val searchTerm = "%${keyword.lowercase()}%"
+            db.rawQuery(
+                """SELECT subject, predicate, object FROM $TABLE_GRAPH 
+                   WHERE subject LIKE ? COLLATE NOCASE 
+                      OR predicate LIKE ? COLLATE NOCASE 
+                      OR object LIKE ? COLLATE NOCASE
+                   ORDER BY timestamp DESC LIMIT ?""",
+                arrayOf(searchTerm, searchTerm, searchTerm, limit.toString())
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val s = cursor.getString(0)
+                    val p = cursor.getString(1)
+                    val o = cursor.getString(2)
+                    facts.add("$s $p $o")
+                }
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to semantic search Knowledge Graph for: $keyword")
+        }
+        facts
+    }
+
+    /**
+     * [v1.5.0-SAR] Returns ALL known facts about the user.
+     * Used by the Oracle to inject comprehensive personal context.
+     */
+    suspend fun queryUserFacts(limit: Int = 20): List<String> = withContext(Dispatchers.IO) {
+        val facts = mutableListOf<String>()
+        val db = readableDatabase
+        try {
+            db.rawQuery(
+                "SELECT subject, predicate, object FROM $TABLE_GRAPH WHERE subject = 'user' COLLATE NOCASE ORDER BY timestamp DESC LIMIT ?",
+                arrayOf(limit.toString())
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val s = cursor.getString(0)
+                    val p = cursor.getString(1)
+                    val o = cursor.getString(2)
+                    facts.add("$s $p $o")
+                }
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to query user facts from Knowledge Graph")
+        }
+        facts
     }
 }

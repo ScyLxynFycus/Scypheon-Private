@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<full-backup-content>
-    <!-- Exclude sensitive database and heavy model files from auto backup -->
-    <exclude domain="database" path="scypheon_db"/>
-    <exclude domain="sharedpref" path="hardware_prefs.xml"/>
-    <exclude domain="file" path="models/"/>
-</full-backup-content>

@@ -1,6 +1,5 @@
 package com.scypheon.sdk.core.swarm
 
-import com.scypheon.sdk.core.gateway.MultimodalRequest
 import com.scypheon.sdk.core.gateway.NeuralGateway
 import kotlinx.coroutines.flow.reduce
 import timber.log.Timber
@@ -19,12 +18,10 @@ abstract class BaseAgent(
     open suspend fun executeTask(task: String): String {
         Timber.i("🤖 Agent [$name] processing task...")
 
-        val request = MultimodalRequest(
-            prompt = task,
-            systemInstruction = roleInstruction
-        )
+        // Combine system instruction with task for simple routeRequest
+        val fullPrompt = "$roleInstruction\n\nTask: $task"
 
-        val response = gateway.processMultimodalRequest(request, gateway.currentModelPath ?: "").reduce { acc, value -> acc + value }
+        val response = gateway.routeRequest(fullPrompt).reduce { acc: String, value: String -> acc + value }
         return "Report from $name:\n$response"
     }
 }

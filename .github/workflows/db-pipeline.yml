@@ -1,0 +1,48 @@
+name: Pharmacopeia DB Generation & Signing
+on:
+  push:
+    paths: ['data/source/**']
+  workflow_dispatch: # Manual trigger for audits
+
+jobs:
+  build-and-sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+        
+      - name: Install dependencies
+        run: pip install cryptography
+      
+      - name: Generate Deterministic DB
+        run: python scripts/generate_db.py
+        env:
+          DB_SOURCE_DIR: data/source
+          DB_OUTPUT_DIR: build/db
+          
+      - name: Sign Manifest (CI Key)
+        run: python scripts/sign_manifest.py
+        env:
+          DB_PATH: build/db/pharmacopeia.db
+          SIGNING_KEY_PATH: ${{ secrets.DB_SIGNING_KEY_PATH }}
+          
+      - name: Verify Signature (Audit Step)
+        run: |
+          python3 -c "
+          import hashlib, pathlib
+          db = pathlib.Path('build/db/pharmacopeia.db')
+          print('Verified SHA256:', hashlib.sha256(db.read_bytes()).hexdigest())
+          print('Signature size:', (db.parent / 'manifest.sig').stat().st_size, 'bytes')
+          "
+          
+      - name: Upload Secure Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pharmacopeia-secure
+          path: |
+            build/db/pharmacopeia.db
+            build/db/manifest.sig
+            build/db/sha256.txt
+          retention-days: 30

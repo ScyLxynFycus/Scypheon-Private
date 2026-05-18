@@ -1,0 +1,26 @@
+name: CI/CD Pipeline
+on: [push, pull_request]
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Gradle Wrapper Validation
+        uses: gradle/wrapper-validation-action@v2
+      - name: Test & Coverage
+        run: ./gradlew :scypheon_sdk:testDebugUnitTest :scypheon_sdk:checkCoverage :app:testDebugUnitTest
+      - name: Lint & KtLint
+        run: ./gradlew lint
+      - name: Generate SBOM
+        run: ./gradlew cyclonedxBom
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: '**/bom.json'
+      - name: Build Release APK
+        run: ./gradlew :app:assembleRelease

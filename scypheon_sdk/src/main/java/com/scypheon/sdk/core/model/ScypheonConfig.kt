@@ -7,13 +7,14 @@ import java.io.File
  * Moved to the SDK to allow Secure Vault persistence without App-module dependencies.
  */
 data class ScypheonConfig(
-    val maxTokens: Int = 2048,
+    val maxTokens: Int = 4096,
     val contextWindow: Int = 4096,
     val topK: Int = 51,
     val topP: Float = 0.95f,
     val temperature: Float = 0.8f,
     val selectedBackendMode: Int = 0, // 0=Auto, 1=CPU, 2=Vulkan, 3=OpenCL
     val enableThinking: Boolean = true,
+    val enableOnlineSearch: Boolean = true,
     val performanceMode: Boolean = true,
     val enableZeroLatency: Boolean = true,
     val localModels: List<File> = emptyList(),

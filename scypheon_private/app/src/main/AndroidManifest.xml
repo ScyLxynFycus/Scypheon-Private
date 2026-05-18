@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <application
+        android:name=".ScypheonApplication"
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:enableOnBackInvokedCallback="true"
+        android:largeHeap="true"
+        android:theme="@style/Theme.Scypheon">
+
+        <!-- PRIVACY: Disable ALL Firebase telemetry and data collection.
+             The COREML_ON_DEVICE_SOLUTIONS event is auto-fired by MLKit TextRecognition
+             via the Google DataTransport (TransportRuntime) layer — a separate pipeline
+             from Firebase Analytics. These flags suppress all telemetry channels. -->
+        <meta-data
+            android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_crashlytics_collection_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_data_collection_default_enabled"
+            android:value="false" />
+        <!-- MLKit-specific telemetry suppression (COREML_ON_DEVICE_SOLUTIONS events) -->
+        <meta-data
+            android:name="google_mlkit_usage_reporting_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_ml_sdk_auto_initialization_enabled"
+            android:value="false" />
+
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
+        <service
+            android:name=".services.ModelSandboxService"
+            android:process=":ai_sandbox"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="ai_inference_engine" />
+        </service>
+
+        <activity
+            android:name="com.scypheon.app.ui.MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Scypheon.Splash">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name="com.scypheon.sdk.core.automation.PuppetMasterAndroid"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <receiver
+            android:name=".workers.PuppetApprovalReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.scypheon.app.ACTION_APPROVE_PUPPET" />
+            </intent-filter>
+        </receiver>
+
+
+
+        <!-- SAR PHASE 3: Zero-Latency Model Store -->
+        <service
+            android:name="com.scypheon.app.services.ModelLoaderService"
+            android:process=":loader"
+            android:exported="false" />
+
+    </application>
+</manifest>

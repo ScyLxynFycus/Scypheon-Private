@@ -3,6 +3,10 @@
 #include <thread>
 #include <atomic>
 #include <android/log.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 #include "llama.h"
 
 #define TAG "ScypheonNative"
@@ -12,24 +16,26 @@
 static JavaVM* g_vm = nullptr;
 static std::atomic<bool> g_cancel_requested{false};
 
-JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_vm = vm;
     LOGI("JNI_OnLoad: JVM reference captured.");
     return JNI_VERSION_1_6;
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_scypheon_app_services_ModelSandboxService_nativeInit(
-    JNIEnv* env, jobject /* thiz */, jstring jPath, jint nCtx, jboolean useMmap) {
+Java_android_llama_cpp_LLamaAndroid_load_1model(
+    JNIEnv* env, jobject /* instance */, jstring jPath, jint backendMode, jobject progressCallback) {
     
     const char* path = env->GetStringUTFChars(jPath, nullptr);
-    LOGI("nativeInit: Loading model from %s", path);
+    // Tier mapping: 1=CPU, 2=VULKAN, 3=OPENCL (matches ScypheonRepository)
+    int n_gpu_layers = (backendMode == 1) ? 0 : 99;
+    LOGI("load_model: Loading from %s (backendMode=%d, gpu_layers=%d)", path, backendMode, n_gpu_layers);
 
     llama_model_params m_params = llama_model_default_params();
-    m_params.use_mmap = useMmap;
-    m_params.n_gpu_layers = 0; // Force CPU for isolated process compatibility
+    m_params.use_mmap     = true;
+    m_params.n_gpu_layers = n_gpu_layers;
 
-    llama_model* model = llama_load_model_from_file(path, m_params);
+    llama_model* model = llama_model_load_from_file(path, m_params);
     env->ReleaseStringUTFChars(jPath, path);
     
     if (!model) {
@@ -38,23 +44,90 @@ Java_com_scypheon_app_services_ModelSandboxService_nativeInit(
     }
 
     llama_context_params c_params = llama_context_default_params();
-    c_params.n_ctx = nCtx;
+    c_params.n_ctx = 4096;
     c_params.n_threads = 4; // Performance core cap
     c_params.n_threads_batch = 4;
     
-    llama_context* ctx = llama_new_context_with_model(model, c_params);
+    llama_context* ctx = llama_init_from_model(model, c_params);
     if (!ctx) {
         LOGE("nativeInit: Failed to create context.");
-        llama_free_model(model);
+        llama_model_free(model);
         return 0L;
     }
 
     return reinterpret_cast<jlong>(ctx);
 }
 
+// --- NativeLibraryLoader Implementation ---
+
+extern "C" __attribute__((visibility("default"))) JNIEXPORT jint JNICALL
+Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_createMemfdNative(
+    JNIEnv* env, jclass clazz, jstring jName, jlong size) {
+    const char* name = env->GetStringUTFChars(jName, nullptr);
+    int fd = syscall(__NR_memfd_create, name, MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    env->ReleaseStringUTFChars(jName, name);
+    if (fd == -1) return -1;
+    if (ftruncate(fd, size) == -1) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+extern "C" __attribute__((visibility("default"))) JNIEXPORT jint JNICALL
+Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_setOomScoreNative(
+    JNIEnv* env, jclass clazz, jint score) {
+    int fd = open("/proc/self/oom_score_adj", O_WRONLY);
+    if (fd == -1) return -1;
+    std::string score_str = std::to_string(score);
+    ssize_t written = write(fd, score_str.c_str(), score_str.length());
+    close(fd);
+    return (written == -1) ? -1 : 0;
+}
+
+extern "C" __attribute__((visibility("default"))) JNIEXPORT jboolean JNICALL
+Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_probeBackendNative(
+    JNIEnv* env, jclass clazz, jstring jModelPath, jint backendType) {
+    
+    LOGI("🔍 [PROBE] Validating model file integrity (CPU-only, backend=%d)", backendType);
+    llama_backend_init();
+    
+    llama_model_params m_params = llama_model_default_params();
+    m_params.vocab_only = false; // [v1.0.6-SAR] MUST test real tensor allocation
+    
+    // [v1.1.2-SAR] CRITICAL PINNING: Force CPU device registry to prevent driver-level probes
+    static ggml_backend_dev_t cpu_devices[2] = {nullptr, nullptr};
+    cpu_devices[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    m_params.devices = cpu_devices;
+
+    // [v1.1.0-SAR] CRITICAL: Probe ALWAYS uses CPU (n_gpu_layers=0).
+    m_params.n_gpu_layers = 0;
+    setenv("GGML_VULKAN", "0", 1);
+    setenv("GGML_OPENCL", "0", 1);
+    
+    LOGI("🧵 [PROBE] Using CPU backend (model integrity check).");
+    
+    const char* path = env->GetStringUTFChars(jModelPath, nullptr);
+    LOGI("📂 [PROBE] Loading model (CPU) from: %s", path);
+    
+    llama_model* model = llama_model_load_from_file(path, m_params);
+    env->ReleaseStringUTFChars(jModelPath, path);
+    
+    bool ok = (model != nullptr);
+    if (ok) {
+        LOGI("✅ [PROBE] Backend %d initialized successfully.", backendType);
+        llama_model_free(model);
+    } else {
+        LOGE("❌ [PROBE] Backend %d FAILED. Allocation rejected.", backendType);
+    }
+    
+    llama_backend_free();
+    return ok;
+}
+
 extern "C" JNIEXPORT void JNICALL
-Java_com_scypheon_app_services_ModelSandboxService_nativeInference(
-    JNIEnv* env, jobject /* thiz */, jlong jCtx, jstring jPrompt, jobject jCallback) {
+Java_android_llama_cpp_LLamaAndroid_native_1inference(
+    JNIEnv* env, jobject /* instance */, jlong jCtx, jstring jPrompt, jobject jCallback) {
     
     llama_context* ctx = reinterpret_cast<llama_context*>(jCtx);
     const char* prompt = env->GetStringUTFChars(jPrompt, nullptr);
@@ -95,20 +168,26 @@ Java_com_scypheon_app_services_ModelSandboxService_nativeInference(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_scypheon_app_services_ModelSandboxService_nativeCancelInference(
-    JNIEnv*, jobject, jlong) {
+Java_android_llama_cpp_LLamaAndroid_native_1cancel_1inference(
+    JNIEnv*, jobject) {
     g_cancel_requested = true;
     LOGI("nativeCancelInference: Cancel flag set.");
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_scypheon_app_services_ModelSandboxService_nativeRelease(
+Java_android_llama_cpp_LLamaAndroid_free_1model(
     JNIEnv*, jobject, jlong jCtx) {
     llama_context* ctx = reinterpret_cast<llama_context*>(jCtx);
     if (ctx) {
         LOGI("nativeRelease: Freeing native resources.");
-        llama_model* model = llama_get_model(ctx);
+        const llama_model* model = llama_get_model(ctx);
         llama_free(ctx);
-        llama_free_model(model);
+        llama_model_free(const_cast<llama_model*>(model));
     }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_android_llama_cpp_LLamaAndroid_probe_1backend(
+    JNIEnv* env, jobject, jstring jModelPath, jint backendType) {
+    return Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_probeBackendNative(env, nullptr, jModelPath, backendType);
 }

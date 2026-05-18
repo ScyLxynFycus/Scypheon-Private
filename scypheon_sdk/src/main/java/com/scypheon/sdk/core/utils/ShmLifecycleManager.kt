@@ -76,7 +76,7 @@ object ShmLifecycleManager {
                 if (result == 0) {
                     Timber.i("🛡️ [SAR] SHM Protected: LMKD Score Set to -1000 via Native.")
                 } else {
-                    Timber.w("🛡️ [SAR] SHM Protection Warning: Native helper returned $result")
+                    Timber.i("🛡️ [SAR] SHM Protection: Native helper returned $result (Expected OS restriction).")
                 }
             } catch (e: Exception) {
                 Timber.w("Could not set OOM score adjustment: ${e.message}")

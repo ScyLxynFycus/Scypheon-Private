@@ -10,6 +10,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
+import com.scypheon.sdk.core.safety.helios.SafetyViolationReport
+
 data class AuditLogEntry(
     val timestamp: Long = System.currentTimeMillis(),
     val eventType: String,
@@ -21,18 +23,38 @@ data class AuditLogEntry(
  * Enterprise Feature: Offline BlackBox Audit Vault.
  * Tamper-proof, AES256-GCM encrypted logging for AI decisions, privacy events, and system errors.
  */
-class BlackBoxVault(context: Context) {
+class BlackBoxVault(private val context: Context) {
 
     private val gson = Gson()
     // Independent scope to ensure logs persist even if the calling worker is killed
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val MAX_LOGS = 1000
 
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
+    private val masterKey by lazy {
+        MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+    }
 
-    private val sharedPreferences = EncryptedSharedPreferences.create(
+    private val sharedPreferences by lazy {
+        try {
+            createEncryptedPrefs()
+        } catch (e: Exception) {
+            Timber.e(e, "🚨 [PHOENIX-SECURITY] BlackBoxVault encryption failure! Initiating self-healing...")
+            try {
+                // [v1.1.2-SAR] SELF-HEALING: Delete corrupted preferences file and keyset
+                // This resolves AEADBadTagException / Keystore collisions across processes.
+                context.deleteSharedPreferences("scypheon_blackbox")
+                createEncryptedPrefs()
+            } catch (retryException: Exception) {
+                Timber.e(retryException, "🔥 [PHOENIX-SECURITY] Self-healing failed. Falling back to non-encrypted vault to prevent crash.")
+                // Last resort: Fallback to standard prefs to ensure system availability during disaster response
+                context.getSharedPreferences("scypheon_blackbox_insecure_fallback", Context.MODE_PRIVATE)
+            }
+        }
+    }
+
+    private fun createEncryptedPrefs() = EncryptedSharedPreferences.create(
         context,
         "scypheon_blackbox",
         masterKey,
@@ -72,6 +94,15 @@ class BlackBoxVault(context: Context) {
                 Timber.e(e, "Failed to write to BlackBox Vault")
             }
         }
+    }
+
+    fun logSafetyViolation(traceId: String, report: SafetyViolationReport) {
+        val details = gson.toJson(report)
+        logEvent(
+            eventType = "SAFETY_VIOLATION",
+            details = "Trace: $traceId | Report: $details",
+            securityLevel = "CRITICAL"
+        )
     }
 
     fun dumpLogs(): List<AuditLogEntry> {

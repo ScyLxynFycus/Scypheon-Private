@@ -20,7 +20,8 @@ object NativeSharedMemory {
     fun loadToVault(modelPath: String): ParcelFileDescriptor? {
         val fd = loadToVaultNative(modelPath)
         return if (fd >= 0) {
-            ParcelFileDescriptor.fromFd(fd)
+            // [v1.2.9-SAR] Resource Management: adoptFd ensures the native FD is closed when PFD is closed.
+            ParcelFileDescriptor.adoptFd(fd)
         } else {
             null
         }
@@ -35,7 +36,12 @@ object NativeSharedMemory {
         unmapVaultNative(addr, size)
     }
 
+    fun createNative(size: Long): Int {
+        return createNativeNative(size)
+    }
+
     private external fun loadToVaultNative(modelPath: String): Int
-    private external fun createNative(size: Long): Int
+    @JvmStatic
+    private external fun createNativeNative(size: Long): Int
     private external fun unmapVaultNative(addr: Long, size: Long)
 }

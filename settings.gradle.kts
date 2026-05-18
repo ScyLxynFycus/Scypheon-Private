@@ -18,6 +18,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://maven.google.com") }
     }
 }
 
@@ -26,5 +27,6 @@ include(":app")
 include(":scypheon_sdk")
 include(":llama")
 
+project(":app").projectDir = File(settingsDir, "scypheon_private/app")
 project(":scypheon_sdk").projectDir = File(settingsDir, "scypheon_sdk")
 project(":llama").projectDir = File(settingsDir, "llama")

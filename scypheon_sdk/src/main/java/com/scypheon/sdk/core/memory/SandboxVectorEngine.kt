@@ -1,4 +1,4 @@
-﻿package com.scypheon.sdk.core.memory
+package com.scypheon.sdk.core.memory
 
 import com.scypheon.sdk.core.engine.SandboxLlamaEngine
 import com.scypheon.sdk.core.engine.InitializationState
@@ -56,10 +56,22 @@ class SandboxVectorEngine(
     }
 
     override suspend fun embedText(text: String): FloatArray? {
+        // [PHOENIX-RESILIENCE] Wait for engine readiness with a 15s timeout
+        // This handles transient 'Not Ready' states during LLM 'Lazarus' restarts.
+        var retryCount = 0
+        while (_state.value != IVectorEngine.EngineState.Ready && retryCount < 30) {
+            if (retryCount % 10 == 0) {
+                Timber.w(" [EMBED] Awaiting engine readiness (State: ${_state.value})...")
+            }
+            kotlinx.coroutines.delay(500)
+            retryCount++
+        }
+
         if (_state.value != IVectorEngine.EngineState.Ready) {
-            Timber.e("SandboxVectorEngine not ready.")
+            Timber.e(" [EMBED] SandboxVectorEngine still not ready after 15s timeout.")
             return null
         }
+        
         return sandboxLlamaEngine.getEmbeddings(text)
     }
 

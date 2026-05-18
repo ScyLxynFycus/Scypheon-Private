@@ -22,15 +22,19 @@ object AssetExtractor {
         // 1. Scan Internal Storage (FilesDir/models)
         val modelDir = File(context.filesDir, "models")
         if (modelDir.exists() && modelDir.isDirectory) {
-            modelDir.listFiles()?.forEach { file ->
-                if (file.isFile && (file.name.endsWith(".gguf") || file.name.endsWith(".tflite"))) {
-                    modelList.add(LocalModel(
-                        name = file.name,
-                        path = file.absolutePath,
-                        sizeMb = file.length() / (1024 * 1024),
-                        isGguf = file.name.endsWith(".gguf")
-                    ))
+            try {
+                modelDir.listFiles()?.forEach { file ->
+                    if (file.isFile && (file.name.endsWith(".gguf") || file.name.endsWith(".tflite"))) {
+                        modelList.add(LocalModel(
+                            name = file.name,
+                            path = file.absolutePath,
+                            sizeMb = file.length() / (1024 * 1024),
+                            isGguf = file.name.endsWith(".gguf")
+                        ))
+                    }
                 }
+            } catch (e: Exception) {
+                // Log failure
             }
         }
 

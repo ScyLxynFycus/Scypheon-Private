@@ -3,6 +3,7 @@ package com.scypheon.sdk.core.utils
 import android.app.ActivityManager
 import android.content.Context
 import android.content.SharedPreferences
+import com.scypheon.sdk.core.engine.HardwareConfigProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -10,8 +11,10 @@ import javax.inject.Singleton
 @Singleton
 class HardwarePreferences @Inject constructor(
     @ApplicationContext private val context: Context
-) {
-    private val prefs: SharedPreferences = context.getSharedPreferences("hardware_prefs", Context.MODE_PRIVATE)
+) : HardwareConfigProvider {
+    private val prefs: SharedPreferences by lazy {
+        context.getSharedPreferences("hardware_prefs", Context.MODE_PRIVATE)
+    }
 
     data class LlamaParams(
         val modelPath: String,
@@ -26,6 +29,14 @@ class HardwarePreferences @Inject constructor(
         val heapLimitMb = am.largeMemoryClass.toLong()
         val nativeOverheadMb = 1024L // Buffering for OS and other app layers
         return (heapLimitMb - nativeOverheadMb).coerceAtLeast(1024L)
+    }
+
+    // HardwareConfigProvider implementation
+    override fun getStableMemoryMb(): Long = getStableMemoryClass()
+
+    override fun isMemoryOptimized(): Boolean {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return !am.isLowRamDevice
     }
 
     /**
@@ -73,5 +84,13 @@ class HardwarePreferences @Inject constructor(
 
     fun isForceDegraded(): Boolean {
         return prefs.getBoolean("force_degraded", false)
+    }
+
+    fun unblacklistAll() {
+        prefs.edit()
+            .remove("blacklist")
+            .remove("blacklisted_models")
+            .putBoolean("force_degraded", false)
+            .apply()
     }
 }

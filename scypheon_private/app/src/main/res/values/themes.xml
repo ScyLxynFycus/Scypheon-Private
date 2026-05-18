@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Scypheon" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">#007AFF</item>
+        <item name="colorPrimaryVariant">#005BB5</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#E5E5EA</item>
+        <item name="colorSecondaryVariant">#D1D1D6</item>
+        <item name="colorOnSecondary">#000000</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowBackground">#FFFFFF</item>
+    </style>
+
+    <style name="Theme.Scypheon.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#FFFFFF</item>
+        <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="postSplashScreenTheme">@style/Theme.Scypheon</item>
+        <item name="android:windowBackground">@drawable/img_splash_logo</item>
+    </style>
+</resources>

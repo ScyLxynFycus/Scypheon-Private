@@ -15,14 +15,18 @@ import kotlinx.coroutines.flow.reduce
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.Locale
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Live Offline English Tutor powered by Gemma (MediaPipe).
  * Integrates Android's native offline Speech-to-Text and Text-to-Speech
  * to provide a continuous, voice-to-voice interactive language lesson.
  */
-class LiveEnglishTutor(
-    private val context: Context,
+@Singleton
+class LiveEnglishTutor @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val llmEngine: LiteRtEliteEngine,
     private val memoryManager: com.scypheon.sdk.core.memory.DualMemoryManager,
     private val sensoryHooks: dagger.Lazy<com.scypheon.sdk.core.gateway.SensoryHooks>
@@ -215,15 +219,13 @@ class LiveEnglishTutor(
     }
 
     private fun speakOut(text: String) {
-        // [v1.0.5-SAR] Hybrid Speech Routing
-        // 1. Try Native AI Speech (Gemma 4) if supported
-        // 2. Fallback to Android System TTS
-        
-        val useNativeSpeech = false // TODO: Detect model capability via metadata
+        // [v1.0.5-SAR] Hybrid Speech Routing: Prefers Native AI Speech (Gemma 4) if supported
+        // Current implementation defaults to system TTS until Multimodal Speech Manifest is verified.
+        val useNativeSpeech = false 
         
         if (useNativeSpeech) {
             Timber.i(" [SAR] Routing to Native AI Speech Player")
-            // NativeSpeechPlayer.play(text)
+            // Future Integration: NativeSpeechPlayer.play(text)
         } else {
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "TutorResponse")
         }

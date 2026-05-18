@@ -5,12 +5,15 @@ plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.kapt")
+    id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
+    id("app.cash.sqldelight") version "2.0.2"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.1.10"
 }
 
 android {
     namespace = "com.scypheon.sdk"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         minSdk = 28
@@ -34,6 +37,22 @@ android {
         aidl = true
         buildConfig = true
     }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+}
+
+sqldelight {
+    databases {
+        create("MedicalDatabase") {
+            packageName.set("com.scypheon.sdk.db")
+            schemaOutputDirectory.set(file("src/main/sqldelight/databases"))
+        }
+    }
 }
 
 kapt {
@@ -55,7 +74,7 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
 
     // LiteRT-LM (Modern Google AI Edge Engine for Gemma 4)
-    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
 
     // Modern Networking for Model Provisioning (Hugging Face Gated)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
@@ -110,6 +129,27 @@ dependencies {
     testImplementation("androidx.arch.core:core-testing:2.2.0")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+
+    // Room DB for Local Storage
+    val roomVersion = "2.6.1"
+    implementation("androidx.room:room-runtime:$roomVersion")
+    implementation("androidx.room:room-ktx:$roomVersion")
+    ksp("androidx.room:room-compiler:$roomVersion")
+
+    // SQLDelight
+    implementation("app.cash.sqldelight:android-driver:2.0.2")
+    implementation("app.cash.sqldelight:coroutines-extensions:2.0.2")
+
+    // Kotlin Serialization
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+    // Security & Biometrics
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+    implementation("net.zetetic:sqlcipher-android:4.5.4")
+    implementation("androidx.sqlite:sqlite-ktx:2.4.0")
+
+    // Datetime
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.4.1")
 }
 
 // 🛡️ SOLARIS PROVENANCE: SHA-256 Compile-Time Generation Task

@@ -10,7 +10,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object NativeLibraryLoader {
     private val isLoaded = AtomicBoolean(false)
-    private const val LIBRARY_NAME = "llama-android"
+    private const val LIBRARY_NAME = "scypheon_native"
+    
+    init {
+        loadSafely()
+    }
 
     /**
      * Attempts to load the native library safely.

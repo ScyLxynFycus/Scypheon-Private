@@ -35,15 +35,41 @@ class AegisVoiceEngine(context: Context) {
      * Speaks the provided text if TTS is ready.
      */
     fun speak(text: String) {
+        speak(text, null)
+    }
+
+    /**
+     * Speaks the provided text with an optional completion callback.
+     * Used by Live Mode for turn-taking (AI finishes speaking → resume listening).
+     */
+    fun speak(text: String, onComplete: (() -> Unit)?) {
         if (!isInitialized) {
             Timber.w("TTS: Voice engine not ready yet.")
+            onComplete?.invoke()
             return
         }
 
         // Clean text from protocol tokens if any remain
         val cleanText = text.replace(Regex("<[^>]*>"), "")
-        
-        tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, "Aegis_Inference_Speech")
+
+        if (onComplete != null) {
+            tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+                override fun onDone(utteranceId: String?) {
+                    if (utteranceId == "Aegis_Live_Speech") {
+                        onComplete()
+                    }
+                }
+                override fun onError(utteranceId: String?) {
+                    if (utteranceId == "Aegis_Live_Speech") {
+                        onComplete()
+                    }
+                }
+            })
+            tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, "Aegis_Live_Speech")
+        } else {
+            tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, "Aegis_Inference_Speech")
+        }
         Timber.v("TTS: Speaking response.")
     }
 

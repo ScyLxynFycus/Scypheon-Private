@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dlfcn.h>
+#include <errno.h>
 
 // NDK Safe-Link: Dynamic Symbol Resolution
 typedef int (*ASharedMemory_create_t)(const char*, size_t);
@@ -95,10 +96,20 @@ extern "C" {
     std::atomic<int> g_watchdog_timeout_ms(5000); // Dynamic threshold
 }
 
-// 🛡️ [SAR-1.0.4] Native Concurrency Guard
-// Uses a recursive mutex to prevent deadlocks when internal llama.cpp functions
-// call back into the JNI layer or when multiple Kotlin threads race during hotswap.
 static std::recursive_mutex g_context_mutex;
+static std::atomic<bool> g_cancel_inference{false};
+
+// [SAR PHASE 2] Ashmem IPC Bridge
+struct TokenEntry {
+    int32_t token_id;
+    float confidence;
+    int32_t length;
+    char text[244]; // Total size = 256 bytes
+};
+
+static void* g_output_shm_ptr = nullptr;
+static size_t g_output_shm_size = 0;
+static std::atomic<int32_t>* g_output_token_count = nullptr;
 
 /**
  * Reads Resident Set Size (RSS) from /proc/self/statm
@@ -160,11 +171,16 @@ static void solaris_handler(int sig, siginfo_t* info, void* ucontext) {
                 }
             };
 
-            append("{\"sig\":", 7); 
+            char ts_buf[20];
+            int_to_ascii((int)time(nullptr), ts_buf, sizeof(ts_buf));
+
+            append("{\"signal\":", 10); 
             append(sig_buf, strlen(sig_buf));
             append(",\"backend\":\"", 12);
             append(backend, strlen(backend));
-            append("\",\"description\":\"SOLARIS_NATIVE_CRASH\",\"ts\":0}", 47);
+            append("\",\"description\":\"SOLARIS_NATIVE_CRASH\",\"timestamp\":", 52);
+            append(ts_buf, strlen(ts_buf));
+            append("}", 1);
 
             write(fd, buf, pos);
             close(fd);
@@ -320,6 +336,36 @@ Java_android_llama_cpp_LLamaAndroid_native_1inject_1token(JNIEnv *env, jobject, 
     llama_batch_free(batch);
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_android_llama_cpp_LLamaAndroid_native_1set_1output_1shm(JNIEnv *env, jobject, jint fd, jint size) {
+    if (g_output_shm_ptr) {
+        munmap(g_output_shm_ptr, g_output_shm_size);
+        g_output_shm_ptr = nullptr;
+        g_output_token_count = nullptr;
+    }
+    
+    if (fd < 0 || size <= 0) return;
+    
+    void* ptr = mmap(nullptr, (size_t)size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) {
+        LOGe("🚨 [IPC] Failed to map output SHM: %s", strerror(errno));
+        return;
+    }
+    
+    g_output_shm_ptr = ptr;
+    g_output_shm_size = size;
+    g_output_token_count = reinterpret_cast<std::atomic<int32_t>*>(ptr);
+    g_output_token_count->store(0, std::memory_order_release);
+    
+    LOGi("🛰️ [IPC] Output SHM mapped at %p (size: %d)", g_output_shm_ptr, size);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_android_llama_cpp_LLamaAndroid_native_1cancel_1inference(JNIEnv *, jobject) {
+    LOGi("🚫 [SAR] Cancellation Signal Received. Arming killswitch.");
+    g_cancel_inference.store(true, std::memory_order_release);
+}
+
 // 🛡️ KV EVICTION: Safety-Bounded Deferred Trimming
 static std::atomic<int> g_pending_trim_level{0};
 
@@ -398,7 +444,7 @@ void register_solaris_sentinel() {
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_scypheon_sdk_core_utils_NativeSharedMemory_createNative(JNIEnv *, jclass, jlong size) {
+Java_com_scypheon_sdk_core_utils_NativeSharedMemory_createNativeNative(JNIEnv *, jclass, jlong size) {
     if (size <= 0) return -1;
     // 🛡️ [Vault] NDK-level ASharedMemory supports 64-bit size_t
     ASharedMemory_create_t create_fn = get_ashmem_create();
@@ -505,9 +551,6 @@ Java_com_scypheon_sdk_core_utils_NativeSharedMemory_unmapVaultNative(JNIEnv *, j
     }
 }
 
-static jclass la_int_var = nullptr;
-static jmethodID la_int_var_value = nullptr;
-static jmethodID la_int_var_inc = nullptr;
 static std::mutex jni_mutex;
 
 // JNI Callback Globals
@@ -555,6 +598,7 @@ static bool is_template_token(const std::string& token) {
     if (token.find("</s>") != std::string::npos) return true;
     if (token.find("<end_of_turn>") != std::string::npos) return true;
     if (token.find("<start_of_turn>") != std::string::npos) return true;
+    if (token == "<eos>" || token.find("<eos>") != std::string::npos) return true;
     if (token.find("<thought>") != std::string::npos) return false; // DONT block thinking tags
     if (token.find("</thought>") != std::string::npos) return false; 
     
@@ -590,11 +634,21 @@ static bool check_stop_sequence(const std::string& buffer) {
     if (buffer.find("<end_of_turn>") != std::string::npos) return true;
     if (buffer.find("<|eot_id|>") != std::string::npos) return true;
     if (buffer.find("</s>") != std::string::npos) return true;
+    if (buffer.find("<eos>") != std::string::npos) return true;
     // ═══════════════════════════════════════════════════════════════════════════
-    // PROTOCOL STOPPERS: Retain only standard structural protocol tokens.
-    // We removed "User:" and "Assistant:" from here because they caused 
-    // premature cuts during natural conversations.
+    // [v1.1.4-SAR] CONVERSATION TURN BOUNDARY DETECTION
+    // Unsloth/LoRA fine-tuned models often use plain-text role markers instead
+    // of special tokens. When the model generates "\nUser:" or "\nAI:", it means
+    // the model has finished its response and is hallucinating the next turn.
+    // We MUST stop here to prevent the infinite "User: hello\nAI: 1" loop.
     // ═══════════════════════════════════════════════════════════════════════════
+    if (buffer.find("\nUser:") != std::string::npos) return true;
+    if (buffer.find("\nuser:") != std::string::npos) return true;
+    if (buffer.find("\nAI:") != std::string::npos) return true;
+    if (buffer.find("\nassistant:") != std::string::npos) return true;
+    if (buffer.find("\nmodel:") != std::string::npos) return true;
+    if (buffer.find("\nHuman:") != std::string::npos) return true;
+    if (buffer.find("\n<start_of_turn>") != std::string::npos) return true;
     
     return false;
 }
@@ -647,11 +701,13 @@ static void log_callback(ggml_log_level level, const char * text, void * user_da
     __android_log_print(priority, TAG, "%s", text);
 }
 
+static ggml_backend_dev_t g_selected_devices[2] = {nullptr, nullptr};
+
 static void apply_backend_enforcement(int backend_mode, llama_model_params& model_params) {
-    bool force_cpu = (backend_mode == 1);
+    bool force_cpu    = (backend_mode == 1);
     bool force_vulkan = (backend_mode == 2);
     bool force_opencl = (backend_mode == 3);
-    bool is_auto = (backend_mode == 0);
+    bool is_auto      = (backend_mode == 0);
 
     g_vulkan_disabled = false;
     g_opencl_disabled = false;
@@ -693,18 +749,21 @@ static void apply_backend_enforcement(int backend_mode, llama_model_params& mode
         }
     }
 
+    // [SAR] EXPLICIT DEVICE SELECTION
+    // This bypasses the buggy auto-selection registry in llama.cpp
+    g_selected_devices[0] = nullptr;
+    g_selected_devices[1] = nullptr;
+
     if (force_cpu) {
         setenv("GGML_VULKAN", "0", 1);
         setenv("GGML_OPENCL", "0", 1);
         g_vulkan_disabled = true;
         model_params.n_gpu_layers = 0;
-        LOGi("[SAR] Absolute Backend enforcement: FORCE_CPU (Blindfold Active)");
-
-        // 🛡️ [SAR] HARD RESET: Re-initialize backend to ensure environment variables are picked up
-        llama_backend_free();
-        llama_backend_init();
-
+        active_hardware_status = "CPU [Forced]";
         LOGi("[SAR] Absolute Backend enforcement: FORCE_CPU (Drivers Purged)");
+
+        g_selected_devices[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+        model_params.devices = g_selected_devices;
 
     } else if (force_vulkan) {
         setenv("GGML_VULKAN", "1", 1);
@@ -713,7 +772,16 @@ static void apply_backend_enforcement(int backend_mode, llama_model_params& mode
         g_opencl_disabled = true;
         g_active_backend_trying = "VULKAN";
         model_params.n_gpu_layers = 99;
+        active_hardware_status = "VULKAN [Forced]";
         LOGi("[SAR] Absolute Backend enforcement: FORCE_VULKAN");
+
+        auto reg = ggml_backend_reg_by_name("Vulkan");
+        if (!reg) reg = ggml_backend_reg_by_name("vulkan");
+        if (reg && ggml_backend_reg_dev_count(reg) > 0) {
+            g_selected_devices[0] = ggml_backend_reg_dev_get(reg, 0);
+            model_params.devices = g_selected_devices;
+        }
+
     } else if (force_opencl) {
         setenv("GGML_VULKAN", "0", 1);
         setenv("GGML_OPENCL", "1", 1);
@@ -721,26 +789,58 @@ static void apply_backend_enforcement(int backend_mode, llama_model_params& mode
         g_opencl_disabled = false;
         g_active_backend_trying = "OPENCL";
         model_params.n_gpu_layers = 99;
+        active_hardware_status = "OPENCL [Forced]";
         LOGi("[SAR] Absolute Backend enforcement: FORCE_OPENCL");
+
+        auto reg = ggml_backend_reg_by_name("OpenCL");
+        if (!reg) reg = ggml_backend_reg_by_name("opencl");
+        if (reg && ggml_backend_reg_dev_count(reg) > 0) {
+            g_selected_devices[0] = ggml_backend_reg_dev_get(reg, 0);
+            model_params.devices = g_selected_devices;
+        }
+
     } else {
         if (has_opencl_crash && has_vulkan_crash) {
             g_vulkan_disabled = true;
             g_opencl_disabled = true;
             model_params.n_gpu_layers = 0;
             used_fallback = true;
+            active_hardware_status = "CPU [Fallback]";
             LOGw("🛡️ TRIPWIRE AUTO: Both GPU backends crashed. CPU only.");
+            g_selected_devices[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+            model_params.devices = g_selected_devices;
         } else if (has_vulkan_crash) {
             g_vulkan_disabled = true;
             g_opencl_disabled = false;
             g_active_backend_trying = "OPENCL";
             model_params.n_gpu_layers = 99;
             used_fallback = true;
+            active_hardware_status = "OPENCL [Fallback]";
             LOGw("🛡️ TRIPWIRE AUTO: Vulkan blacklisted. Using OpenCL.");
+            auto reg = ggml_backend_reg_by_name("OpenCL");
+            if (!reg) reg = ggml_backend_reg_by_name("opencl");
+            if (reg && ggml_backend_reg_dev_count(reg) > 0) {
+                g_selected_devices[0] = ggml_backend_reg_dev_get(reg, 0);
+            }
         } else {
             g_vulkan_disabled = false;
             g_opencl_disabled = false;
             g_active_backend_trying = "VULKAN";
             model_params.n_gpu_layers = 99;
+            active_hardware_status = "VULKAN [Auto]";
+            auto reg = ggml_backend_reg_by_name("Vulkan");
+            if (!reg) reg = ggml_backend_reg_by_name("vulkan");
+            if (reg && ggml_backend_reg_dev_count(reg) > 0) {
+                g_selected_devices[0] = ggml_backend_reg_dev_get(reg, 0);
+            }
+        }
+        
+        if (g_selected_devices[0]) {
+            model_params.devices = g_selected_devices;
+        } else {
+            LOGw("[SAR] Explicit device selection failed. Falling back to CPU registry.");
+            g_selected_devices[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+            model_params.devices = g_selected_devices;
         }
     }
 }
@@ -769,7 +869,20 @@ Java_android_llama_cpp_LLamaAndroid_load_1model(JNIEnv *env, jobject, jstring fi
     apply_backend_enforcement(backend_mode, model_params);
 
     auto path_to_model = env->GetStringUTFChars(filename, 0);
-    LOGi("[v1.0.2-SAR] Native Loading model: %s (mmap: %s)", path_to_model, model_params.use_mmap ? "ON" : "OFF");
+    LOGi("🚀 [SAR] Native Loading model: %s (mmap: %s) (Mode: %d)", 
+         path_to_model, model_params.use_mmap ? "ON" : "OFF", backend_mode);
+
+    // 🛡️ [SAR] HARDENING: Explicitly check for Mali driver presence and PERMISSIONS
+    int mali_fd = open("/dev/mali0", O_RDWR);
+    if (mali_fd >= 0) {
+        LOGi("🛰️ [SAR] SUCCESS: Mali Kernel Driver opened with RDWR permissions. FD=%d", mali_fd);
+        close(mali_fd);
+    } else {
+        LOGe("🛰️ [SAR] FATAL: Cannot open /dev/mali0. Error: %s (errno=%d)", strerror(errno), errno);
+        if (errno == EACCES) {
+            LOGe("🛡️ [SAR] DIAGNOSIS: SELinux or Android Permissions are BLOCKING GPU access.");
+        }
+    }
 
     std::string trying_flag;
     if (g_active_backend_trying != "NONE") {
@@ -1283,6 +1396,8 @@ Java_android_llama_cpp_LLamaAndroid_backend_1init(JNIEnv *env, jobject, jboolean
     const char *dir = env->GetStringUTFChars(files_dir, nullptr);
     if (dir) {
         g_files_dir = dir;
+        
+        // [SAR] PERSISTENCE: Managed via HardwarePreferences.
         env->ReleaseStringUTFChars(files_dir, dir);
     }
 
@@ -1310,6 +1425,7 @@ Java_android_llama_cpp_LLamaAndroid_completion_1init(
 
     cached_token_chars.clear();
     stop_sequence_accumulator.clear();
+    g_cancel_inference.store(false, std::memory_order_release);
 
     const auto context = reinterpret_cast<llama_context *>(context_pointer);
     // 🛡️ Enterprise Fix: Clear KV cache at the start of a new prompt evaluation
@@ -1327,9 +1443,20 @@ Java_android_llama_cpp_LLamaAndroid_completion_1init(
 
     LOGi("n_len = %d, n_ctx = %d, n_kv_req = %zu", n_len, n_ctx, n_kv_req);
 
+    // [v1.1.3-SAR] ADAPTIVE CLAMPING instead of hard-fail.
+    // If the prompt + requested generation exceeds context, reduce generation budget.
+    // This prevents the Context Summarizer (and any caller) from silently failing
+    // when it requests maxTokens equal to the full context window.
     if (n_kv_req > n_ctx) {
-        LOGe("error: n_kv_req > n_ctx, the required KV cache size is not big enough");
-        return 0; // 🛑 CRASH FIX: Stop immediately, do not proceed to write overflow
+        int clamped = (int)n_ctx - (int)tokens_list.size();
+        if (clamped < 1) {
+            LOGe("error: prompt alone (%zu tokens) fills or exceeds n_ctx (%d). Cannot generate.", tokens_list.size(), n_ctx);
+            env->ReleaseStringUTFChars(jtext, text);
+            return 0;
+        }
+        LOGw("[SAR] n_kv_req (%zu) > n_ctx (%d). Clamping n_len from %d to %d.", n_kv_req, n_ctx, n_len, clamped);
+        n_len = clamped;
+        n_kv_req = tokens_list.size() + n_len;
     }
 
 /*  🛡️ DIAGNOSTIC OVERLOAD: Remove token logging loop
@@ -1340,26 +1467,44 @@ Java_android_llama_cpp_LLamaAndroid_completion_1init(
 
     common_batch_clear(*batch);
 
-    // evaluate the initial prompt
-    for (auto i = 0; i < tokens_list.size(); i++) {
-        common_batch_add(*batch, tokens_list[i], i, { 0 }, false);
-    }
+    // [v1.1.2-SAR] CHUNKED PROMPT EVALUATION
+    // llama_decode requires batch.n_tokens <= n_batch. 
+    // We must evaluate the initial prompt in chunks to honor the LMKD-GUARD limits.
+    const int n_batch_limit = llama_n_batch(context);
+    for (int i = 0; i < (int) tokens_list.size(); i += n_batch_limit) {
+        int n_eval = (int) tokens_list.size() - i;
+        if (n_eval > n_batch_limit) n_eval = n_batch_limit;
 
-    // llama_decode will output logits only for the last token of the prompt
-    batch->logits[batch->n_tokens - 1] = true;
-
-    check_and_apply_trim(context, batch->n_tokens);
-
-    {
-        std::lock_guard<std::recursive_mutex> lock(g_context_mutex);
-        if (llama_decode(context, *batch) != 0) {
-            LOGe("llama_decode() failed");
+        common_batch_clear(*batch);
+        for (int j = 0; j < n_eval; j++) {
+            common_batch_add(*batch, tokens_list[i + j], i + j, { 0 }, false);
         }
+
+        // Only request logits for the very last token of the entire prompt
+        if (i + n_eval == (int) tokens_list.size()) {
+            batch->logits[batch->n_tokens - 1] = true;
+        }
+
+        check_and_apply_trim(context, batch->n_tokens);
+
+        {
+            std::lock_guard<std::recursive_mutex> lock(g_context_mutex);
+            if (llama_decode(context, *batch) != 0) {
+                LOGe("llama_decode() failed during chunked prefill at offset %d", i);
+                env->ReleaseStringUTFChars(jtext, text);
+                return 0;
+            }
+        }
+        LOGi("[SAR] Prefill Progress: %d/%zu tokens", i + n_eval, tokens_list.size());
     }
 
     env->ReleaseStringUTFChars(jtext, text);
 
-    return batch->n_tokens;
+    // [v1.1.3-SAR] CRITICAL: Return total prompt token count, NOT batch->n_tokens.
+    // After chunked prefill, batch->n_tokens only holds the LAST chunk size (e.g. 39),
+    // but the KV cache cursor is at tokens_list.size() (e.g. 295).
+    // completion_loop uses this return value as the starting decode position (ncur).
+    return (jint) tokens_list.size();
 }
 
 extern "C"
@@ -1371,24 +1516,21 @@ Java_android_llama_cpp_LLamaAndroid_completion_1loop(
         jlong batch_pointer,
         jlong sampler_pointer,
         jint n_len,
-        jobject intvar_ncur
+        jintArray ncur_array
 ) {
+    if (g_cancel_inference.load(std::memory_order_acquire)) {
+        LOGw("🚫 [SAR] Completion loop ABORTED by cancellation signal.");
+        return nullptr;
+    }
+
     const auto context = reinterpret_cast<llama_context *>(context_pointer);
     const auto batch   = reinterpret_cast<llama_batch   *>(batch_pointer);
     const auto sampler = reinterpret_cast<llama_sampler *>(sampler_pointer);
     const auto model = llama_get_model(context);
     const auto vocab = llama_model_get_vocab(model);
 
-    {
-        std::lock_guard<std::mutex> lock(jni_mutex);
-        if (la_int_var == nullptr) {
-            jclass local_class = env->GetObjectClass(intvar_ncur);
-            la_int_var = (jclass) env->NewGlobalRef(local_class);
-            la_int_var_value = env->GetMethodID(la_int_var, "getValue", "()I");
-            la_int_var_inc = env->GetMethodID(la_int_var, "inc", "()V");
-            env->DeleteLocalRef(local_class);
-        }
-    }
+    jint *ncur_ptr = env->GetIntArrayElements(ncur_array, nullptr);
+    int n_cur = ncur_ptr[0];
 
     // sample the most likely token
     llama_token new_token_id;
@@ -1397,8 +1539,8 @@ Java_android_llama_cpp_LLamaAndroid_completion_1loop(
         new_token_id = llama_sampler_sample(sampler, context, -1);
     }
 
-    const auto n_cur = env->CallIntMethod(intvar_ncur, la_int_var_value);
     if (llama_vocab_is_eog(vocab, new_token_id) || n_cur == n_len) {
+        env->ReleaseIntArrayElements(ncur_array, ncur_ptr, JNI_ABORT);
         return nullptr;
     }
 
@@ -1424,6 +1566,9 @@ Java_android_llama_cpp_LLamaAndroid_completion_1loop(
         return nullptr;
     }
 
+    // Extract the valid token text before clearing it
+    std::string final_token_text = "";
+
     jstring new_token = nullptr;
     if (is_valid_utf8(cached_token_chars.c_str())) {
         // ENTERPRISE FILTER: Suppress internal template tokens
@@ -1432,6 +1577,7 @@ Java_android_llama_cpp_LLamaAndroid_completion_1loop(
              new_token = env->NewStringUTF(""); 
              LOGi("⛔ Enterprise Filter: Blocked leaked token: `%s`", cached_token_chars.c_str());
         } else {
+             final_token_text = cached_token_chars;
              new_token = env->NewStringUTF(cached_token_chars.c_str());
              LOGi("cached: %s, new_token_chars: `%s`, id: %d", cached_token_chars.c_str(), new_token_chars.c_str(), new_token_id);
         }
@@ -1454,7 +1600,28 @@ Java_android_llama_cpp_LLamaAndroid_completion_1loop(
     llama_decode_disarm();
 
     // Advance position ONLY if decode succeeded
-    env->CallVoidMethod(intvar_ncur, la_int_var_inc);
+    ncur_ptr[0] = n_cur + 1;
+    env->ReleaseIntArrayElements(ncur_array, ncur_ptr, 0);
+
+    // [SAR PHASE 2] Ashmem IPC WRITE
+    if (g_output_shm_ptr && g_output_token_count) {
+        int32_t idx = g_output_token_count->load(std::memory_order_acquire);
+        size_t offset = sizeof(std::atomic<int32_t>) + (idx * sizeof(TokenEntry));
+        
+        if (offset + sizeof(TokenEntry) <= g_output_shm_size) {
+            TokenEntry* entry = reinterpret_cast<TokenEntry*>((char*)g_output_shm_ptr + offset);
+            entry->token_id = (int32_t)new_token_id;
+            entry->confidence = 1.0f; // TODO: Get actual probability from sampler
+            
+            const char* token_str = final_token_text.c_str();
+            size_t len = std::min(strlen(token_str), sizeof(entry->text) - 1);
+            entry->length = (int32_t)len;
+            memcpy(entry->text, token_str, len);
+            entry->text[len] = '\0';
+            
+            g_output_token_count->fetch_add(1, std::memory_order_release);
+        }
+    }
 
     return new_token;
 }
@@ -1798,5 +1965,47 @@ Java_android_llama_cpp_LLamaAndroid_native_1get_1embeddings(JNIEnv *env, jobject
     env->ReleaseStringUTFChars(jtext, text);
     LOGi("[EMBED] Native embedding extraction complete.");
     return result ? result : env->NewFloatArray(0);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_android_llama_cpp_LLamaAndroid_probe_1backend(
+    JNIEnv* env, jobject, jstring jModelPath, jint backendType) {
+    // [v1.1.2-SAR] CRITICAL: Suppress GPU drivers BEFORE backend registration
+    setenv("GGML_VULKAN", "0", 1);
+    setenv("GGML_OPENCL", "0", 1);
+    setenv("GGML_VULKAN_DISABLE", "1", 1);
+    setenv("GGML_OPENCL_DISABLE", "1", 1);
+
+    llama_backend_init();
+    
+    llama_model_params m_params = llama_model_default_params();
+    m_params.vocab_only = false; // [v1.0.6-SAR] MUST test real tensor allocation
+    
+    // [v1.1.2-SAR] CRITICAL PINNING: Force CPU device registry
+    static ggml_backend_dev_t cpu_devices[2] = {nullptr, nullptr};
+    cpu_devices[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    m_params.devices = cpu_devices;
+
+    // [v1.1.0-SAR] CRITICAL: Probe ALWAYS uses CPU (n_gpu_layers=0).
+    m_params.n_gpu_layers = 0;
+    
+    LOGi("🧵 [PROBE] Using CPU backend (model integrity check).");
+    
+    const char* path = env->GetStringUTFChars(jModelPath, nullptr);
+    LOGi("📂 [PROBE] Loading model (CPU) from: %s", path);
+    
+    llama_model* model = llama_model_load_from_file(path, m_params);
+    env->ReleaseStringUTFChars(jModelPath, path);
+    
+    bool ok = (model != nullptr);
+    if (ok) {
+        LOGi("✅ [PROBE] Backend %d initialized successfully.", backendType);
+        llama_model_free(model);
+    } else {
+        LOGe("❌ [PROBE] Backend %d FAILED. Allocation rejected.", backendType);
+    }
+    
+    llama_backend_free();
+    return ok;
 }
 

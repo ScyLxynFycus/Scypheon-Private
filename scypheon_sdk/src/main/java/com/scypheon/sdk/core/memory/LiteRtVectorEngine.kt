@@ -1,4 +1,4 @@
-﻿package com.scypheon.sdk.core.memory
+package com.scypheon.sdk.core.memory
 
 import android.content.Context
 import com.google.mediapipe.tasks.core.BaseOptions
@@ -8,18 +8,22 @@ import timber.log.Timber
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeout
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * 100% Google-Native Vector Embeddings for Semantic Search.
  * Implementation using MediaPipe (LiteRT) TextEmbedder.
  * Conforms to IVectorEngine for dynamic memory swapping.
  */
-class LiteRtVectorEngine(private val context: Context) : IVectorEngine {
+@Singleton
+class LiteRtVectorEngine @Inject constructor(@ApplicationContext private val context: Context) : IVectorEngine {
 
     private var textEmbedder: TextEmbedder? = null
     
@@ -35,7 +39,13 @@ class LiteRtVectorEngine(private val context: Context) : IVectorEngine {
      *  Default Shadow Path: context.filesDir/.shm/.gateway_sync.bin
      */
     override suspend fun initialize(modelPath: String?) = withContext(Dispatchers.IO) {
-        val finalPath = modelPath ?: "${context.filesDir.absolutePath}/.shm/.gateway_sync.bin"
+        val finalPath = modelPath ?: com.scypheon.sdk.core.utils.AssetExtractor.getModelPath(context, ".gateway_sync.bin")
+        
+        if (finalPath.isEmpty()) {
+            Timber.e("[PHOENIX] LiteRT Embedding asset (.gateway_sync.bin) not found in stealth storage.")
+            _state.value = IVectorEngine.EngineState.Failed
+            return@withContext
+        }
         
         if (circuitOpen) {
             Timber.e("[PHOENIX] LiteRT circuit breaker is OPEN. Initialization aborted.")

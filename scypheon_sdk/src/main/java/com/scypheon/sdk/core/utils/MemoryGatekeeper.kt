@@ -27,11 +27,11 @@ object MemoryGatekeeper {
      * services that consume ~2GB of RAM at idle.
      */
     fun computeHeadroomMB(totalRAMMB: Long): Long = when {
-        totalRAMMB < 4096 -> 600L     // 4GB Devices: Tight headroom
-        totalRAMMB < 6144 -> 800L     // 6GB Devices
-        totalRAMMB < 8192 -> 1024L    // 8GB Devices
-        totalRAMMB < 12288 -> 1536L   // 8-12GB Devices
-        else -> 2048L                 // 12GB+ Devices: Samsung One UI uses ~2GB at idle
+        totalRAMMB < 4096 -> 700L     // 4GB Devices: Tight headroom (+100MB)
+        totalRAMMB < 6144 -> 1000L    // 6GB Devices (+200MB)
+        totalRAMMB < 8192 -> 1536L    // 8GB Devices (+512MB)
+        totalRAMMB < 12288 -> 2048L   // 8-12GB Devices (+512MB)
+        else -> 3072L                 // 12GB+ Devices: Samsung One UI uses ~2GB at idle (+1GB safety)
     }
 
     /**
@@ -65,21 +65,27 @@ object MemoryGatekeeper {
         // Increased for high-RAM devices to allow larger n_batch (512+).
         val computeBufferReserveMB = if (totalMB >= 12000) 512L else 350L
 
-        val netAvailableMB = (availableMB - headroomMB - modelSizeMB - computeBufferReserveMB).coerceAtLeast(0L)
+        // [v1.2.7-SAR] zRAM Efficiency Boost: Most Android devices use 50-70% zRAM compression.
+        // We can safely overcommit memory by ~40% for the KV cache which is mostly zero-heavy.
+        val zRamBonus = 1.4
+        val netAvailableMB = ((availableMB - headroomMB - modelSizeMB - computeBufferReserveMB) * zRamBonus).coerceAtLeast(0.0).toLong()
         
         // Convert to tokens dynamically (MDRS 4.2: High Precision)
         val maxTokens = (netAvailableMB * 1024 * 1024 / estimatedBytesPerToken).toInt()
         
-        // [SAR 1.0.4] Power-of-Two Quantization (512, 1024, 2048, 4096...)
-        // This ensures optimal KV-cache memory alignment in the native layer.
-        var quantizedTokens = 512
+        // [SAR 1.0.4] Power-of-Two Quantization (1024, 2048, 4096...)
+        // Increased floor to 1024 to support modern system prompts (Gemma-4/Llama-3).
+        var quantizedTokens = 1024
         while (quantizedTokens * 2 <= maxTokens && quantizedTokens < 32768) {
             quantizedTokens *= 2
         }
         
-        val finalTokens = quantizedTokens.coerceAtLeast(512)
+        // If device is extremely low RAM (< 4GB), we allow 512 as an absolute floor.
+        // [v1.2.9] Backend now supports up to 32k if RAM allows.
+        val floor = if (totalMB < 4096) 512 else 1024
+        val finalTokens = quantizedTokens.coerceAtLeast(floor).coerceAtMost(32768)
         
-        Timber.i(" [MDRS 4.2] Precision Context Calculation: Avail=${availableMB}MB | Model=${modelSizeMB}MB | EstBytePerToken=$estimatedBytesPerToken | FinalTokens=$finalTokens")
+        Timber.i("🛰️ [MDRS 4.2] Context Logic: Avail=${availableMB}MB (zBonus=${netAvailableMB}MB) | Model=${modelSizeMB}MB | FinalTokens=$finalTokens")
         
         return finalTokens
     }

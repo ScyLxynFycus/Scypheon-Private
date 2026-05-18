@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="scypheon_secure.db"/>
+        <exclude domain="database" path="scypheon_secure.db-wal"/>
+        <exclude domain="database" path="scypheon_secure.db-shm"/>
+        <exclude domain="file" path="models/"/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="database" path="scypheon_secure.db"/>
+        <exclude domain="database" path="scypheon_secure.db-wal"/>
+        <exclude domain="database" path="scypheon_secure.db-shm"/>
+        <exclude domain="file" path="models/"/>
+    </device-transfer>
+</data-extraction-rules>

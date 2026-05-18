@@ -1,0 +1,52 @@
+-- src/main/sqldelight/com/scypheon/sdk/db/Medical.sq
+
+import kotlin.String;
+
+CREATE TABLE medicines (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    class TEXT NOT NULL,
+    brands TEXT,           -- JSON array
+    mechanism TEXT NOT NULL,
+    layman_mechanism TEXT,
+    dosage_adult TEXT,
+    dosage_child TEXT,
+    side_effects TEXT,     -- JSON array
+    contraindications TEXT,-- JSON array
+    symptoms_tags TEXT,    -- JSON search tags
+    provider TEXT NOT NULL,
+    last_updated TEXT NOT NULL
+);
+
+-- STRICT keyword integration (for SQLDelight versions supporting it)
+-- Note: Some older SQLDelight versions might require this in a separate migration or specific config
+
+CREATE TABLE interactions (
+    drug_a TEXT NOT NULL,
+    drug_b TEXT NOT NULL,
+    severity TEXT NOT NULL, -- CHECK(severity IN ('LOW', 'MODERATE', 'HIGH', 'CRITICAL'))
+    effect TEXT NOT NULL,
+    management TEXT,
+    PRIMARY KEY (drug_a, drug_b)
+);
+
+CREATE VIRTUAL TABLE medicine_fts USING fts5(
+    name, class, brands, mechanism, symptoms_tags, content='medicines'
+);
+
+-- Queries
+searchMedicines:
+SELECT medicines.* FROM medicines 
+JOIN medicine_fts ON medicines.rowid = medicine_fts.rowid
+WHERE medicine_fts MATCH :query;
+
+getInteractions:
+SELECT * FROM interactions 
+WHERE (drug_a = :drugA AND drug_b = :drugB) 
+OR (drug_a = :drugB AND drug_b = :drugA);
+
+insertMedicine:
+INSERT OR REPLACE INTO medicines VALUES ?;
+
+insertInteraction:
+INSERT OR REPLACE INTO interactions VALUES ?;

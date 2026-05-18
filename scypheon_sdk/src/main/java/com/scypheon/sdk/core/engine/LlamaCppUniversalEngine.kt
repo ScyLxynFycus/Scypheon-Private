@@ -70,9 +70,6 @@ class LlamaCppUniversalEngine @Inject constructor(
                 isNativeInitialized = true
             }
 
-            // Forward parameters to singleton bridge before loading
-            llamaAndroid.nctx = adjustedNCtx
-            
             val modeName = when(selectedBackendMode) {
                 2 -> "Vulkan Acceleration"
                 3 -> "OpenCL Core"
@@ -83,7 +80,7 @@ class LlamaCppUniversalEngine @Inject constructor(
             _state.emit(InitializationState.Trying(modeName, 1))
 
             // Forward call to the stable native bridge with tiered backend logic
-            llamaAndroid.load(modelPath, backendMode = selectedBackendMode)
+            llamaAndroid.load(modelPath, nCtx = adjustedNCtx, backendMode = selectedBackendMode)
             
             // Capture hardware status from the bridge
             lastHardwareStatus = llamaAndroid.getHardwareStatus()
@@ -116,7 +113,8 @@ class LlamaCppUniversalEngine @Inject constructor(
         topK: Int,
         topP: Float,
         temp: Float,
-        maxTokens: Int
+        maxTokens: Int,
+        enableThinking: Boolean
     ): Flow<String> {
         // Pass sampling parameters to the native bridge
         llamaAndroid.nlen = maxTokens
