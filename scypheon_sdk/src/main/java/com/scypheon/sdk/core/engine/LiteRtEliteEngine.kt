@@ -54,6 +54,7 @@ class LiteRtEliteEngine @Inject constructor(
         get() = if (isInitialized) "NPU [Accelerated]" else "Idle"
     
     private var engine: Engine? = null
+    private var activeConversation: com.google.ai.edge.litertlm.Conversation? = null
     private var isInitialized = false
 
     override suspend fun initialize(modelPath: String, nCtx: Int): Boolean = withContext(Dispatchers.IO) {
@@ -111,7 +112,18 @@ class LiteRtEliteEngine @Inject constructor(
      */
     fun generateMultimodalResponse(prompt: String, image: android.graphics.Bitmap?): Flow<String> = flow {
         val currentEngine = engine ?: throw IllegalStateException("LiteRT Engine not initialized")
+        
+        // 🛡️ [SAR] Session Lifecycle: Close previous conversation before creating new one.
+        // LiteRT only supports 1 session at a time — not closing causes FAILED_PRECONDITION.
+        try {
+            activeConversation?.close()
+        } catch (e: Exception) {
+            Timber.w(e, "⚠️ [LiteRT] Failed to close previous conversation (non-fatal)")
+        }
+        activeConversation = null
+        
         val conversation = currentEngine.createConversation()
+        activeConversation = conversation
         
         try {
             circuitBreaker.execute("litert_engine") {
@@ -135,12 +147,21 @@ class LiteRtEliteEngine @Inject constructor(
         } catch (e: Exception) {
             Timber.e(e, "Error during LiteRT multimodal inference via circuit breaker")
             SolarisTelemetry.record("litert_inference_fail", 0L, mapOf("error" to (e.message ?: "Unknown")))
+            // Clean up failed conversation to prevent stale session
+            try { conversation.close() } catch (_: Exception) {}
+            activeConversation = null
             throw e
         }
     }.flowOn(Dispatchers.Default)
 
     override fun release() {
         Timber.i("Releasing LiteRT-LM Elite Engine resources")
+        try {
+            activeConversation?.close()
+        } catch (e: Exception) {
+            // Ignored
+        }
+        activeConversation = null
         try {
             engine?.close()
         } catch (e: Exception) {

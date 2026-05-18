@@ -262,17 +262,18 @@ class ModelSandboxService : Service() {
         private fun readStringFromFd(pfd: ParcelFileDescriptor, length: Int): String {
             return try {
                 val buffer = ByteArray(length)
-                val inputStream = java.io.FileInputStream(pfd.fileDescriptor)
-                var totalBytesRead = 0
-                
-                // [Hardened Solaris 4.5] Robust loop to handle partial reads in IPC
-                while (totalBytesRead < length) {
-                    val bytesRead = inputStream.read(buffer, totalBytesRead, length - totalBytesRead)
-                    if (bytesRead == -1) break
-                    totalBytesRead += bytesRead
+                java.io.FileInputStream(pfd.fileDescriptor).use { inputStream ->
+                    var totalBytesRead = 0
+                    
+                    // [Hardened Solaris 4.5] Robust loop to handle partial reads in IPC
+                    while (totalBytesRead < length) {
+                        val bytesRead = inputStream.read(buffer, totalBytesRead, length - totalBytesRead)
+                        if (bytesRead == -1) break
+                        totalBytesRead += bytesRead
+                    }
+                    
+                    String(buffer, 0, totalBytesRead, Charsets.UTF_8)
                 }
-                
-                String(buffer, 0, totalBytesRead, Charsets.UTF_8)
             } catch (e: Exception) {
                 Timber.e(e, "🚨 [IPC] Failed to read prompt from Shared Memory FD")
                 ""

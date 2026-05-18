@@ -1362,10 +1362,10 @@ class MainViewModel @Inject constructor(
             return false // Block until cooldown finishes and user acknowledges
         }
 
-        if (_uiState.value.activeModelName == "no models selected" || _uiState.value.activeModelName.contains("(STANDBY)", ignoreCase = true)) {
+        if (_uiState.value.activeModelName == "no models selected") {
             _uiState.update { state ->
                 state.copy(
-                    error = "Active model is in standby. Please select and load a model to start the session."
+                    error = "No models found. Please download or select a model to start the session."
                 )
             }
             showLocalModelPicker()

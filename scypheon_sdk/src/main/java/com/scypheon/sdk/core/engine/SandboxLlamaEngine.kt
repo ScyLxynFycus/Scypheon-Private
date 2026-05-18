@@ -64,6 +64,7 @@ class SandboxLlamaEngine @Inject constructor(
 
     private val sandboxRef = AtomicReference<IScypheonSandbox?>(null)
     private val isBound = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val nativeModelLoadedInSandbox = java.util.concurrent.atomic.AtomicBoolean(false)
     
     private val _processHealth = MutableStateFlow(true)
     val processHealth = _processHealth.asStateFlow()
@@ -126,6 +127,9 @@ class SandboxLlamaEngine @Inject constructor(
 
     private fun handleServiceDeath() {
         Timber.e("🚨 [PHOENIX] Sandbox process DIED. Triggering emergency cleanup.")
+        nativeModelLoadedInSandbox.set(false)
+        currentModelPath = ""
+        currentLoadedCtx = 0
         
         // SAR HARDENING: Immediately inform UI of the failure
         _processHealth.value = false
@@ -222,8 +226,10 @@ class SandboxLlamaEngine @Inject constructor(
             sandbox.loadFromFd(pfd, offset, size, mode, nCtx, statusCallback)
             val result = withTimeoutOrNull(5.seconds) { deferred.await() } ?: false
             if (result) {
+                nativeModelLoadedInSandbox.set(true)
                 _initializationState.emit(InitializationState.Success(lastKnownHardware))
             } else {
+                nativeModelLoadedInSandbox.set(false)
                 _initializationState.emit(InitializationState.Failed("Zero-Latency", "FD Attachment Failed"))
             }
             result
@@ -335,7 +341,7 @@ class SandboxLlamaEngine @Inject constructor(
 
         val currentState = _initializationState.value
         val modelMatch = currentModelPath == modelPath && actualCtx <= currentLoadedCtx
-        if (modelMatch && (currentState is InitializationState.Success || currentState is InitializationState.Loading)) {
+        if (modelMatch && nativeModelLoadedInSandbox.get() && (currentState is InitializationState.Success || currentState is InitializationState.Loading)) {
             return true
         }
 
@@ -454,13 +460,16 @@ class SandboxLlamaEngine @Inject constructor(
 
             currentLoadedCtx = retryCtx
             if (success) {
+                nativeModelLoadedInSandbox.set(true)
                 _initializationState.emit(InitializationState.Success(lastKnownHardware))
             } else {
+                nativeModelLoadedInSandbox.set(false)
                 _initializationState.emit(InitializationState.Failed(attemptLabel, "Initialization Failed (all ctx sizes exhausted)"))
             }
             success
         } catch (e: Exception) {
             Timber.e(e, "Sandbox: loadWithMode failed")
+            nativeModelLoadedInSandbox.set(false)
             pendingLoadDeferred.compareAndSet(deferred, null)
             false
         }
@@ -484,9 +493,9 @@ class SandboxLlamaEngine @Inject constructor(
 
         return try {
             sandbox.probe(modelPath, mode, statusCallback)
-            // [v1.1.0-SAR] Probe is CPU-only so ~2-8s is expected for large models.
-            // 10s timeout is generous; if sandbox dies, handleServiceDeath completes deferred instantly.
-            withTimeoutOrNull(10.seconds) { deferred.await() } ?: false
+            // [v1.1.0-SAR] Probe is CPU-only so ~2-8s is expected for large models, but large 5GB+ models can take up to 15s.
+            // 30s timeout is safe and prevents premature failure on slower disks/devices.
+            withTimeoutOrNull(30.seconds) { deferred.await() } ?: false
         } catch (e: Exception) {
             Timber.e(e, "Sandbox: probeBackend failed")
             false
@@ -775,6 +784,9 @@ class SandboxLlamaEngine @Inject constructor(
     }.flowOn(Dispatchers.IO)
 
     override fun release() {
+        nativeModelLoadedInSandbox.set(false)
+        currentModelPath = ""
+        currentLoadedCtx = 0
         if (isBound.get()) {
             try {
                 sandboxRef.get()?.unload()
@@ -799,5 +811,5 @@ class SandboxLlamaEngine @Inject constructor(
         }
     }
 
-    override fun isReady(): Boolean = sandboxRef.get() != null && _initializationState.value is InitializationState.Success
+    override fun isReady(): Boolean = sandboxRef.get() != null && _initializationState.value is InitializationState.Success && nativeModelLoadedInSandbox.get()
 }
