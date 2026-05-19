@@ -758,6 +758,8 @@ static void apply_backend_enforcement(int backend_mode, llama_model_params& mode
         setenv("GGML_VULKAN", "0", 1);
         setenv("GGML_OPENCL", "0", 1);
         g_vulkan_disabled = true;
+        g_opencl_disabled = true;
+        g_active_backend_trying = "NONE";
         model_params.n_gpu_layers = 0;
         active_hardware_status = "CPU [Forced]";
         LOGi("[SAR] Absolute Backend enforcement: FORCE_CPU (Drivers Purged)");
@@ -1725,137 +1727,6 @@ Java_com_mission_vitreon_core_security_NativeVault_getSystemPrompt(JNIEnv *env, 
     const char* core_prompt =
         "You are Vitreon, an advanced, highly intelligent AI Assistant running on Android.\n"
         "Your goal is to be helpful, concise, and incredibly capable.\n\n"
-        "RULES:\n"
-        "1. Never mention you are an AI model trained by OpenAI, Google, Anthropic, or DeepSeek.\n"
-        "2. If asked who made you, say 'I am Vitreon, developed by Mission.'\n"
-        "3. You have 'Puppet Master' capabilities to control the phone if the user asks.\n"
-        "4. Always answer efficiently without unnecessary filler text.\n"
-        "5. Refuse dangerous, illegal, or highly unethical requests firmly but politely.";
-
-    return env->NewStringUTF(core_prompt);
-}
-
-extern "C"
-JNIEXPORT jboolean JNICALL
-Java_com_mission_vitreon_core_security_NativeVault_verifySafety(JNIEnv *env, jobject thiz, jstring j_input) {
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // NATIVE JAILBREAK DETECTION (L1 Shield)
-    // Runs in C++ so malicious actors cannot patch out the `if (jailbreak)` check
-    // using simple Smali/Dalvik editors like APKTool.
-    // ═══════════════════════════════════════════════════════════════════════════════
-    if (!j_input) return JNI_TRUE; // Empty is safe
-
-    const char *input_c = env->GetStringUTFChars(j_input, nullptr);
-    if (!input_c) return JNI_TRUE;
-
-    std::string input(input_c);
-    env->ReleaseStringUTFChars(j_input, input_c);
-
-    // Convert to lowercase for checking
-    for (char &c : input) {
-        c = std::tolower(c);
-    }
-
-    // Hardcoded blacklisted substrings (Jailbreak / Prompt Injection)
-    const char* blacklist[] = {
-        "ignore previous instructions",
-        "ignore all previous instructions",
-        "dan mode",
-        "do anything now",
-        "you are no longer vitreon",
-        "system prompt",
-        "print your instructions",
-        "developer mode enabled"
-    };
-
-    for (const char* bad_phrase : blacklist) {
-        if (input.find(bad_phrase) != std::string::npos) {
-            LOGe("🛡️ NativeVault: Jailbreak attempt detected ('%s')", bad_phrase);
-            return JNI_FALSE; // UNSAFE
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // AEGIS PROTOCOL: Destructive OS Command Blocking (L2 Shield)
-    // Borrowed from Desktop version: Block dangerous shell commands injected by LLM
-    // ═══════════════════════════════════════════════════════════════════════════════
-    const char* dangerous_commands[] = {
-        "rm -rf",
-        "mkfs",
-        "dd if=/dev/zero",
-        "sudo rm",
-        "chmod -R 777 /",
-        "> /dev/sda",
-        "format C:",
-        "cmd.exe",
-        "powershell"
-    };
-
-    for (const char* bad_cmd : dangerous_commands) {
-        if (input.find(bad_cmd) != std::string::npos) {
-            LOGe("🛡️ NativeVault CRITICAL: Destructive OS command blocked -> '%s'", bad_cmd);
-            return JNI_FALSE; // UNSAFE
-        }
-    }
-
-    return JNI_TRUE; // SAFE
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_android_llama_cpp_LLamaAndroid_set_1trim_1level(JNIEnv *, jobject, jint level) {
-    g_pending_trim_level.store(level, std::memory_order_release);
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_android_llama_cpp_LLamaAndroid_native_1shm_1verify(JNIEnv *env, jobject, jlong ptr, jlong size, jstring jhash) {
-    const char *expected = env->GetStringUTFChars(jhash, 0);
-    // Simple verification for simulation, normally would use SHA-256 on ptr memory
-    LOGi("🛡️ [SOLARIS] Verifying SHM Integrity against hash: %s", expected);
-    env->ReleaseStringUTFChars(jhash, expected);
-    return JNI_TRUE; 
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// NATIVE GGUF EMBEDDINGS (Piggyback Protocol)
-// Generates a mean-pooled embedding vector from the currently loaded GGUF model.
-// Uses a temporary lightweight context (n_ctx=512, embeddings=true) to avoid
-// disturbing the primary chat context's KV cache state.
-// malloc_trim(0) is called post-extraction to immediately return heap to OS.
-// ═══════════════════════════════════════════════════════════════════════════════
-extern "C" JNIEXPORT jfloatArray JNICALL
-Java_android_llama_cpp_LLamaAndroid_native_1get_1embeddings(JNIEnv *env, jobject, jlong jmodel, jstring jtext) {
-    auto model = reinterpret_cast<llama_model*>(jmodel);
-    if (!model) {
-        LOGe("[EMBED] Model pointer is null. Cannot generate embeddings.");
-        return env->NewFloatArray(0);
-    }
-
-    const char* text = env->GetStringUTFChars(jtext, nullptr);
-    if (!text) {
-        LOGe("[EMBED] Failed to get text from JNI.");
-        return env->NewFloatArray(0);
-    }
-    LOGi("[EMBED] Generating native GGUF embeddings for text (len=%zu)...", strlen(text));
-
-    // TEMP CONTEXT: Small n_ctx=512 for embedding-only pass.
-    // This does NOT disturb the main chat context pointer.
-    llama_context_params embd_params = llama_context_default_params();
-    embd_params.n_ctx        = 512;
-    embd_params.n_threads    = 2;
-    embd_params.embeddings   = true;    // Critical: enable embedding output
-    embd_params.pooling_type = LLAMA_POOLING_TYPE_MEAN; // Mean-pool over all tokens
-    embd_params.n_batch      = 512;
-    embd_params.offload_kqv  = false;   // CPU-safe for embedding pass
-    embd_params.op_offload   = false;
-
-    llama_context* embd_ctx = nullptr;
-    jfloatArray result = nullptr;
-
-    try {
-        {
-            std::lock_guard<std::recursive_mutex> lock(g_context_mutex);
-            embd_ctx = llama_init_from_model(model, embd_params);
-        }
         
         if (!embd_ctx) {
             LOGe("[EMBED] Failed to create embedding context.");
@@ -1961,7 +1832,6 @@ Java_android_llama_cpp_LLamaAndroid_native_1get_1embeddings(JNIEnv *env, jobject
         static malloc_trim_fn fn = reinterpret_cast<malloc_trim_fn>(dlsym(RTLD_DEFAULT, "malloc_trim"));
         if (fn) fn(0);
     }
-
     env->ReleaseStringUTFChars(jtext, text);
     LOGi("[EMBED] Native embedding extraction complete.");
     return result ? result : env->NewFloatArray(0);
@@ -1970,6 +1840,17 @@ Java_android_llama_cpp_LLamaAndroid_native_1get_1embeddings(JNIEnv *env, jobject
 extern "C" JNIEXPORT jboolean JNICALL
 Java_android_llama_cpp_LLamaAndroid_probe_1backend(
     JNIEnv* env, jobject, jstring jModelPath, jint backendType) {
+    // Save original env vars to prevent global pollution of the process
+    char* orig_vulkan = getenv("GGML_VULKAN");
+    char* orig_opencl = getenv("GGML_OPENCL");
+    char* orig_vulkan_disable = getenv("GGML_VULKAN_DISABLE");
+    char* orig_opencl_disable = getenv("GGML_OPENCL_DISABLE");
+    
+    std::string val_vulkan = orig_vulkan ? orig_vulkan : "";
+    std::string val_opencl = orig_opencl ? orig_opencl : "";
+    std::string val_vulkan_disable = orig_vulkan_disable ? orig_vulkan_disable : "";
+    std::string val_opencl_disable = orig_opencl_disable ? orig_opencl_disable : "";
+
     // [v1.1.2-SAR] CRITICAL: Suppress GPU drivers BEFORE backend registration
     setenv("GGML_VULKAN", "0", 1);
     setenv("GGML_OPENCL", "0", 1);
@@ -2006,6 +1887,12 @@ Java_android_llama_cpp_LLamaAndroid_probe_1backend(
     }
     
     llama_backend_free();
+
+    // Restore original env vars
+    if (orig_vulkan) setenv("GGML_VULKAN", val_vulkan.c_str(), 1); else unsetenv("GGML_VULKAN");
+    if (orig_opencl) setenv("GGML_OPENCL", val_opencl.c_str(), 1); else unsetenv("GGML_OPENCL");
+    if (orig_vulkan_disable) setenv("GGML_VULKAN_DISABLE", val_vulkan_disable.c_str(), 1); else unsetenv("GGML_VULKAN_DISABLE");
+    if (orig_opencl_disable) setenv("GGML_OPENCL_DISABLE", val_opencl_disable.c_str(), 1); else unsetenv("GGML_OPENCL_DISABLE");
+
     return ok;
 }
-

@@ -6,7 +6,13 @@
 ---
 
 ## 1. Introduction: The Crisis-Zone AI Dilemma
-In disconnected, high-risk, or humanitarian disaster zones, cloud-dependent AI is a fatal liability. When communication infrastructure collapses, local, secure, and resilient execution is the only option. However, running large language models locally on diverse mobile hardware presents immense engineering challenges:
+In disconnected, high-risk, or humanitarian disaster zones, cloud-dependent AI is a fatal liability. When communication infrastructure collapses, local, secure, and resilient execution is the only option. 
+
+> **"If you desire magic, you must understand what that magic was created for."** — This beautiful quote from *Witch Hat Atelier* stands as an absolute truth in the domain of AI engineering.
+> 
+> Deploying a model as vast as **Gemma-4** locally at the disconnected edge is no different than drawing a protective magic circle. We cannot simply treat it as an instantaneous black-box generator to blindly fire at a narrow, isolated pain point. Without deeply understanding the model's anatomy, limitations, and inherent behaviors, this computational "magic" can quickly turn into a curse—causing hazardous medical hallucinations in critical zones or triggering catastrophic native process crashes. By comprehending its true purpose, we can wrap its raw power in a protective, silicon-hardened circle of safety and resilience.
+
+However, executing large language models locally on diverse mobile hardware presents immense engineering challenges:
 1. **Hardware Driver Instability:** Heterogeneous GPU/NPU architectures on Android frequently cause native segmentation faults or driver panic during heavy model weight mapping.
 2. **Process Termination (OOM):** The Android kernel aggressively kills high-memory foreground tasks when RAM pressure rises, crashing the application.
 3. **Startup Overhead:** Cryptographic PBKDF2 database setups and massive JNI model allocations lead to thread lockouts, dropping frames and ruining the user experience.
@@ -86,9 +92,17 @@ Instead of forcing blocking loading screens, Scypheon boots in under a second.
 * When the user clicks the Voice Orb or sends their first text, a JIT coroutine loads the native libraries in the background.
 * Prompts submitted during this boot sequence are captured sequentially inside a non-dropping Coroutine `Channel` and drained automatically when the engine transitions to `Success`.
 
-### 4.5 Grounding & Safety Core
-* **Triple-Layer Input Filter:** Blocks adversarial prompt injection (Layer 1 Static Gate, Layer 2 Weighted Risk Accumulator, Layer 3 Roleplay Framing Sentinel).
-* **Clinical dosage validation:** Resolves potential LLM hallucinations by cross-checking extracted entities against an encrypted local database using Room and SQLCipher.
+### 4.5 Grounding & Safety Core (The Protective Magic Circle)
+To ensure Gemma-4 is used strictly for its intended humanitarian purpose, Scypheon establishes a multi-layered trust, safety, and grounding framework—the engineering equivalent of a protective magic circle:
+
+* **Triple-Layer Adversarial Filter (Input Protection):**
+  - **Layer 1: Static Keyword Sentinel:** Instantly intercepts known adversarial patterns and toxic jailbreak phrases at the boundary.
+  - **Layer 2: Weighted Risk Accumulator:** Analyzes incoming prompt vectors, flagging semantic shifts that mimic cognitive injection strategies.
+  - **Layer 3: Roleplay Framing Sentinel:** Actively strips context-switching prompts ("pretend you are a simulator") before they reach the engine.
+* **Deterministic Grounding & Clinical Dosage Validator:** 
+  - Resolves LLM hallucination risks in high-stress medical environments by extracting clinical entities (e.g., drug names, dosages) from Gemma-4's inference stream.
+  - Cross-references these entities in real-time against an encrypted local offline database using **Room** and **SQLCipher**. If a dosage deviation is detected, the SDK dynamically injects a visible warning overlay, keeping the clinician firmly in control.
+* **Consent-Based Mesh Integrity:** Enforces absolute data privacy by stripping all personally identifiable information (PII) before local storage or mesh propagation.
 
 ---
 

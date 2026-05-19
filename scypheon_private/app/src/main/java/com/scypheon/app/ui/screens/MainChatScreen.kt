@@ -71,6 +71,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 
 import com.scypheon.app.data.models.SystemHealth
 import com.scypheon.app.data.models.OomDiagnostic
+import androidx.compose.ui.input.key.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -413,7 +417,7 @@ fun MainChatScreen(
                 }
             },
         bottomBar = {
-            if (isReady && activeModelName != "no models selected") {
+            if (activeModelName != "no models selected") {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -458,7 +462,38 @@ fun MainChatScreen(
                                         value = inputText,
                                         onValueChange = { inputText = it },
                                         textStyle = TextStyle(color = Color(0xFF1F1F1F), fontSize = 16.sp),
-                                        modifier = Modifier.fillMaxWidth()
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .onPreviewKeyEvent { keyEvent ->
+                                                if (keyEvent.key == Key.Enter && keyEvent.type == KeyEventType.KeyUp) {
+                                                    scope.launch {
+                                                        delay(50)
+                                                        val success = onSendMessage(inputText, attachedImageUri)
+                                                        if (success) {
+                                                            inputText = ""
+                                                            attachedImageUri = null
+                                                        }
+                                                    }
+                                                    true
+                                                } else {
+                                                    false
+                                                }
+                                            },
+                                        keyboardOptions = KeyboardOptions(
+                                            imeAction = ImeAction.Send
+                                        ),
+                                        keyboardActions = KeyboardActions(
+                                            onSend = {
+                                                scope.launch {
+                                                    delay(50)
+                                                    val success = onSendMessage(inputText, attachedImageUri)
+                                                    if (success) {
+                                                        inputText = ""
+                                                        attachedImageUri = null
+                                                    }
+                                                }
+                                            }
+                                        )
                                     )
                                 }
 
@@ -1037,13 +1072,26 @@ fun MainChatScreen(
                         Spacer(Modifier.height(16.dp))
 
                         if (localModels.isEmpty()) {
-                            Box(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 32.dp),
-                                contentAlignment = Alignment.Center
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
                                 Text("No local models found.", color = Color.Gray)
+                                Button(
+                                    onClick = {
+                                        onHideLocalModelPicker()
+                                        onOpenModelHub()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Open Model Hub")
+                                }
                             }
                         } else {
                             LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {

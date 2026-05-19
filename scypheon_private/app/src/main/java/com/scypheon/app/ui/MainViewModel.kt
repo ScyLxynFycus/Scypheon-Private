@@ -1361,6 +1361,17 @@ class MainViewModel @Inject constructor(
         if (_uiState.value.memoryStabilityState == MemoryStabilityState.WARNING_COOLDOWN) {
             return false // Block until cooldown finishes and user acknowledges
         }
+
+        if (_uiState.value.activeModelName == "no models selected") {
+            _uiState.update { state ->
+                state.copy(
+                    error = "No models found. Please download or select a model to start the session."
+                )
+            }
+            showLocalModelPicker()
+            return false
+        }
+
         // RAG is a memory enhancement. Blocking on ragReady causes messages to be
         // silently queued forever if vectorEngineState gets stuck at Initializing
         // after a re-init cycle, since the queue drain also requires Llama Success.

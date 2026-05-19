@@ -90,6 +90,24 @@ Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_probeBackendNative(
     JNIEnv* env, jclass clazz, jstring jModelPath, jint backendType) {
     
     LOGI("🔍 [PROBE] Validating model file integrity (CPU-only, backend=%d)", backendType);
+
+    // Save original env vars to prevent global pollution of the process
+    char* orig_vulkan = getenv("GGML_VULKAN");
+    char* orig_opencl = getenv("GGML_OPENCL");
+    char* orig_vulkan_disable = getenv("GGML_VULKAN_DISABLE");
+    char* orig_opencl_disable = getenv("GGML_OPENCL_DISABLE");
+    
+    std::string val_vulkan = orig_vulkan ? orig_vulkan : "";
+    std::string val_opencl = orig_opencl ? orig_opencl : "";
+    std::string val_vulkan_disable = orig_vulkan_disable ? orig_vulkan_disable : "";
+    std::string val_opencl_disable = orig_opencl_disable ? orig_opencl_disable : "";
+
+    // [v1.1.2-SAR] CRITICAL: Suppress GPU drivers BEFORE backend registration
+    setenv("GGML_VULKAN", "0", 1);
+    setenv("GGML_OPENCL", "0", 1);
+    setenv("GGML_VULKAN_DISABLE", "1", 1);
+    setenv("GGML_OPENCL_DISABLE", "1", 1);
+
     llama_backend_init();
     
     llama_model_params m_params = llama_model_default_params();
@@ -102,8 +120,6 @@ Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_probeBackendNative(
 
     // [v1.1.0-SAR] CRITICAL: Probe ALWAYS uses CPU (n_gpu_layers=0).
     m_params.n_gpu_layers = 0;
-    setenv("GGML_VULKAN", "0", 1);
-    setenv("GGML_OPENCL", "0", 1);
     
     LOGI("🧵 [PROBE] Using CPU backend (model integrity check).");
     
@@ -122,6 +138,13 @@ Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_probeBackendNative(
     }
     
     llama_backend_free();
+
+    // Restore original env vars
+    if (orig_vulkan) setenv("GGML_VULKAN", val_vulkan.c_str(), 1); else unsetenv("GGML_VULKAN");
+    if (orig_opencl) setenv("GGML_OPENCL", val_opencl.c_str(), 1); else unsetenv("GGML_OPENCL");
+    if (orig_vulkan_disable) setenv("GGML_VULKAN_DISABLE", val_vulkan_disable.c_str(), 1); else unsetenv("GGML_VULKAN_DISABLE");
+    if (orig_opencl_disable) setenv("GGML_OPENCL_DISABLE", val_opencl_disable.c_str(), 1); else unsetenv("GGML_OPENCL_DISABLE");
+
     return ok;
 }
 

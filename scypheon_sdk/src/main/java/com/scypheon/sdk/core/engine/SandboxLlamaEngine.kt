@@ -64,6 +64,7 @@ class SandboxLlamaEngine @Inject constructor(
 
     private val sandboxRef = AtomicReference<IScypheonSandbox?>(null)
     private val isBound = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val nativeModelLoadedInSandbox = java.util.concurrent.atomic.AtomicBoolean(false)
     
     private val _processHealth = MutableStateFlow(true)
     val processHealth = _processHealth.asStateFlow()
@@ -126,6 +127,9 @@ class SandboxLlamaEngine @Inject constructor(
 
     private fun handleServiceDeath() {
         Timber.e("🚨 [PHOENIX] Sandbox process DIED. Triggering emergency cleanup.")
+        nativeModelLoadedInSandbox.set(false)
+        currentModelPath = ""
+        currentLoadedCtx = 0
         
         // SAR HARDENING: Immediately inform UI of the failure
         _processHealth.value = false
@@ -222,8 +226,10 @@ class SandboxLlamaEngine @Inject constructor(
             sandbox.loadFromFd(pfd, offset, size, mode, nCtx, statusCallback)
             val result = withTimeoutOrNull(5.seconds) { deferred.await() } ?: false
             if (result) {
+                nativeModelLoadedInSandbox.set(true)
                 _initializationState.emit(InitializationState.Success(lastKnownHardware))
             } else {
+                nativeModelLoadedInSandbox.set(false)
                 _initializationState.emit(InitializationState.Failed("Zero-Latency", "FD Attachment Failed"))
             }
             result
@@ -335,7 +341,7 @@ class SandboxLlamaEngine @Inject constructor(
 
         val currentState = _initializationState.value
         val modelMatch = currentModelPath == modelPath && actualCtx <= currentLoadedCtx
-        if (modelMatch && (currentState is InitializationState.Success || currentState is InitializationState.Loading)) {
+        if (modelMatch && nativeModelLoadedInSandbox.get() && (currentState is InitializationState.Success || currentState is InitializationState.Loading)) {
             return true
         }
 
@@ -376,6 +382,7 @@ class SandboxLlamaEngine @Inject constructor(
             // optimistic. Min floor is 512 tokens to guarantee basic functionality.
             var retryCtx = actualCtx
             var success = false
+            var isHardError = false
             while (!success && retryCtx >= 512) {
                 val retryDeferred = CompletableDeferred<Boolean>()
                 pendingLoadDeferred.set(retryDeferred)
@@ -389,7 +396,13 @@ class SandboxLlamaEngine @Inject constructor(
                         retryDeferred.complete(result)
                     }
                     override fun onHardwareStatusUpdate(status: String) { lastKnownHardware = status; _hardwareStatus.value = status }
-                    override fun onInternalError(error: String) { pendingLoadDeferred.compareAndSet(retryDeferred, null); retryDeferred.complete(false) }
+                    override fun onInternalError(error: String) { 
+                        if (error == "HARD_LOAD_ERROR") {
+                            isHardError = true
+                        }
+                        pendingLoadDeferred.compareAndSet(retryDeferred, null)
+                        retryDeferred.complete(false) 
+                    }
                     override fun onPollutionDetected(residualBytes: Long) { pendingLoadDeferred.compareAndSet(retryDeferred, null); retryDeferred.complete(false) }
                     override fun onEmbeddings(embeddings: FloatArray) {}
                 }
@@ -420,10 +433,11 @@ class SandboxLlamaEngine @Inject constructor(
                     freshSandbox.load(modelPath, mode, retryCtx, retryCallback)
                     success = withTimeoutOrNull(45.seconds) { retryDeferred.await() } ?: false
                 } catch (e: android.os.DeadObjectException) {
-                    Timber.e("🚨 [PHOENIX] DeadObjectException during load! Sandbox process DIED. Forcing re-bind.")
-                    sandboxRef.set(null) // Reset proxy to force re-bind in next loop iteration
+                    Timber.e("🚨 [PHOENIX] DeadObjectException during load! Sandbox process DIED. Aborting GPU retry loop.")
+                    sandboxRef.set(null) // Reset proxy
                     success = false
-                    delay(2000) // Long delay after hard crash
+                    isHardError = true // Process death is a hard load/driver failure
+                    break
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     // [v1.5.3-SAR] CRITICAL FIX: Don't retry on scope cancellation.
                     // When Activity is destroyed, the ViewModel scope gets cancelled.
@@ -435,18 +449,27 @@ class SandboxLlamaEngine @Inject constructor(
                     success = false
                 }
 
-                if (!success) retryCtx /= 2
+                if (!success) {
+                    if (isHardError) {
+                        Timber.w("🛡️ [PHOENIX] Hard loading or driver failure detected. Aborting retry loop.")
+                        break
+                    }
+                    retryCtx /= 2
+                }
             }
 
             currentLoadedCtx = retryCtx
             if (success) {
+                nativeModelLoadedInSandbox.set(true)
                 _initializationState.emit(InitializationState.Success(lastKnownHardware))
             } else {
+                nativeModelLoadedInSandbox.set(false)
                 _initializationState.emit(InitializationState.Failed(attemptLabel, "Initialization Failed (all ctx sizes exhausted)"))
             }
             success
         } catch (e: Exception) {
             Timber.e(e, "Sandbox: loadWithMode failed")
+            nativeModelLoadedInSandbox.set(false)
             pendingLoadDeferred.compareAndSet(deferred, null)
             false
         }
@@ -470,9 +493,9 @@ class SandboxLlamaEngine @Inject constructor(
 
         return try {
             sandbox.probe(modelPath, mode, statusCallback)
-            // [v1.1.0-SAR] Probe is CPU-only so ~2-8s is expected for large models.
-            // 10s timeout is generous; if sandbox dies, handleServiceDeath completes deferred instantly.
-            withTimeoutOrNull(10.seconds) { deferred.await() } ?: false
+            // [v1.1.0-SAR] Probe is CPU-only so ~2-8s is expected for large models, but large 5GB+ models can take up to 15s.
+            // 30s timeout is safe and prevents premature failure on slower disks/devices.
+            withTimeoutOrNull(30.seconds) { deferred.await() } ?: false
         } catch (e: Exception) {
             Timber.e(e, "Sandbox: probeBackend failed")
             false
@@ -761,6 +784,9 @@ class SandboxLlamaEngine @Inject constructor(
     }.flowOn(Dispatchers.IO)
 
     override fun release() {
+        nativeModelLoadedInSandbox.set(false)
+        currentModelPath = ""
+        currentLoadedCtx = 0
         if (isBound.get()) {
             try {
                 sandboxRef.get()?.unload()
@@ -785,5 +811,5 @@ class SandboxLlamaEngine @Inject constructor(
         }
     }
 
-    override fun isReady(): Boolean = sandboxRef.get() != null && _initializationState.value is InitializationState.Success
+    override fun isReady(): Boolean = sandboxRef.get() != null && _initializationState.value is InitializationState.Success && nativeModelLoadedInSandbox.get()
 }
