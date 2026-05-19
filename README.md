@@ -3,6 +3,7 @@
 [![Android SDK: 35](https://img.shields.io/badge/Android%20SDK-35-blue.svg)](#)
 [![Kotlin: 1.9+](https://img.shields.io/badge/Kotlin-1.9%2B-purple.svg)](#)
 [![Engine: LiteRT %26 llama.cpp](https://img.shields.io/badge/Engine-LiteRT%20%26%20llama.cpp-green.svg)](#)
+[![Download APK](https://img.shields.io/badge/Download-Latest%20APK-brightgreen?style=for-the-badge&logo=android)](https://github.com/ScyLxynFycus/Scypheon-Private/releases/download/release/app-debug.apk)
 
 Welcome to the authoritative repository of **Scypheon**, a secure, offline-native, resilient humanitarian AI platform designed for high-stress deployments, disaster-relief routing, and remote offline medical triage grounding.
 
