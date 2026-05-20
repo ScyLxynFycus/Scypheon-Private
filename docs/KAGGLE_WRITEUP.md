@@ -131,19 +131,18 @@ Every core module within the Scypheon SDK undergoes strict verification to guara
 The following links provide full public access to Scypheon's engineering artifacts:
 
 ### 🎥 a. Public Video Demo (YouTube)
-* **Link:** [https://www.youtube.com/watch?v=scypheon_private_demo](https://www.youtube.com/watch?v=scypheon_private_demo) *(Or dynamic YouTube link)*
-* **Summary:** A 3-minute technical walkthrough demonstrating cold-start lazy booting, a live voice session with the PTT Obsidian Orb, local Gemma-4 inference with zero recomposition overhead, and instant fallback triggered by an engine crash simulation.
+(ongoing with Fireship Look a like format)
 
 ### 💻 b. Public Code Repository
 * **Link:** [https://github.com/ScyLxynFycus/Scypheon-Private](https://github.com/ScyLxynFycus/Scypheon-Private)
 * **Description:** The complete, production-grade Android codebase including the modular `:scypheon_sdk` project, `:app` Compose client, and native JNI `:llama` building blocks.
 
 ### 📲 c. Live Demo Working APK
-* **Link:** [https://github.com/ScyLxynFycus/Scypheon-Private/releases/tag/v1.5.4](https://github.com/ScyLxynFycus/Scypheon-Private/releases/tag/v1.5.4)
+* **Link:** [https://github.com/ScyLxynFycus/Scypheon-Private/releases/tag](https://github.com/ScyLxynFycus/Scypheon-Private/releases)
 * **Details:** Silicon-hardened compile of the release APK (`app-release.apk`) optimized with R8 minification, fully runnable offline on target Android SDK 35 devices.
 
 ### 🖼️ d. Media Gallery Cover Image
-* **Cover Image Path:** [scypheon_cover_gallery.webp](file:///D:/AuraLink/docs/scypheon_cover_gallery.webp) *(Cover visual illustrating the Obsidian Live Orb active listening state and the premium main chat interface).*
+* **Cover Image Path:** [scypheon_cover_gallery.webp](file:///D:/AuraLink/docs/scypheon_cover_gallery.webp) 
 
 ---
 *The Scypheon platform is not a prototype; it is a battle-hardened, production-ready offline AI ecosystem.*
