@@ -5,7 +5,7 @@ Initially, Scypheon was envisioned as an AI assistant for radiological diagnosti
 
 To ground our engineering in reality, we consulted directly with practicing medical professionals to understand their exact bottlenecks.
 
-![Doctor Consultation - Identifying the Pain Point](./images/discord_ss_1.png)
+![Doctor Consultation - Identifying the Pain Point](../assets/Pictures/Chief_Directive/chief_1.png)
 > **Translation of the Consultation:**
 > **K4U (Engineer):** I'm currently researching diagnostic workflows in Indonesian healthcare facilities for a project. I want to know from a direct doctor's perspective, not from a textbook... what consumes the most time when dealing with X-Rays, doc?
 > 
@@ -20,7 +20,7 @@ To ground our engineering in reality, we consulted directly with practicing medi
 > 
 > **Doctor:** What consumes the most time is actually the sheer number of patients served in one day. The reading process itself is fast.
 
-![Doctor Consultation - The Need for AI Tools](./images/discord_ss_2.png)
+![Doctor Consultation - The Need for AI Tools](../assets/Pictures/Chief_Directive/chief_2.png)
 > **Translation of the Consultation:**
 > **K4U (Engineer):** Thanks for the info doc, I'm actually participating in The MedGemma Impact Challenge (Research only), but I don't understand the real pain points of X-Rays because the models are only trained on lab data, creating a gap with real field data.
 > 
@@ -39,7 +39,7 @@ Refusing to give up, we pivoted the project towards another critical frontier: *
 
 To validate this, I reached out to a friend in Japan, a teacher working in a rural, non-urban district, hoping to get a real user testimonial to build a strong, emotional narrative for the hackathon.
 
-![Teacher Consultation - The Rural Education Pivot](./images/discord_ss_3.png)
+![Teacher Consultation - The Rural Education Pivot](../assets/Pictures/Chief_Directive/chief_3.png)
 > **Translation of the Consultation:**
 > **K4U (Engineer):** Lily and the blue sky outside, are both really beautiful~!
 > 
@@ -61,7 +61,7 @@ Once again, our attempt to gather real-world use-case data ended in a complete d
 
 Frustrated and left with zero subject matter experts in both medicine and education, I turned to the general tech community to find a real user case. I asked them what they truly wanted from a local edge AI. Their responses were equally unhelpful and bordering on the absurd.
 
-![Community Consultation - Unrealistic Expectations](./images/discord_ss_4.png)
+![Community Consultation - Unrealistic Expectations](../assets/Pictures/Chief_Directive/chief_4.png)
 > **Translation of the Consultation:**
 > **r_dev:** So when is the open-source AI explosion of peak performance & lightweight going to happen?
 > **RyZe:** Gemma 4 32b has already surpassed OSS 120b and output quality equals Qwen 3.5 397b... But it still can't replace 5 jobs, mostly entry-level or good CS/admin jobs.
