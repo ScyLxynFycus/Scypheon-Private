@@ -1,11 +1,11 @@
-﻿# SCYPHEON: ZERO-TRUST EDGE INTELLIGENCE ECOSYSTEM
+# SCYPHEON: ZERO-TRUST EDGE INTELLIGENCE ECOSYSTEM
 **Version:** 1.5.0-SAR (Silicon-Verified Architecture)  
 **Target:** Gemma 4 Good Hackathon Final Submission  
 
 [![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](#)
 [![Android SDK: 35](https://img.shields.io/badge/Android%20SDK-35-blue.svg)](#)
 [![Kotlin: 1.9+](https://img.shields.io/badge/Kotlin-1.9%2B-purple.svg)](#)
-[![Engine: LiteRT %26 llama.cpp](https://img.shields.io/badge/Engine-LiteRT%20%26%20llama.cpp-green.svg)](#)
+[![Engine: LiteRT & llama.cpp](https://img.shields.io/badge/Engine-LiteRT%20%26%20llama.cpp-green.svg)](#)
 [![Download APK](https://img.shields.io/badge/Download-Latest%20APK-brightgreen?style=for-the-badge&logo=android)](https://github.com/ScyLxynFycus/Scypheon-Private/releases/download/release/app-debug.apk)
 
 > **Notice to Technical Auditors and Judges:**
@@ -30,25 +30,48 @@ Current "production-grade" applications fail in these environments:
 
 The platform eschews monolithic design in favor of a strictly decoupled, modular architecture. The repository is partitioned into isolated subsystems to enforce an absolute separation of concerns between the presentation layer, the systems-level logic, and the native C++ inference boundaries.
 
-\\\	ext
+```text
 Scypheon-Private (Repository Root)
 ├── scypheon_private/              # Presentation Layer & Workspace Component
-│   ├── app/                       # Jetpack Compose UI, ViewModels, and UI States
+│   ├── app/src/main/java/com/scypheon/app/
+│   │   ├── ui/screens/            # Jetpack Compose UI (LiveMode, GraphExplorer)
+│   │   ├── ui/views/              # Custom rendering (NeuralGraphView)
+│   │   ├── orchestrator/          # App-level orchestration
+│   │   └── data/                  # App-level repositories and local providers
 │   └── README.md                  # Application-specific architectural guide
 │
 ├── scypheon_sdk/                  # Systems Intelligence & Resilience Core
-│   ├── src/main/java/             # Native Gateways, Lazarus Protocol, Circuit Breakers
+│   ├── src/main/java/com/scypheon/sdk/core/
+│   │   ├── agent/                 # Agentic Orchestration
+│   │   │   ├── ooda/              # OODA Fast Engine Loop
+│   │   │   ├── skills/            # Extensible Agent Skills (Math, Medical, Tutor)
+│   │   │   ├── tool/hooks/        # ToolHookEngine (PreToolUse/PostToolUse/Stop)
+│   │   │   └── swarm/             # Multi-Agent Parallel Reasoning
+│   │   ├── safety/                # Defense-in-Depth Guardrails
+│   │   │   ├── helios/            # Layer 0 Sanitizer (Shannon Entropy Guards)
+│   │   │   └── security/          # Integrity verifiers
+│   │   ├── resilience/            # Circuit Breakers and Fallback Engines
+│   │   ├── memory/                # Dual Memory & Context Replay Buffers
+│   │   ├── telemetry/             # BlackBoxVault (Offline Encrypted Auditing)
+│   │   ├── medical/               # Humanitarian Medical Grounding
+│   │   │   └── humanitarian/      # Disaster-relief routing and triage
+│   │   ├── gateway/               # NeuralGateway and Dynamic Prompt Compilers
+│   │   ├── mesh/                  # P2P Cryptographic Identity Mesh
+│   │   ├── xai/                   # Explainable AI & Critic Nodes
+│   │   └── environment/           # Device constraints and thermal monitoring
 │   └── README.md                  # SDK API reference and defensive guardrail documentation
 │
 ├── llama/                         # Native C++ Boundaries
-│   └── src/main/cpp/              # JNI execution, memory mapping, and llama.cpp bindings
+│   └── src/main/cpp/              # JNI execution, Zero-Copy SHM memfd_create
 │
 └── docs/                          # Enterprise Documentation & Audit Artifacts
     ├── SCYPHEON_ENTERPRISE_ARCHITECTURE.md
     ├── SCYPHEON_HUMANITARIAN_IMPACT.md
     ├── SCYPHEON_VS_PRODUCTION_GRADE.md
-    └── JUDGES_QUICK_START_GUIDE.md
-\\\
+    ├── PROJECT_DESCRIPTION.md
+    ├── KAGGLE_WRITEUP.md
+    └── DATA_SOURCES.md
+```
 
 ---
 
@@ -57,21 +80,21 @@ Scypheon-Private (Repository Root)
 To comprehensively understand the structural integrity and capabilities of this ecosystem, auditors and engineers should navigate the repository via the following entry points. These are the subsystems that elevate Scypheon from a hackathon prototype to an enterprise-grade platform.
 
 ### 3.1 The SDK Safety & Resilience Core (The Fortress)
-**Path:** \./scypheon_sdk/README.md\
+**Path:** `./scypheon_sdk/README.md`
 This module houses the core defenses of the application. Auditors should inspect this module to verify the following mechanisms:
-*   **Zero-Copy Shared Memory (SHM) Pipeline:** Bypasses Binder IPC limits by bridging directly to the Linux kernel via \NativeLibraryLoader.createMemfdNative\. Tensor buffers are mapped into \SharedMemory\, guaranteeing a 120 FPS UI frame budget even at maximum token generation speeds.
-*   **The Lazarus Protocol:** Actively monitors the native C++ sandbox via \IBinder.DeathRecipient\. If the OS terminates the engine due to memory exhaustion, the SDK traps the binder death, parses the \HardwareTombstone\, and asynchronously cold-reboots the sandbox without crashing the UI.
+*   **Zero-Copy Shared Memory (SHM) Pipeline:** Bypasses Binder IPC limits by bridging directly to the Linux kernel via `NativeLibraryLoader.createMemfdNative`. Tensor buffers are mapped into `SharedMemory`, guaranteeing a 120 FPS UI frame budget even at maximum token generation speeds.
+*   **The Lazarus Protocol:** Actively monitors the native C++ sandbox via `IBinder.DeathRecipient`. If the OS terminates the engine due to memory exhaustion, the SDK traps the binder death, parses the `HardwareTombstone`, and asynchronously cold-reboots the sandbox without crashing the UI.
 *   **Shannon Entropy Guard:** Intercepts input before it reaches the Gemma 4 engine, calculating the Shannon Entropy of the byte distribution to instantly drop obfuscated adversarial payloads (e.g., polymorphic shellcode).
 *   **ToolHookEngine & ClinicalSafetyPreHook:** Intercepts autonomous agentic function calls, mathematically blocking execution if a medical dosage tool call contains absurd parameters (e.g., >10,000mg).
 
 ### 3.2 The Application Presentation Layer
-**Path:** \./scypheon_private/README.md\
+**Path:** `./scypheon_private/README.md`
 This directory contains the user-facing implementation. Auditors should review this to understand:
-*   **Spatial Grid Indexing O(1):** The Sentient Mirror (Knowledge Graph) UI utilizes a \MutableGridSpatialIndex\ via \LongSparseArray\ to resolve touch events and node mapping in constant time, eliminating UI thread iteration bottlenecks.
+*   **Spatial Grid Indexing O(1):** The Sentient Mirror (Knowledge Graph) UI utilizes a `MutableGridSpatialIndex` via `LongSparseArray` to resolve touch events and node mapping in constant time, eliminating UI thread iteration bottlenecks.
 *   **CompletableDeferred Cryptographic Pre-Warming:** Ensures that heavy AES-256 SQLCipher initialization occurs exclusively on background I/O threads, preventing UI jank during the cold-boot sequence.
 
 ### 3.3 Global Architectural Blueprints & Impact Analysis
-**Path:** \./docs/\
+**Path:** `./docs/`
 This directory contains the definitive whitepapers mapping the holistic system.
 *   **[SCYPHEON_ENTERPRISE_ARCHITECTURE.md](./docs/SCYPHEON_ENTERPRISE_ARCHITECTURE.md)**: The 17-point whitepaper providing Mermaid topological diagrams of data flow across the Security Gateways and the Native Inference Core.
 *   **[SCYPHEON_VS_PRODUCTION_GRADE.md](./docs/SCYPHEON_VS_PRODUCTION_GRADE.md)**: An analysis of how Scypheon prevents the zero-day vulnerabilities that have compromised billion-dollar platforms like Signal, WhatsApp, and Telegram.
@@ -90,12 +113,12 @@ Engineers must ensure the local build environment is configured strictly accordi
 *   Java Development Kit (JDK) 17
 
 ### 4.2 Target Device Constraints
-Target deployment must be directed to a **physical Android device** (API 26+). Emulators are explicitly unsupported. Emulated environments utilize host CPU emulation and virtualized memory spaces, rendering them incapable of accurately reproducing Android SoC thermal dynamics, Linux LMKD behavior, or the \memfd_create\ bindings required to evaluate the resilience protocols.
+Target deployment must be directed to a **physical Android device** (API 26+). Emulators are explicitly unsupported. Emulated environments utilize host CPU emulation and virtualized memory spaces, rendering them incapable of accurately reproducing Android SoC thermal dynamics, Linux LMKD behavior, or the `memfd_create` bindings required to evaluate the resilience protocols.
 
 ### 4.3 Build Directives
-Execute the following directives from the repository root to purge stale artifacts and initiate a clean cross-module compilation. Note that the \HardwareConfigProvider\ and the native C++ sandbox (\llama-android.cpp\) will cross-compile automatically.
+Execute the following directives from the repository root to purge stale artifacts and initiate a clean cross-module compilation. Note that the `HardwareConfigProvider` and the native C++ sandbox (`llama-android.cpp`) will cross-compile automatically.
 
-\\\ash
+```bash
 # 1. Purge historical build caches and native objects
 ./gradlew clean
 
@@ -104,7 +127,7 @@ Execute the following directives from the repository root to purge stale artifac
 
 # 3. Generate the executable release artifact
 ./gradlew :app:assembleRelease
-\\\
+```
 
 ---
 *Signed, The Scypheon Engineering Directorate.*
