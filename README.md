@@ -65,9 +65,18 @@ Scypheon-Private (Repository Root)
 │   └── src/main/cpp/              # JNI execution, Zero-Copy SHM memfd_create
 │
 └── docs/                          # Enterprise Documentation & Audit Artifacts
-    ├── SCYPHEON_ENTERPRISE_ARCHITECTURE.md
+    ├── ARCHITECTURE_OVERVIEW.md
+    ├── ARCHITECTURE_TECHNICAL_REFERENCE.md
+    ├── ARCHITECTURE_ENTERPRISE_WHITEPAPER.md
+    ├── QUICK_ARCHITECTURE_DIAGRAM.svg
+    ├── GLOSSARY.md
+    ├── COMPONENT_MAP.md
+    ├── JOURNEY.md
+    ├── FAQ.md
+    ├── ARCHITECTURAL_DECISION_RECORDS.md
     ├── SCYPHEON_HUMANITARIAN_IMPACT.md
     ├── SCYPHEON_VS_PRODUCTION_GRADE.md
+    ├── JUDGES_QUICK_START_GUIDE.md
     ├── PROJECT_DESCRIPTION.md
     ├── KAGGLE_WRITEUP.md
     └── DATA_SOURCES.md
@@ -85,6 +94,7 @@ This module houses the core defenses of the application. Auditors should inspect
 *   **Zero-Copy Shared Memory (SHM) Pipeline:** Bypasses Binder IPC limits by bridging directly to the Linux kernel via `NativeLibraryLoader.createMemfdNative`. Tensor buffers are mapped into `SharedMemory`, guaranteeing a 120 FPS UI frame budget even at maximum token generation speeds.
 *   **The Lazarus Protocol:** Actively monitors the native C++ sandbox via `IBinder.DeathRecipient`. If the OS terminates the engine due to memory exhaustion, the SDK traps the binder death, parses the `HardwareTombstone`, and asynchronously cold-reboots the sandbox without crashing the UI.
 *   **Shannon Entropy Guard:** Intercepts input before it reaches the Gemma 4 engine, calculating the Shannon Entropy of the byte distribution to instantly drop obfuscated adversarial payloads (e.g., polymorphic shellcode).
+*   **Decentralized Cognitive Grid (Mesh RAG & Dual Memory):** Employs LLM-driven fact extraction and Hybrid Time-Aware Search (Reciprocal Rank Fusion) for extreme context relevance. Critically, it allows offline rural communities to share vital RAG vectors (scam signatures, medical facts) via BLE Mesh Sync, completely bypassing the cloud.
 *   **ToolHookEngine & ClinicalSafetyPreHook:** Intercepts autonomous agentic function calls, mathematically blocking execution if a medical dosage tool call contains absurd parameters (e.g., >10,000mg).
 
 ### 3.2 The Application Presentation Layer
@@ -96,9 +106,15 @@ This directory contains the user-facing implementation. Auditors should review t
 ### 3.3 Global Architectural Blueprints & Impact Analysis
 **Path:** `./docs/`
 This directory contains the definitive whitepapers mapping the holistic system.
-*   **[SCYPHEON_ENTERPRISE_ARCHITECTURE.md](./docs/SCYPHEON_ENTERPRISE_ARCHITECTURE.md)**: The 17-point whitepaper providing Mermaid topological diagrams of data flow across the Security Gateways and the Native Inference Core.
-*   **[SCYPHEON_VS_PRODUCTION_GRADE.md](./docs/SCYPHEON_VS_PRODUCTION_GRADE.md)**: An analysis of how Scypheon prevents the zero-day vulnerabilities that have compromised billion-dollar platforms like Signal, WhatsApp, and Telegram.
-*   **[JUDGES_QUICK_START_GUIDE.md](./docs/JUDGES_QUICK_START_GUIDE.md)**: Step-by-step instructions to manually trigger the Lazarus Protocol and Shannon Entropy guards on your test device.
+*   **[ARCHITECTURE_OVERVIEW.md](./docs/ARCHITECTURE_OVERVIEW.md)**: The high-level entry point with visual SVG diagrams of the Scypheon data flow. **Start here.**
+*   **[ARCHITECTURE_TECHNICAL_REFERENCE.md](./docs/ARCHITECTURE_TECHNICAL_REFERENCE.md)**: Deep dive into the codebase, resilience mechanisms, and safety guardrails.
+*   **[ARCHITECTURE_ENTERPRISE_WHITEPAPER.md](./docs/ARCHITECTURE_ENTERPRISE_WHITEPAPER.md)**: The 17-point whitepaper providing Mermaid topological diagrams of data flow.
+*   **[JOURNEY.md](./docs/JOURNEY.md)**: The story of building Scypheon, fighting the silicon, and creating an unkillable AI.
+*   **[GLOSSARY.md](./docs/GLOSSARY.md)**: Definitions for specialized terminology like Lazarus Protocol and Sentient Mirror.
+*   **[COMPONENT_MAP.md](./docs/COMPONENT_MAP.md)**: Direct links from high-level components to their physical source code files.
+*   **[FAQ.md](./docs/FAQ.md)**: Troubleshooting and frequently asked questions for developers and users.
+*   **[SCYPHEON_VS_PRODUCTION_GRADE.md](./docs/SCYPHEON_VS_PRODUCTION_GRADE.md)**: An analysis of how Scypheon prevents the zero-day vulnerabilities.
+*   **[JUDGES_QUICK_START_GUIDE.md](./docs/JUDGES_QUICK_START_GUIDE.md)**: Step-by-step instructions to manually trigger the Lazarus Protocol and Shannon Entropy guards.
 
 ---
 

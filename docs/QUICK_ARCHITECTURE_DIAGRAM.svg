@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 900" width="100%" height="100%" style="background-color:#0d1117; font-family:'Segoe UI', sans-serif;">
+<defs>
+    <!-- Cyberpunk Gradients & Filters -->
+    <linearGradient id="gradPrimary" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#1f6feb"/><stop offset="100%" stop-color="#388bfd"/></linearGradient>
+    <linearGradient id="gradDanger" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#da3633"/><stop offset="100%" stop-color="#f85149"/></linearGradient>
+    <linearGradient id="gradWarn" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#d29922"/><stop offset="100%" stop-color="#e3b341"/></linearGradient>
+    <linearGradient id="gradSuccess" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#238636"/><stop offset="100%" stop-color="#2ea043"/></linearGradient>
+    <linearGradient id="gradPurple" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#8957e5"/><stop offset="100%" stop-color="#a371f7"/></linearGradient>
+    
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="4" result="blur" />
+        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+        <path d="M0,0 L10,5 L0,10 Z" fill="#58a6ff" />
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+        <path d="M0,0 L10,5 L0,10 Z" fill="#2ea043" />
+    </marker>
+</defs>
+
+<!-- Grid Background -->
+<pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#30363d" stroke-width="1" opacity="0.5"/>
+</pattern>
+<rect width="100%" height="100%" fill="url(#grid)" />
+
+<!-- Header -->
+<text x="700" y="60" fill="#c9d1d9" font-size="32" font-weight="bold" text-anchor="middle" filter="url(#glow)">SCYPHEON: DECENTRALIZED COGNITIVE GRID</text>
+<text x="700" y="90" fill="#8b949e" font-size="16" text-anchor="middle">Complete Comprehensive System Workflow Architecture</text>
+
+<!-- SVG Paths / Edges -->
+<path d="M 200 200 L 200 250" stroke="#58a6ff" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+<path d="M 200 310 L 200 360" stroke="#58a6ff" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+<path d="M 200 420 L 450 420" stroke="#58a6ff" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+
+<path d="M 650 420 L 750 250" stroke="#a371f7" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+<path d="M 650 420 L 750 420" stroke="#a371f7" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+<path d="M 650 420 L 750 590" stroke="#a371f7" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+
+<path d="M 950 250 L 1100 420" stroke="#e3b341" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+<path d="M 950 420 L 1100 420" stroke="#e3b341" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+<path d="M 950 590 L 1100 420" stroke="#e3b341" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+
+<path d="M 300 650 L 550 460" stroke="#2ea043" stroke-width="3" stroke-dasharray="5,5" marker-end="url(#arrowGreen)" fill="none"/>
+<path d="M 300 800 L 550 460" stroke="#2ea043" stroke-width="3" stroke-dasharray="5,5" marker-end="url(#arrowGreen)" fill="none"/>
+
+<path d="M 1200 460 L 1200 550" stroke="#58a6ff" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+<path d="M 1200 610 L 1200 700" stroke="#58a6ff" stroke-width="3" marker-end="url(#arrowBlue)" fill="none"/>
+
+<!-- Component Nodes -->
+<g transform="translate(100, 140)">
+    <rect width="200" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2" filter="url(#glow)"/>
+    <text x="100" y="35" fill="#c9d1d9" font-size="16" font-weight="bold" text-anchor="middle">User Input / Telemetry</text>
+</g>
+
+<g transform="translate(100, 250)">
+    <rect width="200" height="60" rx="8" fill="url(#gradDanger)" stroke="#f85149" stroke-width="2" filter="url(#glow)"/>
+    <text x="100" y="25" fill="#ffffff" font-size="16" font-weight="bold" text-anchor="middle">Helios Sentinel</text>
+    <text x="100" y="45" fill="#ffebee" font-size="12" text-anchor="middle">Shannon Entropy Guard</text>
+</g>
+
+<g transform="translate(100, 360)">
+    <rect width="200" height="60" rx="8" fill="#161b22" stroke="#2ea043" stroke-width="2"/>
+    <text x="100" y="35" fill="#c9d1d9" font-size="16" font-weight="bold" text-anchor="middle">Sanitized Input</text>
+</g>
+
+<g transform="translate(100, 620)">
+    <rect width="200" height="60" rx="8" fill="url(#gradSuccess)" stroke="#2ea043" stroke-width="2" filter="url(#glow)"/>
+    <text x="100" y="25" fill="#ffffff" font-size="16" font-weight="bold" text-anchor="middle">DualMemoryManager</text>
+    <text x="100" y="45" fill="#e8f5e9" font-size="12" text-anchor="middle">LLM-Driven Extraction</text>
+</g>
+
+<g transform="translate(100, 770)">
+    <rect width="200" height="60" rx="8" fill="#161b22" stroke="#388bfd" stroke-width="2"/>
+    <text x="100" y="25" fill="#c9d1d9" font-size="16" font-weight="bold" text-anchor="middle">MeshVectorSyncManager</text>
+    <text x="100" y="45" fill="#8b949e" font-size="12" text-anchor="middle">Offline BLE Vector P2P</text>
+</g>
+
+<g transform="translate(450, 390)">
+    <rect width="200" height="60" rx="8" fill="url(#gradPurple)" stroke="#a371f7" stroke-width="2" filter="url(#glow)"/>
+    <text x="100" y="25" fill="#ffffff" font-size="16" font-weight="bold" text-anchor="middle">Agentic Router</text>
+    <text x="100" y="45" fill="#f3e5f5" font-size="12" text-anchor="middle">Reciprocal Rank Fusion</text>
+</g>
+
+<g transform="translate(750, 220)">
+    <rect width="200" height="60" rx="8" fill="url(#gradPrimary)" stroke="#58a6ff" stroke-width="2"/>
+    <text x="100" y="25" fill="#ffffff" font-size="16" font-weight="bold" text-anchor="middle">OODA Fast Engine</text>
+    <text x="100" y="45" fill="#e3f2fd" font-size="12" text-anchor="middle">Observe -> Orient -> Decide</text>
+</g>
+
+<g transform="translate(750, 390)">
+    <rect width="200" height="60" rx="8" fill="url(#gradWarn)" stroke="#e3b341" stroke-width="2" filter="url(#glow)"/>
+    <text x="100" y="25" fill="#ffffff" font-size="16" font-weight="bold" text-anchor="middle">ORRIGA Delegation</text>
+    <text x="100" y="45" fill="#fff3e0" font-size="12" text-anchor="middle">Deep Graph Reasoning</text>
+</g>
+
+<g transform="translate(750, 560)">
+    <rect width="200" height="60" rx="8" fill="#161b22" stroke="#a371f7" stroke-width="2"/>
+    <text x="100" y="25" fill="#c9d1d9" font-size="16" font-weight="bold" text-anchor="middle">Multi-Agent Swarm</text>
+    <text x="100" y="45" fill="#8b949e" font-size="12" text-anchor="middle">Critic Node Audit</text>
+</g>
+
+<g transform="translate(1100, 390)">
+    <rect width="200" height="70" rx="8" fill="url(#gradDanger)" stroke="#f85149" stroke-width="2" filter="url(#glow)"/>
+    <text x="100" y="25" fill="#ffffff" font-size="16" font-weight="bold" text-anchor="middle">SandboxLlamaEngine</text>
+    <text x="100" y="45" fill="#ffebee" font-size="12" text-anchor="middle">Zero-Copy SHM + Lazarus</text>
+    <text x="100" y="60" fill="#ffebee" font-size="11" font-weight="bold" text-anchor="middle">[Isolated C++ Native]</text>
+</g>
+
+<g transform="translate(1100, 550)">
+    <rect width="200" height="60" rx="8" fill="url(#gradSuccess)" stroke="#2ea043" stroke-width="2"/>
+    <text x="100" y="25" fill="#ffffff" font-size="16" font-weight="bold" text-anchor="middle">Clinical Validator</text>
+    <text x="100" y="45" fill="#e8f5e9" font-size="12" text-anchor="middle">OpenFDA Verified Output</text>
+</g>
+
+<g transform="translate(1100, 700)">
+    <rect width="200" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
+    <text x="100" y="35" fill="#c9d1d9" font-size="16" font-weight="bold" text-anchor="middle">Stream to UI</text>
+</g>
+</svg>

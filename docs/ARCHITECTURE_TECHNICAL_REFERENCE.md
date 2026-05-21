@@ -244,6 +244,8 @@ Edge deployment demands strict hardware control and fault isolation to ensure co
 Heavy C++ inference runs in an isolated service (`ModelSandboxService`) via Android's `isolatedProcess` attribute, protecting the main application from segmentation faults or driver crashes.
 * **Death Recipient Binding:** The `SandboxLlamaEngine` binds to the service and registers an `IBinder.DeathRecipient` interface. If the sandbox process terminates due to hardware strain, the death recipient triggers a cleanup sequence.
 * **Zero-Copy Shared Memory IPC:** Rather than copying large string objects across the Binder IPC boundary, the SDK allocates a Unix Shared Memory buffer (`android.os.SharedMemory`) and maps it into a direct ByteBuffer. Token generation writes directly to this shared memory buffer, and the Kotlin process reads it using a direct byte address.
+* **AIDL Sandbox IPC Interface:** Communication between the main Kotlin application and the C++ sandbox process is strictly marshaled via `IScypheonSandbox.aidl`. This Android Interface Definition Language contract ensures robust IPC messaging and prevents direct memory corruption across process boundaries.
+* **Turbo Quant 4 (KV Cache Precision Heuristic):** To maximize inference speed on constrained edge RAM while preserving accuracy, the Context KV Cache utilizes a split quantization heuristic. The K-cache (Key) uses Q4_0 (Turbo Quant 4) for rapid attention matching, while the V-cache (Value) preserves higher fidelity using Q8_0 precision.
 * **Context-Halving Recovery Loop:** Following a crash, the engine attempts to re-establish binding. If the crash was caused by an out-of-memory error at the requested context size (e.g., 4096 tokens), the recovery loop halving retry mechanism systematically reduces the target context size by half down to a minimum floor of 512 tokens to secure operational startup.
 
 ### 8.2 Resilience Circuit Breaker
@@ -333,7 +335,24 @@ Standard physics layouts often collapse node relations into a single central clu
 
 ---
 
-## 11. Complete Comprehensive System Workflow Diagram
+## 11. Cognitive Dual-Memory & Decentralized Mesh RAG
+
+To support continuous edge intelligence without relying on cloud persistence, Scypheon implements a sophisticated hybrid memory and P2P mesh synchronization engine.
+
+### 11.1 DualMemoryManager (Hybrid Time-Aware RAG)
+Traditional RAG systems fail in conversational contexts because they lack temporal awareness and entity extraction. The `DualMemoryManager` solves this through a multi-tiered architecture:
+* **LLM-Driven Fact Extraction:** Adapting the *Claude Code* pattern, Scypheon runs a lightweight forked agent in the background after conversation turns. Instead of relying on brittle regex, it prompts the LLM to extract structured JSON knowledge triplets (e.g., `[{"s":"user","p":"likes","o":"dragon fruit"}]`) from user messages and anchors them into the SQLite Knowledge Graph.
+* **Long-Term Memory Bridge:** Automatically summarizes stale conversation windows into condensed text blocks, encrypts them, and indexes their vector embeddings directly into long-term memory for semantic retrieval.
+* **Solaris Hybrid Search:** Employs a complex multi-variable scoring algorithm to fetch memories. It queries the Vector Engine (Cosine Similarity), the BM25 Full-Text Search (Keyword matching), applies a 7-day linear decay **Recency Weight**, and boosts active session scores. The final results are ranked using **Reciprocal Rank Fusion (RRF)**.
+
+### 11.2 MeshVectorSyncManager (P2P Decentralized RAG)
+In austere or disaster environments where internet infrastructure is completely destroyed, isolated users cannot receive critical updates (like new scam signatures, medical outbreak protocols, or threat vectors).
+* **Decentralized Synchronization:** The `MeshVectorSyncManager` bypasses cloud requirements by dumping critical local SQLite RAG embeddings into serialized byte payloads.
+* **Mesh Delivery:** These payloads are transmitted via Bluetooth Low Energy (BLE) or Wi-Fi Direct to nearby peers. The receiving device decrypts the payload and ingests the foreign vectors directly into its local RAG database, allowing completely offline rural communities to share knowledge dynamically.
+
+---
+
+## 12. Complete Comprehensive System Workflow Diagram
 
 The diagram below illustrates the path of a query through the Scypheon system architecture:
 
@@ -341,6 +360,7 @@ The diagram below illustrates the path of a query through the Scypheon system ar
 graph TD
     %% Input Layer
     User[User Input / Sensory Telemetry] --> Helios{Helios Safety Pipeline}
+    Peer[Offline Peer via BLE/Wi-Fi] --> MeshSync[MeshVectorSyncManager]
 
     %% Helios Pipeline
     subgraph Helios Security Subsystem
@@ -348,8 +368,17 @@ graph TD
         Helios -- Safe --> SanitizedInput[Sanitized Input]
     end
 
+    %% Decentralized Cognitive Grid
+    subgraph Cognitive Grid & Memory
+        MeshSync -- Ingests Vectors --> VectorDB[(Vector DB & Knowledge Graph)]
+        SanitizedInput --> DualMem[DualMemoryManager]
+        DualMem -- Forked Extraction --> VectorDB
+        DualMem -- Hybrid Search --> RRF{Reciprocal Rank Fusion}
+        VectorDB --> RRF
+    end
+
     %% Routing Layer
-    SanitizedInput --> AgenticRouter{Agentic Router}
+    RRF --> AgenticRouter{Agentic Router}
 
     %% OODA Fast Path
     subgraph OODA Fast Engine
@@ -387,6 +416,7 @@ graph TD
     subgraph Execution Sandbox
         CB -- Allowed --> SandboxEngine[Sandbox Llama Engine]
         CB -- Blocked --> CoolDown[Circuit Breaker Cooldown Fallback]
+        SandboxEngine <--> MemGate[MemoryGatekeeper Q4/Q8 KV Cache]
     end
 
     %% Lazarus links
@@ -415,7 +445,7 @@ graph TD
 
 ---
 
-## 12. Directory Mapping & Artifact Locations
+## 13. Directory Mapping & Artifact Locations
 
 The core components described in this document are mapped to the following locations in the source tree:
 
