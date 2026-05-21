@@ -36,6 +36,12 @@ graph TD
         Telemetry["Offline Telemetry Queue"]
     end
 
+    subgraph Identity_Mesh ["🌐 Offline Identity & Mesh"]
+        Ed25519["Ed25519 (Digital Signatures)"]
+        X25519["X25519 (Key Agreement)"]
+        IdentityManager["ScypheonIdentityManager"]
+    end
+
     %% Wiring
     MainChatScreen --> Lifecycle
     Lifecycle --> StateFlow
@@ -50,6 +56,9 @@ graph TD
     Governor --> Telemetry
     Telemetry --> RoomDB
     RoomDB --> Crypto
+    
+    IdentityManager --> Ed25519
+    IdentityManager --> X25519
 ```
 
 ---
@@ -103,6 +112,9 @@ graph TD
 
 **Q: I see Room in the codebase. I thought you needed encryption?**
 > **A:** "We use **SQLCipher** — a hardened SQLite variant — wrapped in Room's `openHelperFactory`. The database is encrypted at rest using AES256-GCM. The key is managed by Android Keystore via `MasterKey` and stored in `EncryptedSharedPreferences`. PBKDF2 key derivation runs on a background coroutine sequenced by our `DatabaseReadySignal` gate, so the cryptographic cost is completely invisible to the user."
+
+**Q: How do you handle secure communication when devices are offline in a mesh network?**
+> **A:** "We implement a Zero-Trust offline mesh using `ScypheonIdentityManager`. For identity verification, we use hardware-backed **Ed25519** digital signatures to prove data origin. For secure transmission, devices negotiate an ephemeral AES-256 session key using **X25519** (Elliptic-Curve Diffie-Hellman), guaranteeing Perfect Forward Secrecy even without an internet connection."
 
 ---
 
