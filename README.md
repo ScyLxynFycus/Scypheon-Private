@@ -1,58 +1,68 @@
-# SCYPHEON: Offline-Native Humanitarian AI Platform
+﻿# SCYPHEON: OFFLINE-NATIVE EDGE INTELLIGENCE ECOSYSTEM
+
 [![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](#)
 [![Android SDK: 35](https://img.shields.io/badge/Android%20SDK-35-blue.svg)](#)
 [![Kotlin: 1.9+](https://img.shields.io/badge/Kotlin-1.9%2B-purple.svg)](#)
 [![Engine: LiteRT %26 llama.cpp](https://img.shields.io/badge/Engine-LiteRT%20%26%20llama.cpp-green.svg)](#)
 [![Download APK](https://img.shields.io/badge/Download-Latest%20APK-brightgreen?style=for-the-badge&logo=android)](https://github.com/ScyLxynFycus/Scypheon-Private/releases/download/release/app-debug.apk)
 
-Welcome to the authoritative repository of **Scypheon**, a secure, offline-native, resilient humanitarian AI platform designed for high-stress deployments, disaster-relief routing, and remote offline medical triage grounding.
+Welcome to the central repository of the **Scypheon Edge Intelligence Ecosystem**. This repository houses the complete, decoupled architecture for a secure, offline-native humanitarian artificial intelligence platform. It is engineered specifically for mission-critical deployments, disaster-relief coordination, and deterministic offline medical triage.
 
----
+## 1. Modular Repository Topography
 
-## 🏛️ Modular Repository Structure
-The codebase is structured as a clean, highly decoupled modular architecture divided into specific sub-project directories. Each directory features its own specialized README document detailing component APIs and internal design patterns:
+The platform eschews monolithic design in favor of a strictly decoupled, modular architecture. The repository is partitioned into isolated subsystems to enforce separation of concerns between the presentation layer, the systems-level logic, and the native C++ inference boundaries.
 
-```
-aura-link/
-├── scypheon_private/              # Main Compose Application Workspace
-│   ├── app/                       # Android UI layouts, ViewModels, and screens
-│   └── README.md                  # App features, Compose components & PTT guide
+`	ext
+Scypheon-Private (Root)
+├── scypheon_private/              # Presentation Layer & Workspace Component
+│   ├── app/                       # Jetpack Compose UI, ViewModels, and UI States
+│   └── README.md                  # Application-specific architectural guide
 │
-├── scypheon_sdk/                  # Core Systems, Models & Engines Module
-│   ├── src/main/java/             # Gateways, JNI executors, and circuit breakers
-│   └── README.md                  # SDK API reference, gateways & resilience
+├── scypheon_sdk/                  # Systems Intelligence & Resilience Core
+│   ├── src/main/java/             # Native Gateways, Lazarus Protocol, Circuit Breakers
+│   └── README.md                  # SDK API reference and defensive guardrail documentation
 │
-├── llama/                         # Native llama.cpp GGUF compilation JNI
+├── llama/                         # Native C++ Boundaries
+│   └── src/main/cpp/              # JNI execution, memory mapping, and llama.cpp bindings
 │
-└── docs/                          # Global Architectural blueprints & clinical telemetry
-    ├── SCYPHEON_ARCHITECTURE.md   # Unified Architectural Blueprint & Flowcharts
-    └── DATA_SOURCES.md            # Pharmacopeia data provenance & medical review plan
-```
+└── docs/                          # Enterprise Documentation & Audit Artifacts
+    ├── SCYPHEON_ENTERPRISE_ARCHITECTURE.md
+    ├── SCYPHEON_HUMANITARIAN_IMPACT.md
+    ├── SCYPHEON_VS_PRODUCTION_GRADE.md
+    └── JUDGES_QUICK_START_GUIDE.md
+`
 
----
+## 2. Navigating the Architecture
 
-## 💡 Quick Component Index
+To comprehensively understand the structural integrity and capabilities of this ecosystem, auditors and engineers should navigate the repository via the following entry points:
 
-* **For Application Devs (UI / ViewModels / compose):**
-  * Check out the [App Workspace Component Guide](file:///D:/AuraLink/scypheon_private/README.md) to explore the **Obsidian Live Orb speech interface**, Jetpack Compose screen components, and global state machines.
-* **For Systems & ML Devs (Gateways / Sandboxing / Recovery):**
-  * Dive into the [SDK Module Core Architecture](file:///D:/AuraLink/scypheon_sdk/README.md) to learn about **Lazarus binder death recovery**, local JNI library mapping, dual-branch gateway routing, and HSL async telemetry pipelines.
-* **For High-Level Blueprints:**
-  * Read the [Unified SCYPHEON_ARCHITECTURE.md manual](file:///D:/AuraLink/docs/SCYPHEON_ARCHITECTURE.md) to inspect comprehensive Mermaid sequence flowcharts and architectural system design principles.
+### 2.1 The Application Presentation Layer
+*   **Path:** ./scypheon_private/README.md
+*   **Focus:** Review the presentation layer documentation to understand the Jetpack Compose architecture, the Zero MutableState churn philosophy, and the integration of the Sentient Mirror visual nodes.
 
----
+### 2.2 The SDK Safety & Resilience Core
+*   **Path:** ./scypheon_sdk/README.md
+*   **Focus:** Inspect the core SDK module documentation. This details the implementation of the Lazarus Binder Death Recovery, the Zero-Copy Shared Memory (SHM) mapping via memfd_create, and the Shannon Entropy Layer 0 interceptors.
 
-## 🚀 Build & Deployment Guidelines
-Ensure your local environment has the Android target SDK 35 and appropriate Mali GPU compilers installed.
+### 2.3 Global Architectural Blueprints
+*   **Path:** ./docs/SCYPHEON_ENTERPRISE_ARCHITECTURE.md
+*   **Focus:** The definitive 17-point whitepaper mapping the holistic system. It provides Mermaid topological diagrams of data flow across the Security Gateways, Cognitive Persistence layers, and the Native Inference Core.
 
-```bash
-# Clean project build cache
+## 3. Compilation and Execution Protocol
+
+Engineers must ensure the local build environment is configured with Android Target SDK 35, NDK version 26.1.10909125+, and CMake 3.22.1+. 
+
+Execute the following directives from the repository root to purge stale artifacts and initiate a clean cross-module compilation:
+
+`ash
+# Purge historical build caches and native objects
 ./gradlew clean
 
-# Run complete Kotlin compilation check across all modules
+# Execute strict Kotlin compilation and linking across all discrete modules
 ./gradlew compileDebugKotlin
-```
 
----
-*Signed,*  
-*The Scypheon Core Engineering Team*
+# Generate the executable artifact
+./gradlew :app:assembleRelease
+`
+
+*Signed, The Scypheon Engineering Directorate.*
