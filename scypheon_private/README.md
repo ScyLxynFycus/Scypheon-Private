@@ -32,9 +32,9 @@ Running multi-billion parameter models on mobile System-on-Chips (SoCs) invites 
 
 This repository contains extensive technical and strategic documentation. Reviewers and auditors are directed to the following foundational papers:
 
-*   **SCYPHEON_ENTERPRISE_ARCHITECTURE.md**: A comprehensive technical whitepaper detailing the low-level systems engineering. It covers 16 distinct architectural triumphs, ranging from Context-Halving Recovery Loops and Idempotent Token Injectors to Spatial Grid Indexing O(1) algorithms used in the visual physics engine.
-*   **SCYPHEON_HUMANITARIAN_IMPACT.md**: The strategic and ethical mission directive. This document outlines the specific problem domains (Disaster Zones, Refugee Camps, Exploitative Environments) and how Scypheon's technical architecture translates directly into measurable human impact and data sovereignty.
-*   **FINAL_SUBMISSION_REPORT.md**: The executive audit report. It validates the zero-trust environment, detailing the results of the 81% JVM Instruction Coverage safety tests, the resolution of strict mode violations, and simulated deployment scenarios.
+*   **[SCYPHEON_ENTERPRISE_ARCHITECTURE.md](../docs/SCYPHEON_ENTERPRISE_ARCHITECTURE.md)**: A comprehensive, 16-point technical whitepaper detailing the low-level systems engineering, from Context-Halving Recovery Loops to Spatial Grid Indexing O(1).
+*   **[SCYPHEON_HUMANITARIAN_IMPACT.md](../docs/SCYPHEON_HUMANITARIAN_IMPACT.md)**: The strategic and ethical mission directive. This document outlines the specific problem domains (Disaster Zones, Refugee Camps, Exploitative Environments) and how Scypheon's technical architecture translates directly into measurable human impact and data sovereignty.
+*   **[FINAL_SUBMISSION_REPORT.md](./FINAL_SUBMISSION_REPORT.md)**: The executive audit report. It validates the zero-trust environment, detailing the results of the 81% JVM Instruction Coverage safety tests, the resolution of strict mode violations, and simulated deployment scenarios.
 
 ## 4. Build and Compilation Directives
 
