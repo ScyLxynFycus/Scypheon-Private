@@ -220,6 +220,26 @@ struct block_turbo4_0_packed16
     uint32_t padding[15];
 };
 
+// --- DUMMY FOR TURBO 2.0 & 3.0 (Ensures successful compilation of unused variants) ---
+#define QUANT_K_TURBO2_0 128
+#define QUANT_R_TURBO2_0 2
+struct block_turbo2_0 {
+    float16_t d;
+    float16_t rnorm;
+    uint8_t qs[64];
+    uint32_t padding[15];
+};
+
+#define QUANT_K_TURBO3_0 128
+#define QUANT_R_TURBO3_0 2
+struct block_turbo3_0 {
+    float16_t d;
+    float16_t rnorm;
+    uint8_t qs[64];
+    uint32_t padding[15];
+};
+// -------------------------------------------------------------------------------------
+
 #if defined(DATA_A_TURBO4_0)
 #undef A_TYPE
 #undef QUANT_K
