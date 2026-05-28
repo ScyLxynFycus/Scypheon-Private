@@ -201,10 +201,17 @@ struct llama_hparams {
     std::array<float, LLAMA_MAX_LAYERS> xielu_beta;
     std::array<float, LLAMA_MAX_LAYERS> xielu_eps;
 
-    // DSA (deepseek sparse attention)
+    // DSA (deepseek sparse attention) - DeepSeek V4 Pro Defaults
+    // Note: These must default to 0 in the base struct so they are ONLY active 
+    // when explicitly loaded from a DeepSeek-V4 GGUF file.
     uint32_t indexer_n_head    = 0;
     uint32_t indexer_head_size = 0;
     uint32_t indexer_top_k     = 0;
+
+    // CSA (Compressed Sparse Attention) and HCA (Heavily Compressed Attention) - DeepSeek V4
+    // Set to 0 by default. DeepSeek-V4-Pro will override these to 4 and 128 respectively during GGUF load.
+    uint32_t csa_compression_rate = 0; // m
+    uint32_t hca_compression_rate = 0; // m'
 
     // qwen3vl deepstack
     uint32_t n_deepstack_layers = 0;

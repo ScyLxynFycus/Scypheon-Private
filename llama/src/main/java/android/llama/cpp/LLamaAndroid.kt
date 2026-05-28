@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import android.hardware.HardwareBuffer
 
 /**
  * LLamaAndroid: High-performance JNI wrapper for llama.cpp.
@@ -79,6 +80,7 @@ class LLamaAndroid {
     private external fun native_get_embeddings(model: Long, text: String): FloatArray
     private external fun native_cancel_inference()
     private external fun probe_backend(modelPath: String, backendType: Int): Boolean
+    private external fun native_process_image(model: Long, context: Long, buffer: HardwareBuffer, width: Int, height: Int): Boolean
 
     suspend fun probe(modelPath: String, backendType: Int): Boolean = withContext(runLoop) {
         try {
@@ -161,6 +163,26 @@ class LLamaAndroid {
                 } catch (e: Exception) {
                     Log.e(tag, "[EMBED] native_get_embeddings threw: ${e.message}")
                     FloatArray(0)
+                }
+            }
+        }
+    }
+
+    suspend fun processImageTensor(buffer: HardwareBuffer, width: Int, height: Int): Boolean {
+        return inferenceMutex.withLock {
+            withContext(runLoop) {
+                val state = stateRef.get()
+                if (state !is State.Loaded) {
+                    Log.e(tag, "[VISION] processImageTensor called but model is not loaded.")
+                    return@withContext false
+                }
+                try {
+                    val result = native_process_image(state.model, state.context, buffer, width, height)
+                    Log.i(tag, "[VISION] Processed image tensor. Success: $result")
+                    result
+                } catch (e: Exception) {
+                    Log.e(tag, "[VISION] native_process_image threw: ${e.message}")
+                    false
                 }
             }
         }

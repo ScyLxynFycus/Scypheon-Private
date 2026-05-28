@@ -318,8 +318,41 @@ llama_kv_cache::llama_kv_cache(
             }
         }
 
-        ggml_tensor * k = has_k ? ggml_new_tensor_3d(ctx, layer_type_k, n_embd_k_gqa_eff, kv_size, n_stream) : nullptr;
-        ggml_tensor * v = has_v ? ggml_new_tensor_3d(ctx, layer_type_v, n_embd_v_gqa_eff, kv_size, n_stream) : nullptr;
+        // DeepSeek-V4 Heterogeneous KV cache heavy compression logic (Figure 6)
+        // Combines State Cache (SWA for recent n_win tokens) + Classical Cache (CSA/HCA compressed tokens)
+        // ONLY applies if the model loaded these specific compression rates from its GGUF metadata.
+        uint32_t kv_size_eff = kv_size;
+        try {
+            const uint32_t swa_n_win = 128; // Standard SWA window size from DeepSeek-V4 paper
+
+            // Only attempt compression if the model architecture explicitly configures it
+            bool is_deepseek_compressed = (hparams.hca_compression_rate > 1) || (hparams.csa_compression_rate > 1);
+
+            if (is_deepseek_compressed && kv_size > swa_n_win) {
+                uint32_t compressible_size = kv_size - swa_n_win;
+                
+                if (hparams.hca_compression_rate > 1 && il < 2) { // HCA for first few layers
+                    kv_size_eff = swa_n_win + (compressible_size + hparams.hca_compression_rate - 1) / hparams.hca_compression_rate;
+                    if (il == 0) {
+                        LLAMA_LOG_INFO("%s: HCA Heterogeneous Cache - SWA(%u) + Compressed(rate %u). Eff size: %u -> %u\n", 
+                            __func__, swa_n_win, hparams.hca_compression_rate, kv_size, kv_size_eff);
+                    }
+                } else if (hparams.csa_compression_rate > 1 && il >= 2) { // CSA for subsequent layers
+                    kv_size_eff = swa_n_win + (compressible_size + hparams.csa_compression_rate - 1) / hparams.csa_compression_rate;
+                    if (il == 2) {
+                        LLAMA_LOG_INFO("%s: CSA Heterogeneous Cache - SWA(%u) + Compressed(rate %u). Eff size: %u -> %u\n", 
+                            __func__, swa_n_win, hparams.csa_compression_rate, kv_size, kv_size_eff);
+                    }
+                }
+            }
+            if (kv_size_eff < 1) kv_size_eff = 1; // Safeback
+        } catch (...) {
+            LLAMA_LOG_ERROR("%s: Error during heterogeneous compression calculation. Defaulting to full size.\n", __func__);
+            kv_size_eff = kv_size;
+        }
+
+        ggml_tensor * k = has_k ? ggml_new_tensor_3d(ctx, layer_type_k, n_embd_k_gqa_eff, kv_size_eff, n_stream) : nullptr;
+        ggml_tensor * v = has_v ? ggml_new_tensor_3d(ctx, layer_type_v, n_embd_v_gqa_eff, kv_size_eff, n_stream) : nullptr;
 
         has_k && ggml_format_name(k, "cache_k_l%d", il);
         has_v && ggml_format_name(v, "cache_v_l%d", il);
@@ -328,8 +361,8 @@ llama_kv_cache::llama_kv_cache(
         std::vector<ggml_tensor *> v_stream;
 
         for (uint32_t s = 0; s < n_stream; ++s) {
-            k_stream.push_back(has_k ? ggml_view_2d(ctx, k, n_embd_k_gqa_eff, kv_size, k->nb[1], s*k->nb[2]) : nullptr);
-            v_stream.push_back(has_v ? ggml_view_2d(ctx, v, n_embd_v_gqa_eff, kv_size, v->nb[1], s*v->nb[2]) : nullptr);
+            k_stream.push_back(has_k ? ggml_view_2d(ctx, k, n_embd_k_gqa_eff, kv_size_eff, k->nb[1], s*k->nb[2]) : nullptr);
+            v_stream.push_back(has_v ? ggml_view_2d(ctx, v, n_embd_v_gqa_eff, kv_size_eff, v->nb[1], s*v->nb[2]) : nullptr);
         }
 
         map_layer_ids[il] = layers.size();

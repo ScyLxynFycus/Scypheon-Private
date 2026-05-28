@@ -254,6 +254,11 @@ struct llama_layer {
     struct ggml_tensor * wo_enc    = nullptr;
     struct ggml_tensor * wqkv_gate = nullptr;
 
+    // DeepSeek-V4 CSA/HCA Compression Weights
+    struct ggml_tensor * w_z       = nullptr; // Compression weights W^Z
+    struct ggml_tensor * w_z_s     = nullptr; // Compression weights W^Z scale (for quantization/LoRA)
+    struct ggml_tensor * b_z       = nullptr; // Compression positional biases B
+
     // attention bias
     struct ggml_tensor * bq   = nullptr;
     struct ggml_tensor * bk   = nullptr;

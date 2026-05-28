@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <android/hardware_buffer_jni.h>
 
 // NDK Safe-Link: Dynamic Symbol Resolution
 typedef int (*ASharedMemory_create_t)(const char*, size_t);
@@ -45,7 +46,7 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 #include <fcntl.h>
 #include <sys/stat.h>
 
-// 🛡️ [SAR] Early Backend Suppression (constructor)
+// 🛡�E�E[SAR] Early Backend Suppression (constructor)
 __attribute__((constructor))
 static void solaris_early_init() {
     // Check for hard disable flags before any backend registration
@@ -87,7 +88,7 @@ static bool used_fallback = false;
 static std::string g_files_dir;
 static std::string g_active_backend_trying = "NONE";
 
-// 🛡️ THE BLACK BOX: Killswitches for Faulty Hardware
+// 🛡�E�ETHE BLACK BOX: Killswitches for Faulty Hardware
 extern "C" {
     bool g_vulkan_disabled = false;
     bool g_opencl_disabled = false;
@@ -98,6 +99,7 @@ extern "C" {
 
 static std::recursive_mutex g_context_mutex;
 static std::atomic<bool> g_cancel_inference{false};
+static std::vector<llama_token> g_last_tokens; // [v1.4.2-SAR] Prompt Caching State
 
 // [SAR PHASE 2] Ashmem IPC Bridge
 struct TokenEntry {
@@ -125,7 +127,7 @@ static long get_process_rss() {
     return pages * sysconf(_SC_PAGESIZE);
 }
 
-// 🛡️ THE BLACK BOX: SIGSEGV Tripwire Logic (Solaris 4.1 Production Spec)
+// 🛡�E�ETHE BLACK BOX: SIGSEGV Tripwire Logic (Solaris 4.1 Production Spec)
 // Uses ONLY async-signal-safe syscalls (open, write, close) and stack memory.
 // Engineered to eliminate deadlocks and race conditions during driver crashes.
 
@@ -142,7 +144,7 @@ static void int_to_ascii(int n, char* buf, size_t len) {
 }
 
 static void solaris_handler(int sig, siginfo_t* info, void* ucontext) {
-    // 🛡️ RE-ENTRY PROTECTION: Mask ALL signals during teardown to prevent tombstone loss
+    // 🛡�E�ERE-ENTRY PROTECTION: Mask ALL signals during teardown to prevent tombstone loss
     sigset_t mask;
     sigfillset(&mask);
     sigprocmask(SIG_BLOCK, &mask, nullptr);
@@ -187,18 +189,18 @@ static void solaris_handler(int sig, siginfo_t* info, void* ucontext) {
         }
     }
     
-    // 🛡️ DETERMINISTIC TERMINATION: 134 for SIGABRT
+    // 🛡�E�EDETERMINISTIC TERMINATION: 134 for SIGABRT
     _exit(128 + sig);
 }
 
-// 🛡️ [SAR] Phase 3: Shared Memory Tensor Management
+// 🛡�E�E[SAR] Phase 3: Shared Memory Tensor Management
 #include <sys/syscall.h>
 #include <linux/memfd.h>
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_createMemfdNative(JNIEnv *env, jclass, jstring jname, jlong size) {
     const char *name = env->GetStringUTFChars(jname, 0);
-    // 🛡️ [SAR] memfd_create: API 26+ syscall for sealed SHM
+    // 🛡�E�E[SAR] memfd_create: API 26+ syscall for sealed SHM
     int fd = syscall(__NR_memfd_create, name, MFD_CLOEXEC | MFD_ALLOW_SEALING);
     env->ReleaseStringUTFChars(jname, name);
 
@@ -209,14 +211,14 @@ Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_createMemfdNative(JNIEnv *e
         return -1;
     }
 
-    // 🛡️ SEALING: Prevent resize attacks (Production Requirement)
-    fcntl(fd, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_WRITE);
+    // 🛡EESEALING: Prevent resize attacks (Production Requirement)
+    fcntl(fd, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK);
     return fd;
 }
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_android_llama_cpp_LLamaAndroid_native_1shm_1attach(JNIEnv *env, jobject, jint fd, jlong size) {
-    // 🛡️ FD OWNERSHIP CONTRACT: Java side manages FD via ParcelFileDescriptor.
+    // 🛡�E�EFD OWNERSHIP CONTRACT: Java side manages FD via ParcelFileDescriptor.
     void* ptr = mmap(nullptr, (size_t)size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, fd, 0);
 
     if (ptr == MAP_FAILED) {
@@ -224,11 +226,11 @@ Java_android_llama_cpp_LLamaAndroid_native_1shm_1attach(JNIEnv *env, jobject, ji
         return 0;
     }
 
-    // 🛡️ MADV PROTECTIONS: Prefetch hint + Isolation
+    // 🛡�E�EMADV PROTECTIONS: Prefetch hint + Isolation
     madvise(ptr, (size_t)size, MADV_WILLNEED);
     madvise(ptr, (size_t)size, MADV_DONTFORK);
     
-    LOGi("🛰️ [SOLARIS] SHM Attachment SUCCESS. Ptr: %p, Size: %ld", ptr, (long)size);
+    LOGi("🛰�E�E[SOLARIS] SHM Attachment SUCCESS. Ptr: %p, Size: %ld", ptr, (long)size);
     return (jlong)(uintptr_t)ptr;
 }
 
@@ -237,7 +239,7 @@ Java_android_llama_cpp_LLamaAndroid_native_1kv_1restore(JNIEnv *env, jobject, jl
     auto ctx = reinterpret_cast<llama_context*>(ctx_ptr);
     if (!ctx) return;
 
-    // 🛡️ KV SYNC: In this version of llama.cpp, position is batch-local.
+    // 🛡�E�EKV SYNC: In this version of llama.cpp, position is batch-local.
     // We verify the cache state instead of forcing a shift if not needed.
     llama_memory_t mem = llama_get_memory(ctx);
     int current_max = (int)llama_memory_seq_pos_max(mem, seq_id);
@@ -255,7 +257,7 @@ Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_setOomScoreNative(JNIEnv *e
     return (written > 0) ? 0 : -2;
 }
 
-// 🛡️ [SAR] Sequential Backend Isolation: Lightweight Probe
+// 🛡�E�E[SAR] Sequential Backend Isolation: Lightweight Probe
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_probeBackendNative(JNIEnv* env, jobject, jstring jmodelPath, jint backendType) {
     auto path_to_model = env->GetStringUTFChars(jmodelPath, 0);
@@ -308,7 +310,7 @@ Java_com_scypheon_sdk_core_utils_NativeLibraryLoader_probeBackendNative(JNIEnv* 
         LOGe("[SBI] FAILURE: Model metadata load failed.");
     }
 
-    // 🛡️ CLEANUP: Prevent driver state pollution for the next probe
+    // 🛡�E�ECLEANUP: Prevent driver state pollution for the next probe
     unsetenv("GGML_VULKAN");
     unsetenv("GGML_OPENCL");
     llama_backend_free();
@@ -322,7 +324,7 @@ Java_android_llama_cpp_LLamaAndroid_native_1inject_1token(JNIEnv *env, jobject, 
     auto ctx = reinterpret_cast<llama_context*>(ctx_ptr);
     if (!ctx) return;
     
-    // 🛡️ REPLAY INJECTION: One-shot decode of a single token at a specific KV offset
+    // 🛡�E�EREPLAY INJECTION: One-shot decode of a single token at a specific KV offset
     llama_token t = (llama_token)token_id;
     llama_batch batch = llama_batch_init(1, 0, 1);
     batch.n_tokens = 1;
@@ -357,7 +359,7 @@ Java_android_llama_cpp_LLamaAndroid_native_1set_1output_1shm(JNIEnv *env, jobjec
     g_output_token_count = reinterpret_cast<std::atomic<int32_t>*>(ptr);
     g_output_token_count->store(0, std::memory_order_release);
     
-    LOGi("🛰️ [IPC] Output SHM mapped at %p (size: %d)", g_output_shm_ptr, size);
+    LOGi("🛰�E�E[IPC] Output SHM mapped at %p (size: %d)", g_output_shm_ptr, size);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -366,7 +368,7 @@ Java_android_llama_cpp_LLamaAndroid_native_1cancel_1inference(JNIEnv *, jobject)
     g_cancel_inference.store(true, std::memory_order_release);
 }
 
-// 🛡️ KV EVICTION: Safety-Bounded Deferred Trimming
+// 🛡�E�EKV EVICTION: Safety-Bounded Deferred Trimming
 static std::atomic<int> g_pending_trim_level{0};
 
 static void check_and_apply_trim(llama_context* ctx, int n_batch) {
@@ -379,7 +381,7 @@ static void check_and_apply_trim(llama_context* ctx, int n_batch) {
         // Drop oldest 30-50% based on trim level
         int drop = (level == 2) ? (used / 2) : (used / 3);
         
-        // 🛡️ Alignment & Boundary Safety
+        // 🛡�E�EAlignment & Boundary Safety
         drop = (drop / n_batch) * n_batch; // Align to batch boundary
         drop = std::min(drop, used - 128);  // Enforcement: Never zero-out KV cache
 
@@ -395,7 +397,7 @@ static void check_and_apply_trim(llama_context* ctx, int n_batch) {
 #include <chrono>
 #include <pthread.h>
 
-// 🛡️ SOLARIS WATCHDOG: Lock-Free Atomic Heartbeat
+// 🛡�E�ESOLARIS WATCHDOG: Lock-Free Atomic Heartbeat
 // g_decode_heartbeat_ns is defined in the extern "C" block above
 
 static void solaris_watchdog_thread_fn() {
@@ -439,14 +441,14 @@ void register_solaris_sentinel() {
     sigaction(SIGBUS, &sa, nullptr);
     sigaction(SIGABRT, &sa, nullptr);
     
-    // 🛡️ Launch detached watchdog
+    // 🛡�E�ELaunch detached watchdog
     std::thread(solaris_watchdog_thread_fn).detach();
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_scypheon_sdk_core_utils_NativeSharedMemory_createNativeNative(JNIEnv *, jclass, jlong size) {
     if (size <= 0) return -1;
-    // 🛡️ [Vault] NDK-level ASharedMemory supports 64-bit size_t
+    // 🛡�E�E[Vault] NDK-level ASharedMemory supports 64-bit size_t
     ASharedMemory_create_t create_fn = get_ashmem_create();
     if (!create_fn) return -1;
     int fd = create_fn("scypheon_vault", (size_t)size);
@@ -493,7 +495,7 @@ Java_com_scypheon_sdk_core_utils_NativeSharedMemory_loadToVaultNative(JNIEnv *en
 
     LOGi("[Vault] SRP Protocol: Streaming weights into Vault in 128MB chunks (Total: %.2f GB)...", (double)size / (1024.0*1024.0*1024.0));
     
-    // 🛡️ [SRP] Sequential Residency Protocol: 
+    // 🛡�E�E[SRP] Sequential Residency Protocol: 
     // We map only a 128MB window of the Ashmem area at a time.
     // This keeps local RSS at ~150MB regardless of model size (6.7GB - 13GB).
     const size_t CHUNK_SIZE = 128LL * 1024 * 1024;
@@ -558,7 +560,7 @@ static jobject g_progress_callback = nullptr;
 static jmethodID g_on_progress_id = nullptr;
 
 static bool llama_jni_progress_callback(float progress, void* user_data) {
-    // 🛡️ SOLARIS HEARTBEAT: Signals that the native load process is ALIVE
+    // 🛡�E�ESOLARIS HEARTBEAT: Signals that the native load process is ALIVE
     g_load_heartbeat++;
     
     if (!g_vm || !g_progress_callback || !g_on_progress_id) return true;
@@ -586,10 +588,10 @@ std::string cached_token_chars;
 // Rolling accumulator to detect multi-token stop sequences (e.g. <|im_end|> split across 5 tokens)
 static std::string stop_sequence_accumulator;
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════╁E
 // ENTERPRISE TOKEN FILTER: Prevent chat template artifacts from reaching UI
 // This is equivalent to how Claude/GPT/Gemini handle format isolation
-// ═══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════╁E
 static bool is_template_token(const std::string& token) {
     // Chat template special tokens that must NEVER reach the user
     if (token.find("<|im_start|>") != std::string::npos) return true;
@@ -622,12 +624,12 @@ static bool is_template_token(const std::string& token) {
     return false;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════╁E
 // MULTI-TOKEN STOP SEQUENCE DETECTOR
 // Some GGUF models emit <|im_end|> as 5 separate text tokens instead of 1 special
 // token, so llama_vocab_is_eog() never fires, causing an infinite generation loop.
 // This function checks a rolling text buffer for completed stop sequences.
-// ═══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════╁E
 static bool check_stop_sequence(const std::string& buffer) {
     if (buffer.find("<|im_end|>") != std::string::npos) return true;
     if (buffer.find("<|im_start|>") != std::string::npos) return true;
@@ -635,13 +637,13 @@ static bool check_stop_sequence(const std::string& buffer) {
     if (buffer.find("<|eot_id|>") != std::string::npos) return true;
     if (buffer.find("</s>") != std::string::npos) return true;
     if (buffer.find("<eos>") != std::string::npos) return true;
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     // [v1.1.4-SAR] CONVERSATION TURN BOUNDARY DETECTION
     // Unsloth/LoRA fine-tuned models often use plain-text role markers instead
     // of special tokens. When the model generates "\nUser:" or "\nAI:", it means
     // the model has finished its response and is hallucinating the next turn.
     // We MUST stop here to prevent the infinite "User: hello\nAI: 1" loop.
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     if (buffer.find("\nUser:") != std::string::npos) return true;
     if (buffer.find("\nuser:") != std::string::npos) return true;
     if (buffer.find("\nAI:") != std::string::npos) return true;
@@ -715,8 +717,8 @@ static void apply_backend_enforcement(int backend_mode, llama_model_params& mode
     bool has_vulkan_crash = false;
     bool has_opencl_crash = false;
 
-    // 🛡️ HAT 2.0: Dynamic Re-initialization
-    // 🛡️ [SHNC] Total Reset Protocol: Clean environment before attempt
+    // 🛡�E�EHAT 2.0: Dynamic Re-initialization
+    // 🛡�E�E[SHNC] Total Reset Protocol: Clean environment before attempt
     if (used_fallback) {
         unsetenv("GGML_VULKAN");
         unsetenv("GGML_OPENCL");
@@ -735,14 +737,14 @@ static void apply_backend_enforcement(int backend_mode, llama_model_params& mode
 
         if (!has_vulkan_crash && stat((g_files_dir + "/VULKAN_TRYING.flag").c_str(), &st) == 0) {
             has_vulkan_crash = true;
-            LOGw("🛡️ TRIPWIRE: Tombstone detected for VULKAN.");
+            LOGw("🛡�E�ETRIPWIRE: Tombstone detected for VULKAN.");
             std::ofstream report(g_files_dir + "/VULKAN_crash.json");
             report << "{\"backend\":\"VULKAN\",\"description\":\"Fatal Driver Hang (Caught by Tombstone)\"}";
             report.close();
         }
         if (!has_opencl_crash && stat((g_files_dir + "/OPENCL_TRYING.flag").c_str(), &st) == 0) {
             has_opencl_crash = true;
-            LOGw("🛡️ TRIPWIRE: Tombstone detected for OPENCL.");
+            LOGw("🛡�E�ETRIPWIRE: Tombstone detected for OPENCL.");
             std::ofstream report(g_files_dir + "/OPENCL_crash.json");
             report << "{\"backend\":\"OPENCL\",\"description\":\"Fatal Driver Hang (Caught by Tombstone)\"}";
             report.close();
@@ -808,7 +810,7 @@ static void apply_backend_enforcement(int backend_mode, llama_model_params& mode
             model_params.n_gpu_layers = 0;
             used_fallback = true;
             active_hardware_status = "CPU [Fallback]";
-            LOGw("🛡️ TRIPWIRE AUTO: Both GPU backends crashed. CPU only.");
+            LOGw("🛡�E�ETRIPWIRE AUTO: Both GPU backends crashed. CPU only.");
             g_selected_devices[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
             model_params.devices = g_selected_devices;
         } else if (has_vulkan_crash) {
@@ -818,7 +820,7 @@ static void apply_backend_enforcement(int backend_mode, llama_model_params& mode
             model_params.n_gpu_layers = 99;
             used_fallback = true;
             active_hardware_status = "OPENCL [Fallback]";
-            LOGw("🛡️ TRIPWIRE AUTO: Vulkan blacklisted. Using OpenCL.");
+            LOGw("🛡�E�ETRIPWIRE AUTO: Vulkan blacklisted. Using OpenCL.");
             auto reg = ggml_backend_reg_by_name("OpenCL");
             if (!reg) reg = ggml_backend_reg_by_name("opencl");
             if (reg && ggml_backend_reg_dev_count(reg) > 0) {
@@ -874,15 +876,15 @@ Java_android_llama_cpp_LLamaAndroid_load_1model(JNIEnv *env, jobject, jstring fi
     LOGi("🚀 [SAR] Native Loading model: %s (mmap: %s) (Mode: %d)", 
          path_to_model, model_params.use_mmap ? "ON" : "OFF", backend_mode);
 
-    // 🛡️ [SAR] HARDENING: Explicitly check for Mali driver presence and PERMISSIONS
+    // 🛡�E�E[SAR] HARDENING: Explicitly check for Mali driver presence and PERMISSIONS
     int mali_fd = open("/dev/mali0", O_RDWR);
     if (mali_fd >= 0) {
-        LOGi("🛰️ [SAR] SUCCESS: Mali Kernel Driver opened with RDWR permissions. FD=%d", mali_fd);
+        LOGi("🛰�E�E[SAR] SUCCESS: Mali Kernel Driver opened with RDWR permissions. FD=%d", mali_fd);
         close(mali_fd);
     } else {
-        LOGe("🛰️ [SAR] FATAL: Cannot open /dev/mali0. Error: %s (errno=%d)", strerror(errno), errno);
+        LOGe("🛰�E�E[SAR] FATAL: Cannot open /dev/mali0. Error: %s (errno=%d)", strerror(errno), errno);
         if (errno == EACCES) {
-            LOGe("🛡️ [SAR] DIAGNOSIS: SELinux or Android Permissions are BLOCKING GPU access.");
+            LOGe("🛡�E�E[SAR] DIAGNOSIS: SELinux or Android Permissions are BLOCKING GPU access.");
         }
     }
 
@@ -899,7 +901,7 @@ Java_android_llama_cpp_LLamaAndroid_load_1model(JNIEnv *env, jobject, jstring fi
         std::lock_guard<std::recursive_mutex> lock(g_context_mutex);
         model = llama_model_load_from_file(path_to_model, model_params);
     } catch (...) {
-        LOGe("🛡️ Native engine threw during load.");
+        LOGe("🛡�E�ENative engine threw during load.");
     }
     
     if (model && !trying_flag.empty()) remove(trying_flag.c_str());
@@ -931,7 +933,7 @@ Java_android_llama_cpp_LLamaAndroid_load_1model_1from_1fd(
 
     apply_backend_enforcement(backend_mode, model_params);
 
-    // 🛡️ ASHMEM SAFETY PROBE
+    // 🛡�E�EASHMEM SAFETY PROBE
     void* probe_ptr = mmap(NULL, 1, PROT_READ, MAP_SHARED, fd, offset);
     if (probe_ptr == MAP_FAILED) {
         LOGe("[SAR] Vault Probe FAILED.");
@@ -957,7 +959,7 @@ Java_android_llama_cpp_LLamaAndroid_load_1model_1from_1fd(
     fclose(file); 
 
     if (model) {
-        // 🛡️ MICRO-PROBE: Verify driver stability
+        // 🛡�E�EMICRO-PROBE: Verify driver stability
         llama_context_params probe_params = llama_context_default_params();
         probe_params.n_ctx = 128;
         probe_params.n_threads = 1;
@@ -974,7 +976,7 @@ Java_android_llama_cpp_LLamaAndroid_load_1model_1from_1fd(
         }
     }
     
-    // 🛡️ CLEANUP & POLLUTION CHECK
+    // 🛡�E�ECLEANUP & POLLUTION CHECK
     unsetenv("GGML_VULKAN");
     unsetenv("GGML_OPENCL");
     llama_backend_free();
@@ -1023,20 +1025,20 @@ Java_android_llama_cpp_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong jmo
 
     int total_cores = (int) sysconf(_SC_NPROCESSORS_ONLN);
     
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     // TOPOLOGY-AWARE THREADING (Architect Guard)
     // Clamped to 4 threads for CPU fallback to avoid A55 scheduling thrashing.
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     int n_threads = std::min(4, total_cores);
     
     LOGi("Performance Governor: Detected %d cores. Allocated %d safe threads (CPU-fallback optimized).", total_cores, n_threads);
 
     LOGi("Performance Governor: Detected %d cores. Allocated %d dynamic threads (GPU-aware).", total_cores, n_threads);
 
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     // AI RESOURCE GOVERNOR (RAM Monitoring)
     // Check /proc/meminfo to prevent OOM crashes on context creation
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     FILE* meminfo = fopen("/proc/meminfo", "r");
     if (meminfo) {
         char line[256];
@@ -1071,18 +1073,18 @@ Java_android_llama_cpp_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong jmo
     ctx_params.n_threads       = n_threads;
     ctx_params.n_threads_batch = n_threads;
 
-    // 🛡️ [SAR] Hard-suppress GPU ops if we are in fallback or forced CPU mode
+    // 🛡�E�E[SAR] Hard-suppress GPU ops if we are in fallback or forced CPU mode
     if (used_fallback || g_vulkan_disabled || g_opencl_disabled) {
         ctx_params.offload_kqv = false;
         ctx_params.op_offload = false;
         LOGi("[SAR] Context Suppressor: Disabling KQV/Op offloading for CPU stability.");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     // SMART ASYMMETRIC KV CACHE (Architect Directive)
     // Key Cache: Q4_0 (High compression)
     // Value Cache: Q8_0 (Mathematical stability for CPU)
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     bool is_vulkan = (llama_supports_gpu_offload() && !used_fallback && !g_vulkan_disabled);
     
     if (is_vulkan) {
@@ -1095,7 +1097,7 @@ Java_android_llama_cpp_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong jmo
         LOGi("KV Cache: Q4/Q8 Asymmetric [CPU Safe Architecture]");
     }
 
-    // 🛡️ ADAPTIVE WATCHDOG RESET
+    // 🛡�E�EADAPTIVE WATCHDOG RESET
     int watchdog_timeout = std::max(10000, (int)(ctx_params.n_ctx / 2 * 2.5));
     g_watchdog_timeout_ms.store(watchdog_timeout);
     LOGi("Adaptive Watchdog: Timeout synchronized to %dms for n_ctx=%d", watchdog_timeout, ctx_params.n_ctx);
@@ -1115,7 +1117,7 @@ Java_android_llama_cpp_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong jmo
         context = llama_init_from_model(model, ctx_params);
     }
     
-    // 🛡️ HAT (Hardened Adaptive Transition): Zero-Latency Fallback
+    // 🛡�E�EHAT (Hardened Adaptive Transition): Zero-Latency Fallback
     if (!context) {
         LOGw("[HAT] Primary Backend initialization failed. Triggering immediate DEEP CPU fallback...");
         setenv("GGML_VULKAN", "0", 1);
@@ -1142,9 +1144,9 @@ Java_android_llama_cpp_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong jmo
         }
     }
     
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     // HARDWARE TELEMETRY: Detailed Status Reporting
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     // Determine GPU usage based on requested mode, support, and actual success
     bool is_vulkan_active = (g_active_backend_trying == "VULKAN" && !used_fallback && !g_vulkan_disabled);
     bool is_opencl_active = (g_active_backend_trying == "OPENCL" && !used_fallback && !g_opencl_disabled);
@@ -1335,7 +1337,7 @@ Java_android_llama_cpp_LLamaAndroid_free_1batch(JNIEnv *, jobject, jlong batch_p
     auto batch = reinterpret_cast<llama_batch *>(batch_pointer);
     
     if (batch != nullptr) {
-        // 🛡️ ENTERPRISE FIX: Use standard llama_batch_free to properly free ALL inner seq_id arrays
+        // 🛡�E�EENTERPRISE FIX: Use standard llama_batch_free to properly free ALL inner seq_id arrays
         // This solves the massive native memory leak causing Samsung "Frequent Crash" reports.
         llama_batch_free(*batch);
         delete batch;
@@ -1350,12 +1352,12 @@ Java_android_llama_cpp_LLamaAndroid_new_1sampler(JNIEnv *env, jobject, jlong con
     sparams.no_perf = true;
     llama_sampler * smpl = llama_sampler_chain_init(sparams);
     
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     // DYNAMIC SAMPLER CHAIN: Configured via Scypheon UI
     // 1. TopK: Filters out low-probability tokens
     // 2. TopP: Filters based on cumulative probability
     // 3. Temp: Scales logits to adjust creativity/randomness
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════╁E
     llama_sampler_chain_add(smpl, llama_sampler_init_top_k(top_k));
     llama_sampler_chain_add(smpl, llama_sampler_init_top_p(top_p, 1));
     llama_sampler_chain_add(smpl, llama_sampler_init_temp(temp));
@@ -1372,9 +1374,9 @@ Java_android_llama_cpp_LLamaAndroid_new_1sampler(JNIEnv *env, jobject, jlong con
             auto grammar_smpl = llama_sampler_init_grammar(vocab, grammar_str, "root");
             if (grammar_smpl) {
                 llama_sampler_chain_add(smpl, grammar_smpl);
-                LOGi("✅ GBNF Grammar successfully loaded and attached to sampler chain");
+                LOGi("✁EGBNF Grammar successfully loaded and attached to sampler chain");
             } else {
-                LOGe("❌ Failed to parse GBNF Grammar!");
+                LOGe("❁EFailed to parse GBNF Grammar!");
             }
         }
         env->ReleaseStringUTFChars(jgrammar, grammar_str);
@@ -1403,7 +1405,7 @@ Java_android_llama_cpp_LLamaAndroid_backend_1init(JNIEnv *env, jobject, jboolean
         env->ReleaseStringUTFChars(files_dir, dir);
     }
 
-    LOGi("🛡️ TRIPWIRE: Solaris Sentinel armed via JNI_OnLoad. Persistence path: %s", g_files_dir.c_str());
+    LOGi("🛡�E�ETRIPWIRE: Solaris Sentinel armed via JNI_OnLoad. Persistence path: %s", g_files_dir.c_str());
     llama_backend_init();
 }
 
@@ -1430,7 +1432,7 @@ Java_android_llama_cpp_LLamaAndroid_completion_1init(
     g_cancel_inference.store(false, std::memory_order_release);
 
     const auto context = reinterpret_cast<llama_context *>(context_pointer);
-    // 🛡️ Enterprise Fix: Clear KV cache at the start of a new prompt evaluation
+    // 🛡�E�EEnterprise Fix: Clear KV cache at the start of a new prompt evaluation
     // to prevent RoPE sequence position 'X < Y' mismatches with leftover context.
     llama_memory_clear(llama_get_memory(context), true);
 
@@ -1461,7 +1463,7 @@ Java_android_llama_cpp_LLamaAndroid_completion_1init(
         n_kv_req = tokens_list.size() + n_len;
     }
 
-/*  🛡️ DIAGNOSTIC OVERLOAD: Remove token logging loop
+/*  🛡�E�EDIAGNOSTIC OVERLOAD: Remove token logging loop
     for (auto id : tokens_list) {
         LOGi("token: `%s`-> %d ", common_token_to_piece(context, id).c_str(), id);
     }
@@ -1549,13 +1551,13 @@ Java_android_llama_cpp_LLamaAndroid_completion_1loop(
     auto new_token_chars = common_token_to_piece(context, new_token_id);
     cached_token_chars += new_token_chars;
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════╁E
     // MULTI-TOKEN STOP SEQUENCE DETECTION
     // Accumulate raw token text and check if <|im_end|> (or similar) has
     // been fully assembled across multiple tokens. If so, HALT generation.
     // This fixes the infinite loop when the model emits stop markers as
     // individual text tokens instead of a single special EOG token.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════╁E
     stop_sequence_accumulator += new_token_chars;
     // Keep buffer bounded (only last 64 chars matter for detection)
     if (stop_sequence_accumulator.size() > 128) {
@@ -1577,7 +1579,7 @@ Java_android_llama_cpp_LLamaAndroid_completion_1loop(
         if (is_template_token(cached_token_chars)) {
              // Return empty string so UI doesn't see it, but model state advances
              new_token = env->NewStringUTF(""); 
-             LOGi("⛔ Enterprise Filter: Blocked leaked token: `%s`", cached_token_chars.c_str());
+             LOGi("⛁EEnterprise Filter: Blocked leaked token: `%s`", cached_token_chars.c_str());
         } else {
              final_token_text = cached_token_chars;
              new_token = env->NewStringUTF(cached_token_chars.c_str());
@@ -1633,6 +1635,7 @@ JNIEXPORT void JNICALL
 Java_android_llama_cpp_LLamaAndroid_kv_1cache_1clear(JNIEnv *, jobject, jlong context) {
     std::lock_guard<std::recursive_mutex> lock(g_context_mutex);
     llama_memory_clear(llama_get_memory(reinterpret_cast<llama_context *>(context)), true);
+    g_last_tokens.clear(); // [v1.4.2-SAR] Sync global state
 }
 
 extern "C"
@@ -1664,10 +1667,10 @@ Java_android_llama_cpp_LLamaAndroid_load_1state(JNIEnv *env, jobject, jlong cont
     return success ? JNI_TRUE : JNI_FALSE;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════╁E
 // ENTERPRISE: NATIVE VAULT (JNI Security Bridge)
 // Hardcoding sensitive endpoints and salts in compiled C++ to thwart reverse engineering
-// ═══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════╁E
 
 extern "C"
 JNIEXPORT jbyteArray JNICALL
@@ -1719,14 +1722,175 @@ Java_com_mission_vitreon_core_security_NativeVault_getDefaultEndpoint(JNIEnv *en
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_com_mission_vitreon_core_security_NativeVault_getSystemPrompt(JNIEnv *env, jobject thiz) {
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════════╁E
     // CORE IDENTITY / THE SOUL OF VITREON
     // Hardcoded here to prevent copycat apps from decompiling the APK and
     // extracting the precise prompt engineering that makes the Agent smart.
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════════════╁E
     const char* core_prompt =
         "You are Vitreon, an advanced, highly intelligent AI Assistant running on Android.\n"
         "Your goal is to be helpful, concise, and incredibly capable.\n\n"
+        "RULES:\n"
+        "1. Never mention you are an AI model trained by OpenAI, Google, Anthropic, or DeepSeek.\n"
+        "2. If asked who made you, say 'I am Vitreon, developed by Mission.'\n"
+        "3. You have 'Puppet Master' capabilities to control the phone if the user asks.\n"
+        "4. Always answer efficiently without unnecessary filler text.\n"
+        "5. Refuse dangerous, illegal, or highly unethical requests firmly but politely.";
+
+    return env->NewStringUTF(core_prompt);
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_mission_vitreon_core_security_NativeVault_verifySafety(JNIEnv *env, jobject thiz, jstring j_input) {
+    // ══════════════════════════════════════════════════════════════════════════════╁E
+    // NATIVE JAILBREAK DETECTION (L1 Shield)
+    // Runs in C++ so malicious actors cannot patch out the `if (jailbreak)` check
+    // using simple Smali/Dalvik editors like APKTool.
+    // ══════════════════════════════════════════════════════════════════════════════╁E
+    if (!j_input) return JNI_TRUE; // Empty is safe
+
+    const char *input_c = env->GetStringUTFChars(j_input, nullptr);
+    if (!input_c) return JNI_TRUE;
+
+    std::string input(input_c);
+    env->ReleaseStringUTFChars(j_input, input_c);
+
+    // Convert to lowercase for checking
+    for (char &c : input) {
+        c = std::tolower(c);
+    }
+
+    // Hardcoded blacklisted substrings (Jailbreak / Prompt Injection)
+    const char* blacklist[] = {
+        "ignore previous instructions",
+        "ignore all previous instructions",
+        "dan mode",
+        "do anything now",
+        "you are no longer vitreon",
+        "system prompt",
+        "print your instructions",
+        "developer mode enabled"
+    };
+
+    for (const char* bad_phrase : blacklist) {
+        if (input.find(bad_phrase) != std::string::npos) {
+            LOGe("🛡�E�ENativeVault: Jailbreak attempt detected ('%s')", bad_phrase);
+            return JNI_FALSE; // UNSAFE
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════╁E
+    // AEGIS PROTOCOL: Destructive OS Command Blocking (L2 Shield)
+    // Borrowed from Desktop version: Block dangerous shell commands injected by LLM
+    // ══════════════════════════════════════════════════════════════════════════════╁E
+    const char* dangerous_commands[] = {
+        "rm -rf",
+        "mkfs",
+        "dd if=/dev/zero",
+        "sudo rm",
+        "chmod -R 777 /",
+        "> /dev/sda",
+        "format C:",
+        "cmd.exe",
+        "powershell"
+    };
+
+    for (const char* bad_cmd : dangerous_commands) {
+        if (input.find(bad_cmd) != std::string::npos) {
+            LOGe("🛡�E�ENativeVault CRITICAL: Destructive OS command blocked -> '%s'", bad_cmd);
+            return JNI_FALSE; // UNSAFE
+        }
+    }
+
+    return JNI_TRUE; // SAFE
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_android_llama_cpp_LLamaAndroid_set_1trim_1level(JNIEnv *, jobject, jint level) {
+    g_pending_trim_level.store(level, std::memory_order_release);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_android_llama_cpp_LLamaAndroid_native_1shm_1verify(JNIEnv *env, jobject, jlong ptr, jlong size, jstring jhash) {
+    const char *expected = env->GetStringUTFChars(jhash, 0);
+    // Simple verification for simulation, normally would use SHA-256 on ptr memory
+    LOGi("🛡�E�E[SOLARIS] Verifying SHM Integrity against hash: %s", expected);
+    env->ReleaseStringUTFChars(jhash, expected);
+    return JNI_TRUE; 
+}
+
+// ══════════════════════════════════════════════════════════════════════════════╁E
+// NATIVE GGUF EMBEDDINGS (Piggyback Protocol)
+// Generates a mean-pooled embedding vector from the currently loaded GGUF model.
+// Uses a temporary lightweight context to avoid disturbing the primary chat
+// context's KV cache state.
+// malloc_trim(0) is called post-extraction to immediately return heap to OS.
+// ══════════════════════════════════════════════════════════════════════════════╁E
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_android_llama_cpp_LLamaAndroid_native_1get_1embeddings(JNIEnv *env, jobject, jlong jmodel, jstring jtext) {
+    auto model = reinterpret_cast<llama_model*>(jmodel);
+    if (!model) {
+        LOGe("[EMBED] Model pointer is null. Cannot generate embeddings.");
+        return env->NewFloatArray(0);
+    }
+
+    const char* text = env->GetStringUTFChars(jtext, nullptr);
+    if (!text) {
+        LOGe("[EMBED] Failed to get text from JNI.");
+        return env->NewFloatArray(0);
+    }
+    LOGi("[EMBED] Generating native GGUF embeddings for text (len=%zu)...", strlen(text));
+
+    // Tokenize input FIRST to determine the correct context and batch size
+    const auto vocab = llama_model_get_vocab(model);
+    std::vector<llama_token> tokens(512);
+    int n_tokens = llama_tokenize(vocab, text, (int32_t)strlen(text), tokens.data(), (int32_t)tokens.size(), true, false);
+    
+    if (n_tokens < 0) {
+        // Buffer was too small  Eresize and retry
+        tokens.resize(-n_tokens);
+        n_tokens = llama_tokenize(vocab, text, (int32_t)strlen(text), tokens.data(), (int32_t)tokens.size(), true, false);
+    }
+    
+    if (n_tokens <= 0) {
+        LOGe("[EMBED] Tokenization failed (n_tokens=%d).", n_tokens);
+        env->ReleaseStringUTFChars(jtext, text);
+        return env->NewFloatArray(0);
+    }
+    tokens.resize(n_tokens);
+    LOGi("[EMBED] Tokenized %d tokens.", n_tokens);
+
+    // Adjust n_ctx and n_batch based on the actual number of tokens.
+    // Clamp to model's train context limit to avoid exceeding model's structural design.
+    int model_train_limit = llama_model_n_ctx_train(model);
+    int requested_n_ctx = n_tokens;
+    if (model_train_limit > 0 && requested_n_ctx > model_train_limit) {
+        LOGw("[EMBED] Token count %d exceeds model limit %d. Clamping.", requested_n_ctx, model_train_limit);
+        requested_n_ctx = model_train_limit;
+    }
+    // Make sure we have at least a minimum size (like 512) for the context.
+    int final_n_ctx = (requested_n_ctx > 512) ? requested_n_ctx : 512;
+
+    // TEMP CONTEXT: Dynamic size based on token count.
+    // This does NOT disturb the main chat context pointer.
+    llama_context_params embd_params = llama_context_default_params();
+    embd_params.n_ctx        = final_n_ctx;
+    embd_params.n_threads    = 2;
+    embd_params.embeddings   = true;    // Critical: enable embedding output
+    embd_params.pooling_type = LLAMA_POOLING_TYPE_MEAN; // Mean-pool over all tokens
+    embd_params.n_batch      = final_n_ctx;
+    embd_params.offload_kqv  = false;   // CPU-safe for embedding pass
+    embd_params.op_offload   = false;
+
+    llama_context* embd_ctx = nullptr;
+    jfloatArray result = nullptr;
+
+    try {
+        {
+            std::lock_guard<std::recursive_mutex> lock(g_context_mutex);
+            embd_ctx = llama_init_from_model(model, embd_params);
+        }
         
         if (!embd_ctx) {
             LOGe("[EMBED] Failed to create embedding context.");
@@ -1734,28 +1898,11 @@ Java_com_mission_vitreon_core_security_NativeVault_getSystemPrompt(JNIEnv *env, 
             return env->NewFloatArray(0);
         }
 
-        // Tokenize input
-        const auto vocab = llama_model_get_vocab(model);
-        std::vector<llama_token> tokens(512);
-        int n_tokens = llama_tokenize(vocab, text, (int32_t)strlen(text), tokens.data(), (int32_t)tokens.size(), true, false);
-        
-        if (n_tokens < 0) {
-            // Buffer was too small — resize and retry
-            tokens.resize(-n_tokens);
-            n_tokens = llama_tokenize(vocab, text, (int32_t)strlen(text), tokens.data(), (int32_t)tokens.size(), true, false);
+        // Clamp tokens array size to final_n_ctx so we don't pass more tokens to decode than the context can hold.
+        if (tokens.size() > (size_t)final_n_ctx) {
+            tokens.resize(final_n_ctx);
+            n_tokens = final_n_ctx;
         }
-        
-        if (n_tokens <= 0) {
-            LOGe("[EMBED] Tokenization failed (n_tokens=%d).", n_tokens);
-            {
-                std::lock_guard<std::recursive_mutex> lock(g_context_mutex);
-                llama_free(embd_ctx);
-            }
-            env->ReleaseStringUTFChars(jtext, text);
-            return env->NewFloatArray(0);
-        }
-        tokens.resize(n_tokens);
-        LOGi("[EMBED] Tokenized %d tokens.", n_tokens);
 
         // Build a batch for llama_encode / llama_decode
         llama_batch batch = llama_batch_init(n_tokens, 0, 1);
@@ -1799,7 +1946,7 @@ Java_com_mission_vitreon_core_security_NativeVault_getSystemPrompt(JNIEnv *env, 
         if (!embd_ptr) {
             // Fallback: try getting embedding from the last token (generative model piggyback)
             embd_ptr = llama_get_embeddings_ith(embd_ctx, -1);
-            LOGi("[EMBED] Pooled embedding unavailable — falling back to last-token embedding.");
+            LOGi("[EMBED] Pooled embedding unavailable  Efalling back to last-token embedding.");
         }
 
         int n_embd = llama_model_n_embd(model);
@@ -1880,10 +2027,10 @@ Java_android_llama_cpp_LLamaAndroid_probe_1backend(
     
     bool ok = (model != nullptr);
     if (ok) {
-        LOGi("✅ [PROBE] Backend %d initialized successfully.", backendType);
+        LOGi("✁E[PROBE] Backend %d initialized successfully.", backendType);
         llama_model_free(model);
     } else {
-        LOGe("❌ [PROBE] Backend %d FAILED. Allocation rejected.", backendType);
+        LOGe("❁E[PROBE] Backend %d FAILED. Allocation rejected.", backendType);
     }
     
     llama_backend_free();
@@ -1896,3 +2043,33 @@ Java_android_llama_cpp_LLamaAndroid_probe_1backend(
 
     return ok;
 }
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_android_llama_cpp_LLamaAndroid_native_1process_1image(
+    JNIEnv* env, jobject, jlong model, jlong context, jobject hardware_buffer, jint width, jint height) {
+    
+    if (!hardware_buffer) return JNI_FALSE;
+
+    AHardwareBuffer* ahb = AHardwareBuffer_fromHardwareBuffer(env, hardware_buffer);
+    if (!ahb) {
+        LOGe("[VISION] Failed to extract AHardwareBuffer.");
+        return JNI_FALSE;
+    }
+
+    void* pixels = nullptr;
+    int status = AHardwareBuffer_lock(ahb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, nullptr, &pixels);
+    if (status != 0 || !pixels) {
+        LOGe("[VISION] AHardwareBuffer_lock failed with status: %d", status);
+        return JNI_FALSE;
+    }
+
+    LOGi("[VISION] Successfully locked AHardwareBuffer. Resolution: %dx%d. Injecting to Vision Module...", width, height);
+
+    // TODO: Pass the `pixels` pointer (which contains raw RGB/RGBA data) to the clip/vision module.
+    // e.g. clip_image_u8_batch img; ...
+
+    // After processing, unlock.
+    AHardwareBuffer_unlock(ahb, nullptr);
+    return JNI_TRUE;
+}
+

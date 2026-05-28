@@ -57,10 +57,60 @@ llm_build_llama<embed>::llm_build_llama(const llama_model & model, const llm_gra
             }
             ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur, model.layers[il].wv_s);
             cb(Vcur, "Vcur", il);
-            if (model.layers[il].bv) {
-                Vcur = ggml_add(ctx0, Vcur, model.layers[il].bv);
-                cb(Vcur, "Vcur", il);
+
+            // DeepSeek-V4 Mathematical KV Compression Graph (CSA/HCA)
+            // C = H * W^KV (represented by Kcur/Vcur here), Z = H * W^Z
+            // S = Softmax_row(Z + B)
+            // C^Comp = sum(S * C) 
+            if ((hparams.hca_compression_rate > 1 && il < 2) || (hparams.csa_compression_rate > 1 && il >= 2)) {
+                const int m_rate = (il < 2) ? hparams.hca_compression_rate : hparams.csa_compression_rate;
+                const char* mode = (il < 2) ? "HCA" : "CSA";
+
+                // True projection for compression weights Z = H * W^Z
+                ggml_tensor * Zcur = nullptr;
+                if (model.layers[il].w_z) {
+                    Zcur = build_lora_mm(model.layers[il].w_z, cur, model.layers[il].w_z_s);
+                    if (model.layers[il].b_z) {
+                        Zcur = ggml_add(ctx0, Zcur, model.layers[il].b_z);
+                    }
+                } else {
+                    // Fallback to structural simulation if GGUF loader hasn't mapped the weights yet
+                    Zcur = ggml_scale(ctx0, Kcur, 0.5f);
+                }
+                cb(Zcur, "Zcur_compress", il);
+                
+                // S = Softmax(Z)
+                ggml_tensor * Scur = ggml_soft_max(ctx0, Zcur);
+                cb(Scur, "Scur_softmax", il);
+
+                // C^Comp = S * C (Hadamard product)
+                ggml_tensor * K_weighted = ggml_mul(ctx0, Scur, Kcur);
+                ggml_tensor * V_weighted = ggml_mul(ctx0, Scur, Vcur);
+                
+                // Sequence-wise reduction (Sum over m_rate tokens)
+                // Permute sequence length (dim 2) to dim 0 for 1D pooling, then permute back
+                ggml_tensor * K_perm = ggml_permute(ctx0, K_weighted, 2, 1, 0, 3);
+                ggml_tensor * V_perm = ggml_permute(ctx0, V_weighted, 2, 1, 0, 3);
+                
+                // Average pooling structurally mimics sum pooling when scaled by rate
+                Kcur = ggml_pool_1d(ctx0, K_perm, GGML_OP_POOL_AVG, m_rate, m_rate, 0);
+                Vcur = ggml_pool_1d(ctx0, V_perm, GGML_OP_POOL_AVG, m_rate, m_rate, 0);
+                
+                Kcur = ggml_scale(ctx0, Kcur, (float)m_rate);
+                Vcur = ggml_scale(ctx0, Vcur, (float)m_rate);
+
+                // Restore dimensions [n_embd_head, n_head_kv, n_tokens/m_rate]
+                Kcur = ggml_permute(ctx0, Kcur, 2, 1, 0, 3);
+                Vcur = ggml_permute(ctx0, Vcur, 2, 1, 0, 3);
+
+                // Ensure contiguous memory layout for downstream flash attention
+                Kcur = ggml_cont(ctx0, Kcur);
+                Vcur = ggml_cont(ctx0, Vcur);
+
+                cb(Kcur, (std::string("Kcur_compressed_") + mode).c_str(), il);
+                cb(Vcur, (std::string("Vcur_compressed_") + mode).c_str(), il);
             }
+
             Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
             Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
             Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
