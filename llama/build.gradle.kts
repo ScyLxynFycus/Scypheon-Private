@@ -26,7 +26,7 @@ android {
                 arguments += "-DCMAKE_BUILD_TYPE=Release"
                 arguments += "-DGGML_VULKAN_COOPMAT_GLSLC_SUPPORT=OFF"
                 arguments += "-DGGML_VULKAN_COOPMAT2_GLSLC_SUPPORT=OFF"
-                arguments += "-DGGML_VULKAN_SHADERS_GEN_EXE=D:/AuraLink/prebuild/vulkan-shaders-gen.exe"
+                arguments += "-DGGML_VULKAN_SHADERS_GEN_EXE=${projectDir.parentFile.absolutePath}/prebuild/vulkan-shaders-gen.exe"
                 cppFlags("")
             }
         }

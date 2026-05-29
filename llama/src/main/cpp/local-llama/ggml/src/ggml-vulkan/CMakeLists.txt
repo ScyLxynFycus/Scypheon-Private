@@ -14,8 +14,8 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
 endif()
 
 function(detect_host_compiler)
-    set(HOST_C_COMPILER "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe" PARENT_SCOPE)
-    set(HOST_CXX_COMPILER "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe" PARENT_SCOPE)
+    set(HOST_C_COMPILER "" PARENT_SCOPE)
+    set(HOST_CXX_COMPILER "" PARENT_SCOPE)
 endfunction()
 
 
@@ -127,7 +127,7 @@ if (Vulkan_FOUND)
         else()
             detect_host_compiler()
             if (NOT HOST_C_COMPILER OR NOT HOST_CXX_COMPILER)
-                message(FATAL_ERROR "Host compiler not found")
+                message(WARNING "Host compiler not found - ignoring since we use prebuilt shaders gen")
             else()
                 message(STATUS "Host compiler: ${HOST_C_COMPILER} ${HOST_CXX_COMPILER}")
             endif()
@@ -164,7 +164,8 @@ if (Vulkan_FOUND)
 
     file(GLOB _ggml_vk_shaders_gen_sources
               CONFIGURE_DEPENDS "${_ggml_vk_input_dir}/*.cpp"
-                                "${_ggml_vk_input_dir}/*.h")
+                                "${_ggml_vk_input_dir}/*.h"
+                                "${_ggml_vk_input_dir}/*.glsl")
 
     add_custom_command(
         OUTPUT ${_ggml_vk_header}

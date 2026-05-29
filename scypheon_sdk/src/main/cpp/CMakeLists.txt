@@ -27,10 +27,9 @@ set(GGML_OPENCL ON CACHE BOOL "" FORCE)
 set(GGML_CPU_AARCH64 ON CACHE BOOL "" FORCE)
 set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
-
 # Vulkan Shader Generator (Patched for Android)
 set(GGML_VULKAN_SHADERS_GEN OFF CACHE BOOL "" FORCE)
-set(GGML_VULKAN_SHADERS_GEN_EXE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../prebuild/vulkan-shaders-gen-patched.exe" CACHE FILEPATH "" FORCE)
+set(GGML_VULKAN_SHADERS_GEN_EXE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../prebuild/vulkan-shaders-gen.exe" CACHE FILEPATH "" FORCE)
 
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../../llama/src/main/cpp/local-llama/include
@@ -39,9 +38,7 @@ include_directories(
 )
 
 if(DEFINED ENV{VULKAN_SDK})
-    include_directories($ENV{VULKAN_SDK}/Include)
-elseif(EXISTS "D:/VULKAN/Include")
-    include_directories("D:/VULKAN/Include")
+    include_directories("$ENV{VULKAN_SDK}/Include")
 endif()
 
 add_subdirectory(../../../../llama/src/main/cpp/local-llama llama_build)

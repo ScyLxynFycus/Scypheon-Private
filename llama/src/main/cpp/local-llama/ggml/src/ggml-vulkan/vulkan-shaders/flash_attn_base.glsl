@@ -111,13 +111,20 @@ layout (binding = 2) readonly buffer V_PACKED16 {A_TYPE_PACKED16 v_data_packed16
 #define BLOCK_SIZE 1
 #endif
 
+#ifndef BLOCK_BYTE_SIZE
+#define BLOCK_BYTE_SIZE 16
+#endif
+
+// [SCYPHEON FIX] Dummy dequantizers for unused/turbo variants in Flash Attention
+#if defined(DATA_A_TURBO2_0) || defined(DATA_A_TURBO3_0)
+FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+    return FLOAT_TYPEV4(0.0);
+}
+#endif
 
 #if defined(DATA_A_F32)
 #undef BLOCK_SIZE
 #define BLOCK_SIZE 4
-#ifndef BLOCK_BYTE_SIZE
-#define BLOCK_BYTE_SIZE 16
-#endif
 
 FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
     // iqs is currently always zero in the flash attention shaders
@@ -165,6 +172,86 @@ FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
         vui_hi >>= shift;
 
         return FLOAT_TYPE(v_packed.v_data_packed16[a_offset + ib].d) * (FLOAT_TYPEV4(vui_lo & 0xF, (vui_lo >> 8) & 0xF, vui_hi & 0xF, (vui_hi >> 8) & 0xF) - FLOAT_TYPE(8.0f));
+    }
+}
+#endif
+
+#if defined(DATA_A_Q4_1)
+#ifndef BLOCK_BYTE_SIZE
+#define BLOCK_BYTE_SIZE 20
+#endif
+FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+    if (binding_idx == BINDING_IDX_K) {
+        uint vui_lo = uint(k_packed.k_data_packed16[a_offset + ib].qs[(iqs & 0xF) / 2 + 0]);
+        uint vui_hi = uint(k_packed.k_data_packed16[a_offset + ib].qs[(iqs & 0xF) / 2 + 1]);
+        uint shift = (iqs & 0x10) >> 2;
+        vui_lo >>= shift;
+        vui_hi >>= shift;
+        return FLOAT_TYPE(k_packed.k_data_packed16[a_offset + ib].d) * FLOAT_TYPEV4(vui_lo & 0xF, (vui_lo >> 8) & 0xF, vui_hi & 0xF, (vui_hi >> 8) & 0xF) + FLOAT_TYPE(k_packed.k_data_packed16[a_offset + ib].m);
+    } else {
+        uint vui_lo = uint(v_packed.v_data_packed16[a_offset + ib].qs[(iqs & 0xF) / 2 + 0]);
+        uint vui_hi = uint(v_packed.v_data_packed16[a_offset + ib].qs[(iqs & 0xF) / 2 + 1]);
+        uint shift = (iqs & 0x10) >> 2;
+        vui_lo >>= shift;
+        vui_hi >>= shift;
+        return FLOAT_TYPE(v_packed.v_data_packed16[a_offset + ib].d) * FLOAT_TYPEV4(vui_lo & 0xF, (vui_lo >> 8) & 0xF, vui_hi & 0xF, (vui_hi >> 8) & 0xF) + FLOAT_TYPE(v_packed.v_data_packed16[a_offset + ib].m);
+    }
+}
+#endif
+
+#if defined(DATA_A_Q5_0)
+#ifndef BLOCK_BYTE_SIZE
+#define BLOCK_BYTE_SIZE 22
+#endif
+FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+    if (binding_idx == BINDING_IDX_K) {
+        const uint uint_qh = uint(k_packed.k_data_packed16[a_offset + ib].qh[1]) << 16 | k_packed.k_data_packed16[a_offset + ib].qh[0];
+        const ivec2 qh0 = ivec2(((uint_qh >> iqs) << 4) & 0x10, (uint_qh >> (iqs + 12)) & 0x10);
+        const ivec2 qh1 = ivec2(((uint_qh >> (iqs + 1)) << 4) & 0x10, (uint_qh >> (iqs + 13)) & 0x10);
+        const uint vui = uint(k_packed.k_data_packed16[a_offset + ib].qs[iqs/2]);
+        return FLOAT_TYPE(k_packed.k_data_packed16[a_offset + ib].d) * (FLOAT_TYPEV4((vui & 0xF) | qh0.x, ((vui >> 4) & 0xF) | qh0.y, ((vui >> 8) & 0xF) | qh1.x, (vui >> 12) | qh1.y) - FLOAT_TYPE(16.0f));
+    } else {
+        const uint uint_qh = uint(v_packed.v_data_packed16[a_offset + ib].qh[1]) << 16 | v_packed.v_data_packed16[a_offset + ib].qh[0];
+        const ivec2 qh0 = ivec2(((uint_qh >> iqs) << 4) & 0x10, (uint_qh >> (iqs + 12)) & 0x10);
+        const ivec2 qh1 = ivec2(((uint_qh >> (iqs + 1)) << 4) & 0x10, (uint_qh >> (iqs + 13)) & 0x10);
+        const uint vui = uint(v_packed.v_data_packed16[a_offset + ib].qs[iqs/2]);
+        return FLOAT_TYPE(v_packed.v_data_packed16[a_offset + ib].d) * (FLOAT_TYPEV4((vui & 0xF) | qh0.x, ((vui >> 4) & 0xF) | qh0.y, ((vui >> 8) & 0xF) | qh1.x, (vui >> 12) | qh1.y) - FLOAT_TYPE(16.0f));
+    }
+}
+#endif
+
+#if defined(DATA_A_Q5_1)
+#ifndef BLOCK_BYTE_SIZE
+#define BLOCK_BYTE_SIZE 24
+#endif
+FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+    if (binding_idx == BINDING_IDX_K) {
+        const uint uint_qh = k_packed.k_data_packed16[a_offset + ib].qh;
+        const ivec2 qh0 = ivec2(((uint_qh >> iqs) << 4) & 0x10, (uint_qh >> (iqs + 12)) & 0x10);
+        const ivec2 qh1 = ivec2(((uint_qh >> (iqs + 1)) << 4) & 0x10, (uint_qh >> (iqs + 13)) & 0x10);
+        const uint vui = uint(k_packed.k_data_packed16[a_offset + ib].qs[iqs/2]);
+        return FLOAT_TYPE(k_packed.k_data_packed16[a_offset + ib].d) * FLOAT_TYPEV4((vui & 0xF) | qh0.x, ((vui >> 4) & 0xF) | qh0.y, ((vui >> 8) & 0xF) | qh1.x, (vui >> 12) | qh1.y) + FLOAT_TYPE(k_packed.k_data_packed16[a_offset + ib].m);
+    } else {
+        const uint uint_qh = v_packed.v_data_packed16[a_offset + ib].qh;
+        const ivec2 qh0 = ivec2(((uint_qh >> iqs) << 4) & 0x10, (uint_qh >> (iqs + 12)) & 0x10);
+        const ivec2 qh1 = ivec2(((uint_qh >> (iqs + 1)) << 4) & 0x10, (uint_qh >> (iqs + 13)) & 0x10);
+        const uint vui = uint(v_packed.v_data_packed16[a_offset + ib].qs[iqs/2]);
+        return FLOAT_TYPE(v_packed.v_data_packed16[a_offset + ib].d) * FLOAT_TYPEV4((vui & 0xF) | qh0.x, ((vui >> 4) & 0xF) | qh0.y, ((vui >> 8) & 0xF) | qh1.x, (vui >> 12) | qh1.y) + FLOAT_TYPE(v_packed.v_data_packed16[a_offset + ib].m);
+    }
+}
+#endif
+
+#if defined(DATA_A_IQ4_NL)
+#ifndef BLOCK_BYTE_SIZE
+#define BLOCK_BYTE_SIZE 18
+#endif
+FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+    if (binding_idx == BINDING_IDX_K) {
+        const uint vui = uint(k_packed.k_data_packed16[a_offset + ib].qs[iqs/2]);
+        return FLOAT_TYPE(k_packed.k_data_packed16[a_offset + ib].d) * FLOAT_TYPEV4(kvalues_iq4nl[vui & 0xF], kvalues_iq4nl[(vui >> 4) & 0xF], kvalues_iq4nl[(vui >> 8) & 0xF], kvalues_iq4nl[vui >> 12]);
+    } else {
+        const uint vui = uint(v_packed.v_data_packed16[a_offset + ib].qs[iqs/2]);
+        return FLOAT_TYPE(v_packed.v_data_packed16[a_offset + ib].d) * FLOAT_TYPEV4(kvalues_iq4nl[vui & 0xF], kvalues_iq4nl[(vui >> 4) & 0xF], kvalues_iq4nl[(vui >> 8) & 0xF], kvalues_iq4nl[vui >> 12]);
     }
 }
 #endif

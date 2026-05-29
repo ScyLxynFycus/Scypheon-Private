@@ -142,7 +142,7 @@ The following links provide full public access to Scypheon's engineering artifac
 * **Details:** Silicon-hardened compile of the release APK (`app-release.apk`) optimized with R8 minification, fully runnable offline on target Android SDK 35 devices.
 
 ### 🖼️ d. Media Gallery Cover Image
-* **Cover Image Path:** [scypheon_cover_gallery.webp](file:///D:/AuraLink/docs/scypheon_cover_gallery.webp) 
+* **Cover Image Path:** [scypheon_cover_gallery.webp](scypheon_cover_gallery.webp) 
 
 ---
 *The Scypheon platform is not a prototype; it is a battle-hardened, production-ready offline AI ecosystem.*

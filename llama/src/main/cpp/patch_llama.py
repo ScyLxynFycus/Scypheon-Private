@@ -22,22 +22,26 @@ def write_if_changed(path, content):
 
 def main():
     try:
-        project_root = "D:/AuraLink/VITREON/llama"
-        prebuilt_gen = "D:/AuraLink/prebuild/vulkan-shaders-gen.exe"
+        # Default to relative path if not specified
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(base_dir, "local-llama")).replace('\\', '/')
+        prebuilt_gen = os.path.abspath(os.path.join(base_dir, "../../../../../prebuild/vulkan-shaders-gen.exe")).replace('\\', '/')
+        
         if len(sys.argv) > 1:
             raw_path = sys.argv[1].replace('\\', '/')
             if os.path.isdir(raw_path): project_root = raw_path
 
         print(f"Targeting: {project_root}")
         
-        # 🛠️ Absolute MSVC & SDK Paths
-        msvc_base = "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207"
-        msvc_path = f"{msvc_base}/bin/Hostx64/x64/cl.exe"
-        sdk_base = "C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0"
-        lib_paths = [f"{msvc_base}/lib/x64", f"{sdk_base}/um/x64", f"{sdk_base}/ucrt/x64"]
-        sdk_inc_base = "C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0"
-        inc_paths = [f"{msvc_base}/include", f"{sdk_inc_base}/ucrt", f"{sdk_inc_base}/um",
-            f"{sdk_inc_base}/shared", f"{sdk_inc_base}/winrt", f"{sdk_inc_base}/cppwinrt"]
+        # 🛠️ Absolute MSVC & SDK Paths (Dynamic fallback)
+        msvc_path = ""
+        lib_paths = []
+        inc_paths = []
+        
+        # We rely on CMake to find the compiler unless explicitly overridden via environment
+        if "HOST_C_COMPILER" in os.environ:
+            msvc_path = os.environ["HOST_C_COMPILER"].replace('\\', '/')
+
         
         cxx_roots = glob.glob(os.path.join(project_root, ".cxx", "Release", "*", "arm64-v8a").replace('\\', '/'))
         targets = [project_root]

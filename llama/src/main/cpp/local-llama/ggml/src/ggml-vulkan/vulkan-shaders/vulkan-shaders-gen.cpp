@@ -66,6 +66,8 @@ const std::vector<std::string> type_names = {
     "iq4_nl",
     "mxfp4",
     "bf16",
+    "turbo2_0",
+    "turbo3_0",
     "turbo4_0",
 };
 
@@ -335,7 +337,7 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
     std::string target_env = (name.find("_cm2") != std::string::npos) ? "--target-env=vulkan1.3" : "--target-env=vulkan1.2";
 
     #ifdef _WIN32
-        std::vector<std::string> cmd = {GLSLC, "-fshader-stage=compute", target_env, "\"" + in_path + "\"", "-o", "\"" + out_path + "\""};
+        std::vector<std::string> cmd = {"\"" + GLSLC + "\"", "-fshader-stage=compute", target_env, "\"" + in_path + "\"", "-o", "\"" + out_path + "\""};
     #else
         std::vector<std::string> cmd = {GLSLC, "-fshader-stage=compute", target_env, in_path, "-o", out_path};
     #endif
@@ -673,6 +675,8 @@ void process_shaders() {
                 else if (tname == "q5_0") block_byte_size = "22";
                 else if (tname == "q5_1") block_byte_size = "24";
                 else if (tname == "q8_0") block_byte_size = "34";
+                else if (tname == "turbo2_0") block_byte_size = "128";
+                else if (tname == "turbo3_0") block_byte_size = "128";
                 else if (tname == "turbo4_0") block_byte_size = "128";
 
                 std::string fa_suffix = std::string(f16acc ? "_f16acc" : "") + (fp16 ? "" : "_fp32");

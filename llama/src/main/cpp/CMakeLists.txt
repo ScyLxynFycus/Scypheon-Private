@@ -55,17 +55,19 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/local-llama/ggml/src/ggml-opencl
 
 # Pre-built shader generator
 set(GGML_VULKAN_SHADERS_GEN OFF CACHE BOOL "" FORCE) # Disable building it
-set(GGML_VULKAN_SHADERS_GEN_BINARY "D:/AuraLink/prebuild/vulkan-shaders-gen-patched.exe" CACHE FILEPATH "" FORCE)
-set(GGML_VULKAN_SHADERS_GEN_EXE "D:/AuraLink/prebuild/vulkan-shaders-gen-patched.exe" CACHE FILEPATH "" FORCE)
+set(GGML_VULKAN_SHADERS_GEN_BINARY "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../prebuild/vulkan-shaders-gen.exe" CACHE FILEPATH "" FORCE)
+set(GGML_VULKAN_SHADERS_GEN_EXE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../prebuild/vulkan-shaders-gen.exe" CACHE FILEPATH "" FORCE)
 
 # Vulkan C++ headers from host SDK (NDK only has libvulkan.so, not vulkan.hpp)
-set(VULKAN_SDK_INCLUDE "D:/VULKAN/Include")
-include_directories(SYSTEM ${VULKAN_SDK_INCLUDE})
+if(DEFINED ENV{VULKAN_SDK})
+    set(VULKAN_SDK_INCLUDE "$ENV{VULKAN_SDK}/Include")
+    include_directories(SYSTEM ${VULKAN_SDK_INCLUDE})
+endif()
 
 # Vulkan SDK headers
 # Uncomment these if compiling on your local Windows PC. Otherwise Android NDK provides them.
-# set(Vulkan_INCLUDE_DIR "D:/VULKAN/Include" CACHE PATH "" FORCE)
-# set(Vulkan_GLSLC_EXECUTABLE "D:/VULKAN/Bin/glslc.exe" CACHE FILEPATH "" FORCE)
+# set(Vulkan_INCLUDE_DIR "$ENV{VULKAN_SDK}/Include" CACHE PATH "" FORCE)
+# set(Vulkan_GLSLC_EXECUTABLE "$ENV{VULKAN_SDK}/Bin/glslc.exe" CACHE FILEPATH "" FORCE)
 
 # 笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊絶武笊・
 # CPU FALLBACK FLAGS - Safe for Exynos 990 / ARM64

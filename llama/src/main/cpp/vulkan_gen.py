@@ -95,7 +95,26 @@ def main():
                     vname = f"flash_attn_f32_f16_{tname}{'_f16acc' if f16acc else ''}{'_fp32' if fp32_dev else ''}{path}"
                     expected = f"flash_attn{path}.comp"
                     if source_base == expected:
-                        d = {"DATA_A_" + to_uppercase(tname): "1", "ACC_TYPE": "float16_t" if f16acc else "float", "FLOAT_TYPE": "float" if fp32_dev else "float16_t"}
+                        # Determine BLOCK_BYTE_SIZE & BLOCK_SIZE
+                        bbs = "16"
+                        bs = "1"
+                        if tname == "f32": bbs = "16"; bs = "4"
+                        elif tname == "f16": bbs = "2"
+                        elif tname == "q4_0": bbs = "18"
+                        elif tname == "q4_1": bbs = "20"
+                        elif tname == "q5_0": bbs = "22"
+                        elif tname == "q5_1": bbs = "24"
+                        elif tname == "q8_0": bbs = "34"
+                        elif tname.startswith("turbo"): bbs = "128"
+                        elif tname == "iq4_nl": bbs = "18"
+
+                        d = {
+                            "DATA_A_" + to_uppercase(tname): "1",
+                            "ACC_TYPE": "float16_t" if f16acc else "float",
+                            "FLOAT_TYPE": "float" if fp32_dev else "float16_t",
+                            "BLOCK_BYTE_SIZE": bbs,
+                            "BLOCK_SIZE": bs
+                        }
                         if "cm1" in path: d["COOPMAT"] = "1"
                         if "cm2" in path and tname != "f16": d["DEQUANTFUNC"] = "dequantFunc" + to_uppercase(tname)
                         out_spv = os.path.join(output_dir, vname + ".spv")

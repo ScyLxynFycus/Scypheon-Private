@@ -5,6 +5,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
 #extension GL_EXT_shader_16bit_storage : require
 #extension GL_EXT_shader_8bit_storage : require
 
@@ -239,6 +240,32 @@ struct block_turbo3_0 {
     uint32_t padding[15];
 };
 // -------------------------------------------------------------------------------------
+
+#if defined(DATA_A_TURBO2_0)
+#undef A_TYPE
+#undef QUANT_K
+#undef QUANT_R
+#define QUANT_K QUANT_K_TURBO2_0
+#define QUANT_R QUANT_R_TURBO2_0
+#define QUANT_AUXF 1
+#define A_TYPE block_turbo2_0
+#define DATA_A_QUANT_TURBO
+#define TURBO_BLOCK_SIZE QUANT_K_TURBO2_0
+#define TURBO_BLOCK_BYTE_SIZE 128
+#endif
+
+#if defined(DATA_A_TURBO3_0)
+#undef A_TYPE
+#undef QUANT_K
+#undef QUANT_R
+#define QUANT_K QUANT_K_TURBO3_0
+#define QUANT_R QUANT_R_TURBO3_0
+#define QUANT_AUXF 1
+#define A_TYPE block_turbo3_0
+#define DATA_A_QUANT_TURBO
+#define TURBO_BLOCK_SIZE QUANT_K_TURBO3_0
+#define TURBO_BLOCK_BYTE_SIZE 128
+#endif
 
 #if defined(DATA_A_TURBO4_0)
 #undef A_TYPE

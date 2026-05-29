@@ -624,3 +624,16 @@ vec2 get_dm(uint ib, uint a_offset) {
     return vec2(float(data_a[a_offset + ib].d), 0);
 }
 #endif
+
+// [SCYPHEON FIX] Dummy dequantizers for unused turbo variants to prevent linker errors
+#if defined(DATA_A_TURBO2_0) || defined(DATA_A_TURBO3_0)
+vec2 dequantize(uint ib, uint iqs, uint a_offset) {
+    return vec2(0.0, 0.0);
+}
+vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
+    return vec4(0.0, 0.0, 0.0, 0.0);
+}
+vec2 get_dm(uint ib, uint a_offset) {
+    return vec2(0.0, 0.0);
+}
+#endif
