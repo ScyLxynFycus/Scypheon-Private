@@ -24,6 +24,14 @@ Current "production-grade" applications fail in these environments:
 
 **Scypheon Private** was engineered to solve this exact dilemma. It brings the immense reasoning power of the **Gemma 4** model family to consumer mobile devices, encased within a defense-in-depth architectural fortress that mathematically guarantees memory safety, execution determinism, and absolute data sovereignty.
 
+### 1.1 Etymology and Ontological Origin: Why "Scypheon"?
+
+Every architectural element of **Scypheon Private** is reflected in its name—a fusion of evolutionary biology, temporal resilience, and absolute data sovereignty:
+
+*   **Scy** (derived from *Scyphozoa*): The biological class of true jellyfish. Known for their evolutionary durability, Scyphozoans possess a decentralized, self-healing nervous network (a "nerve net") that coordinates complex locomotion and sensory processing without a centralized brain. Similarly, Scypheon utilizes a **Decentralized Cognitive Grid** (Multi-Agent Swarm and Mesh RAG) to coordinate autonomous edge intelligence without relying on a centralized cloud brain.
+*   **eon** (derived from *Aeon*): Denoting an immeasurably long, indefinite period of time or eternity. In computing nomenclature, it echoes high-performance hardware lines (Xeon, Radeon, etc.) designed for perpetual stability. In Scypheon, *eon* represents the system's temporal survivability—engineered to run indefinitely, outlasting cellular outages, grid collapse, and adversarial attacks.
+*   **Private**: Represents absolute, non-negotiable data sovereignty. With zero-trust local containment, encrypted SQLCipher databases, and the BlackBoxVault telemetry shield, all intelligence remains entirely client-side, ensuring complete privacy in humanitarian crisis zones.
+
 ---
 
 ## 2. Modular Repository Topography
