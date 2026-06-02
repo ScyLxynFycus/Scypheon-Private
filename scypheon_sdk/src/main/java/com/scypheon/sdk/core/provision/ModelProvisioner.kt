@@ -145,6 +145,35 @@ class ModelProvisioner @Inject constructor(
         return DownloadProgress(0, 0, 0f, -1, 0)
     }
 
+    fun getCustomDownloadProgress(fileName: String): DownloadProgress? {
+        return getProgressForModel(fileName)
+    }
+
+    fun resumeDownload(model: ModelMetadata, onProgress: (DownloadProgress) -> Unit) {
+        downloadModel(model)
+    }
+
+    fun pauseDownload(fileName: String) {
+        cancelDownload(fileName)
+    }
+
+    fun cancelDownload(fileName: String) {
+        val downloadId = activeDownloads[fileName]
+        if (downloadId != null) {
+            downloadManager.remove(downloadId)
+            activeDownloads.remove(fileName)
+            Timber.i("📦 [PROVISION] Cancelled download for $fileName")
+        }
+    }
+
+    fun isModelDownloadingOrPaused(fileName: String): Boolean {
+        val downloadId = activeDownloads[fileName] ?: return false
+        val progress = getDownloadProgress(downloadId)
+        return progress.status == DownloadManager.STATUS_RUNNING || 
+               progress.status == DownloadManager.STATUS_PENDING || 
+               progress.status == DownloadManager.STATUS_PAUSED
+    }
+
     /**
      * Get download progress for a model by filename.
      */

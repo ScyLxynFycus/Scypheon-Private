@@ -10,12 +10,18 @@ import dagger.hilt.android.EntryPointAccessors
 import com.scypheon.app.startup.DatabaseReadySignal
 import androidx.work.Configuration
 
+import com.scypheon.app.security.ScypheonIdentityManager
+import javax.inject.Inject
+
 @HiltAndroidApp
 class ScypheonApplication : Application(), Configuration.Provider {
 
+    @Inject
+    lateinit var identityManager: ScypheonIdentityManager
+
     /**
      * [v1.5.0-SAR] WorkManager Configuration Provider.
-     * 
+     *
      * Required because we disabled the default WorkManagerInitializer in the manifest
      * (tools:node="remove") for Hilt compatibility. Without this, LeakCanary's
      * WorkManagerHeapAnalyzer crashes with IllegalStateException, which triggers
@@ -28,7 +34,7 @@ class ScypheonApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
-        
+
         // Load SQLCipher native libraries explicitly to prevent UnsatisfiedLinkError
         try {
             System.loadLibrary("sqlcipher")
@@ -41,18 +47,31 @@ class ScypheonApplication : Application(), Configuration.Provider {
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         } else {
-            // In production, we would plant a tree that sends logs to a secure crash reporter 
+            // In production, we would plant a tree that sends logs to a secure crash reporter
             // while strictly adhering to the zero-telemetry policy in AndroidManifest.xml
         }
-        
+
         Timber.i("Scypheon Engine initialized. Version: ${BuildConfig.VERSION_NAME}")
-        
+
         if (!isMainProcess()) {
             Timber.i("🛰️ [SAR] Sandbox process detected. Skipping heavy initialization.")
             DatabaseReadySignal.markReady()
             return
         }
 
+        // Initialize Ed25519 Identity Key for offline mesh communication asynchronously
+        GlobalScope.launch(Dispatchers.IO) {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    identityManager.initializeIdentityKey()
+                    Timber.i("🔐 ScypheonIdentityManager: Ed25519 Identity Key is ready for mesh network.")
+                } else {
+                    Timber.w("🔐 ScypheonIdentityManager: Mesh identity requires Android 12+ (API 31).")
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "🔐 ScypheonIdentityManager: Failed to initialize Identity Key")
+            }
+        }
         if (BuildConfig.DEBUG) {
             // Phase 1: Production Hardening - StrictMode Intervention (Main Process Only)
             // [v1.5.0-SAR] Removed penaltyFlashScreen() — it causes visual disruption

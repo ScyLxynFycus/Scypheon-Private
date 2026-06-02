@@ -134,7 +134,7 @@ class AgentSkillRegistry @Inject constructor(
         )
     )
 
-    enum class SkillType { MEDICAL, EDUCATION, STEM, ACCESSIBILITY, EXPLAINABILITY, GENERAL, RESEARCH }
+    enum class SkillType { MEDICAL, EDUCATION, STEM, ACCESSIBILITY, EXPLAINABILITY, GENERAL, RESEARCH, DISASTER }
 
     fun getSkill(type: SkillType): SkillDefinition? {
         return skills.find { it.type == type }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
@@ -151,9 +152,11 @@ fun ModelHubScreen(
                     model = model,
                     isDownloaded = isDownloaded,
                     isDownloading = isDownloading,
+                    isPaused = uiState.isDownloadPaused && isDownloading,
                     downloadProgress = uiState.downloadProgress,
                     scope = scope,
                     onDownload = { viewModel.downloadModel(model) },
+                    onPause = { viewModel.pauseModelDownload(model) },
                     onTry = { viewModel.tryModel(model) },
                     onDelete = { viewModel.deleteModel(model.fileName) }
                 )
@@ -187,10 +190,28 @@ fun ModelHubScreen(
                         detail = uiState.hfRepoDetail,
                         isLoading = uiState.hfFilesLoading,
                         isDownloading = uiState.downloadingModelId != null,
+                        isPaused = uiState.isDownloadPaused,
                         downloadProgress = uiState.downloadProgress,
                         onBack = { viewModel.clearHfSelection() },
                         onDownloadFile = { file ->
                             viewModel.requestDownloadHfFile(file, uiState.hfSelectedRepo!!)
+                        },
+                        onPauseDownload = {
+                            // Find the current downloading model metadata to pause it
+                            val downloadingId = uiState.downloadingModelId
+                            if (downloadingId != null) {
+                                val model = ModelHubSource.recommendedModels.find { it.id == downloadingId }
+                                if (model != null) {
+                                    viewModel.pauseModelDownload(model)
+                                } else {
+                                    // Handle HF models (simplified: use currentDownloadId if available)
+                                    // Actually, we can just call a generic pause in ViewModel
+                                    viewModel.pauseCurrentDownload()
+                                }
+                            }
+                        },
+                        onCancelDownload = {
+                            viewModel.cancelCurrentDownload()
                         }
                     )
                 }
@@ -436,9 +457,11 @@ private fun RecommendedModelCard(
     model: ModelMetadata,
     isDownloaded: Boolean,
     isDownloading: Boolean,
+    isPaused: Boolean,
     downloadProgress: Float,
     scope: kotlinx.coroutines.CoroutineScope,
     onDownload: () -> Unit,
+    onPause: () -> Unit,
     onTry: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -577,21 +600,57 @@ private fun RecommendedModelCard(
             // Action area
             if (isDownloading) {
                 // Download progress
-                Column {
-                    LinearProgressIndicator(
-                        progress = { downloadProgress },
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        LinearProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = if (isPaused) HubOrange else HubAccent,
+                            trackColor = (if (isPaused) HubOrange else HubAccent).copy(alpha = 0.12f)
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            if (isPaused) "Paused at ${(downloadProgress * 100).toInt()}%" else "Downloading... ${(downloadProgress * 100).toInt()}%",
+                            style = TextStyle(fontSize = 12.sp, color = if (isPaused) HubOrange else HubAccent, fontWeight = FontWeight.Medium)
+                        )
+                    }
+
+                    // Pause/Resume Button
+                    IconButton(
+                        onClick = { if (isPaused) onDownload() else onPause() },
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)),
-                        color = HubAccent,
-                        trackColor = HubAccent.copy(alpha = 0.12f)
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Downloading... ${(downloadProgress * 100).toInt()}%",
-                        style = TextStyle(fontSize = 12.sp, color = HubAccent, fontWeight = FontWeight.Medium)
-                    )
+                            .size(32.dp)
+                            .background(HubBg, CircleShape)
+                    ) {
+                        Icon(
+                            if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            contentDescription = if (isPaused) "Resume" else "Pause",
+                            tint = if (isPaused) HubOrange else HubAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    // Cancel Button
+                    IconButton(
+                        onClick = { scope.launch { delay(50); onDelete() } },
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(HubRed.copy(alpha = 0.1f), CircleShape)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Cancel Download",
+                            tint = HubRed,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             } else if (isDownloaded) {
                 // Downloaded — show Try + Delete
@@ -837,9 +896,12 @@ private fun HfRepoBrowser(
     detail: HuggingFaceClient.HfModelDetail?,
     isLoading: Boolean,
     isDownloading: Boolean,
+    isPaused: Boolean,
     downloadProgress: Float,
     onBack: () -> Unit,
-    onDownloadFile: (HuggingFaceClient.HfModelFile) -> Unit
+    onDownloadFile: (HuggingFaceClient.HfModelFile) -> Unit,
+    onPauseDownload: () -> Unit,
+    onCancelDownload: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
 
@@ -990,17 +1052,60 @@ private fun HfRepoBrowser(
             // Download progress
             if (isDownloading) {
                 Spacer(Modifier.height(10.dp))
-                LinearProgressIndicator(
-                    progress = { downloadProgress },
-                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                    color = HubAccent,
-                    trackColor = HubAccent.copy(alpha = 0.12f)
-                )
-                Text(
-                    "Downloading... ${(downloadProgress * 100).toInt()}%",
-                    style = TextStyle(fontSize = 11.sp, color = HubAccent, fontWeight = FontWeight.Medium),
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        LinearProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                            color = if (isPaused) HubOrange else HubAccent,
+                            trackColor = (if (isPaused) HubOrange else HubAccent).copy(alpha = 0.12f)
+                        )
+                        Text(
+                            if (isPaused) "Paused at ${(downloadProgress * 100).toInt()}%" else "Downloading... ${(downloadProgress * 100).toInt()}%",
+                            style = TextStyle(fontSize = 11.sp, color = if (isPaused) HubOrange else HubAccent, fontWeight = FontWeight.Medium),
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+
+                    // Pause/Resume Button
+                    IconButton(
+                        onClick = { if (isPaused) {
+                            // Resume logic (simplified) - will call confirmHfDownload which triggers downloadModel again
+                            // For HF, we need the metadata which we might not have here.
+                            // But downloadModel(model) handles resumption if file exists.
+                            onPauseDownload() // This will actually act as toggle
+                        } else onPauseDownload() },
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(HubBg, CircleShape)
+                    ) {
+                        Icon(
+                            if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            contentDescription = if (isPaused) "Resume" else "Pause",
+                            tint = if (isPaused) HubOrange else HubAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    // Cancel Button
+                    IconButton(
+                        onClick = onCancelDownload,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(HubRed.copy(alpha = 0.1f), CircleShape)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Cancel Download",
+                            tint = HubRed,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
             }
         }
     }

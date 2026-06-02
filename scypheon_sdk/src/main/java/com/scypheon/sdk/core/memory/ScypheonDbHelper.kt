@@ -11,7 +11,7 @@ import android.database.sqlite.SQLiteOpenHelper
 class ScypheonDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     companion object {
-        private const val DATABASE_VERSION = 4
+        private const val DATABASE_VERSION = 6
         private const val DATABASE_NAME = "ScypheonCore.db"
 
         // Tables

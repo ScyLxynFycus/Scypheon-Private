@@ -1409,11 +1409,13 @@ Java_android_llama_cpp_LLamaAndroid_backend_1init(JNIEnv *env, jobject, jboolean
     llama_backend_init();
 }
 
-extern "C"
-JNIEXPORT jstring JNICALL
+extern "C" JNIEXPORT jstring JNICALL
 Java_android_llama_cpp_LLamaAndroid_system_1info(JNIEnv *env, jobject) {
-    return env->NewStringUTF("System Info Disabled for Stability");
+    // Enterprise: Real system info helps debugging across varied Android hardware
+    std::string info = llama_print_system_info();
+    return env->NewStringUTF(info.c_str());
 }
+
 
 extern "C"
 JNIEXPORT jint JNICALL

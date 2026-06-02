@@ -72,6 +72,8 @@ fun GraphExplorerScreen(
     // Viewport State
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    
+    val layoutState by viewModel.physics.layout.collectAsState()
 
     LaunchedEffect(graphData) {
         viewModel.initGraph(graphData)
@@ -264,7 +266,7 @@ fun GraphExplorerScreen(
                             // The physics engine positions nodes around (500, 500) but the
                             // viewport matrix starts at origin (0, 0), rendering nodes off-screen.
                             if (!hasAutoCentered && view.width > 0 && view.height > 0) {
-                                val layout = viewModel.physics.layout.value
+                                val layout = layoutState
                                 if (layout.nodes.isNotEmpty()) {
                                     val cx = layout.nodes.map { it.posX }.average().toFloat()
                                     val cy = layout.nodes.map { it.posY }.average().toFloat()

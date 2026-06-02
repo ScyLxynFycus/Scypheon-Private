@@ -434,12 +434,39 @@ fun MainChatScreen(
                                 .heightIn(min = 64.dp),
                             shadowElevation = 4.dp
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            Column {
+                                if (attachedImageUri != null) {
+                                    Surface(
+                                        color = Color(0xFFF1F3F4),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 0.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Default.AttachFile, contentDescription = null, tint = Color(0xFF0A56D1), modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                "Attachment Ready",
+                                                style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1F1F1F))
+                                            )
+                                            Spacer(Modifier.width(16.dp))
+                                            IconButton(
+                                                onClick = { attachedImageUri = null },
+                                                modifier = Modifier.size(20.dp)
+                                            ) {
+                                                Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.Gray, modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+                                    }
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                 IconButton(onClick = { 
                                     scope.launch { delay(50); showAttachmentMenu = true } 
                                 }) {
@@ -1026,6 +1053,9 @@ fun MainChatScreen(
                             showAttachmentMenu = false
                             when (option) {
                                 "Gallery" -> { imageLauncher.launch("image/*") }
+                                "Camera" -> { imageLauncher.launch("image/*") }
+                                "File" -> { imageLauncher.launch("*/*") }
+                                "Cloud" -> { imageLauncher.launch("*/*") }
                             }
                         }
                     )

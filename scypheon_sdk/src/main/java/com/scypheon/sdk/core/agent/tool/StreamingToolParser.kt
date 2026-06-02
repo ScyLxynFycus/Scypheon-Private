@@ -29,7 +29,7 @@ class StreamingToolParser {
         if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
             val jsonText = currentText.substring(startIndex + 11, endIndex).trim()
             return try {
-                val json = JSONObject(jsonText)
+                val json = parseFaultTolerantJson(jsonText)
                 val name = if (json.has("toolName")) json.getString("toolName") else json.getString("name")
                 val argsJson = json.optJSONObject("arguments")
                 
@@ -39,17 +39,46 @@ class StreamingToolParser {
                 }
 
                 Timber.i("🛠️ [TOOL_PARSER] Intercepted call: $name")
-                // BUG FIX: Do not clear the entire buffer. Delete only up to the end of the parsed tag.
-                // This prevents dropping tokens that arrive after the </tool_call> tag in the same chunk.
                 buffer.delete(0, endIndex + 12)
                 ToolCall(name, args)
             } catch (e: Exception) {
-                Timber.e(e, "Failed to parse tool call JSON: $jsonText")
+                Timber.e(e, "Failed to parse tool call JSON even with auto-recovery: $jsonText")
                 buffer.delete(0, endIndex + 12)
                 null
             }
         }
         
         return null
+    }
+
+    /**
+     * Self-Healing LLM Tool Parser (Enterprise Grade)
+     * Automatically fixes common LLM JSON hallucinations.
+     */
+    private fun parseFaultTolerantJson(rawJson: String): JSONObject {
+        return try {
+            JSONObject(rawJson) // Fast path: Try standard parse first
+        } catch (e: Exception) {
+            Timber.w("🛠️ [TOOL_PARSER] JSON Parse failed. Engaging Auto-Recovery Engine.")
+            var healedJson = rawJson.trim()
+            
+            // 1. Strip trailing commas before closing braces
+            healedJson = healedJson.replace(Regex(",\\s*\\}"), "}")
+            healedJson = healedJson.replace(Regex(",\\s*\\]"), "]")
+            
+            // 2. Fix unescaped quotes inside values (Basic heuristic: if a quote is preceded by a word char and followed by space)
+            // A bit risky for regex, but we can fix obvious newlines
+            healedJson = healedJson.replace("\n", "\\n").replace("\r", "")
+            
+            // 3. Balance missing braces
+            val openBraces = healedJson.count { it == '{' }
+            val closeBraces = healedJson.count { it == '}' }
+            if (openBraces > closeBraces) {
+                healedJson += "}".repeat(openBraces - closeBraces)
+            }
+            
+            Timber.i("🛠️ [TOOL_PARSER] Healed JSON: $healedJson")
+            JSONObject(healedJson)
+        }
     }
 }

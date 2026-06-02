@@ -160,6 +160,10 @@ class ScypheonRepository @Inject constructor(
             
             if (customElitePath != null) {
                 _engineState.emit(InitializationState.Analyzing("Initializing Elite Engine..."))
+                
+                // [PHOENIX] Cross-Engine Unloading: Ensure Llama is unloaded to free up RAM/VRAM for LiteRT
+                gateway.releaseLlama()
+                
                 val loadSuccess = gateway.initializeLiteRt(customElitePath, nCtx)
                 return@withLock if (loadSuccess) {
                     triageState.set(TriageState.READY)
@@ -181,6 +185,9 @@ class ScypheonRepository @Inject constructor(
             }
 
             val modelSize = File(finalUniversalPath).length()
+            
+            // [PHOENIX] Cross-Engine Unloading: Ensure LiteRT is unloaded to free up RAM for Llama
+            gateway.releaseLiteRt()
             
             // [v1.0.5-SAR] Strict Memory Enforcement
             if (!MemoryGatekeeper.canLoadModel(context, modelSize)) {

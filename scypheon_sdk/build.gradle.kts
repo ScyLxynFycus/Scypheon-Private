@@ -20,6 +20,9 @@ android {
         ndk {
             abiFilters.add("arm64-v8a")
         }
+        buildConfigField("String", "MODEL_MANIFEST_PUBLIC_KEY", "\"\"")
+        buildConfigField("String", "CORPUS_VERIFICATION_PUBLIC_KEY", "\"\"")
+        buildConfigField("int", "VERSION_CODE", "1")
     }
 
     buildTypes {
@@ -131,7 +134,7 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
 
     // Room DB for Local Storage
-    val roomVersion = "2.6.1"
+    val roomVersion = "2.7.0-alpha12"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
@@ -139,6 +142,12 @@ dependencies {
     // SQLDelight
     implementation("app.cash.sqldelight:android-driver:2.0.2")
     implementation("app.cash.sqldelight:coroutines-extensions:2.0.2")
+
+    // PDF Generation & Parsing
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+    // HTML Parsing
+    implementation("org.jsoup:jsoup:1.17.2")
 
     // Kotlin Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")

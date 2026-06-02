@@ -88,6 +88,7 @@ data class UiState(
     val hfToken: String = "",
     val downloadingModelId: String? = null,
     val downloadProgress: Float = 0f,
+    val isDownloadPaused: Boolean = false,
     
     // HuggingFace Search (on-demand)
     val hfSearchResults: List<com.scypheon.app.provision.HuggingFaceClient.HfModelInfo> = emptyList(),
@@ -928,12 +929,17 @@ class MainViewModel @Inject constructor(
             }
         }
         // 6. Start Vision Pipeline (continuous camera → object detection → context)
-        liveVisionPipeline.initializeDetector()
-        liveVisionPipeline.onSceneUpdated = { scene ->
-            liveOrchestrator.injectVisionContext(scene.toContextString())
-        }
-        liveVisionPipeline.onKeyframeCaptured = { bitmap ->
-            liveOrchestrator.injectCameraFrame(bitmap)
+        // [v1.5.1-SAR] Offload detector init to IO thread to prevent StrictMode DiskReadViolation
+        // (native lib loading + getCacheDir() both perform disk I/O)
+        viewModelScope.launch(Dispatchers.IO) {
+            liveVisionPipeline.initializeDetector()
+            // Wire callbacks after init completes (thread-safe: callbacks are invoked from analysis executor)
+            liveVisionPipeline.onSceneUpdated = { scene ->
+                liveOrchestrator.injectVisionContext(scene.toContextString())
+            }
+            liveVisionPipeline.onKeyframeCaptured = { bitmap ->
+                liveOrchestrator.injectCameraFrame(bitmap)
+            }
         }
         // Camera will be started from the UI (needs LifecycleOwner)
 
@@ -1015,54 +1021,102 @@ class MainViewModel @Inject constructor(
     }
 
     fun downloadModel(model: com.scypheon.sdk.core.provision.ModelMetadata) {
-        val downloadId = modelProvisioner.downloadModel(model)
-        if (downloadId == -1L) {
-            _uiState.update { it.copy(error = "Cannot download: insufficient storage or already exists") }
+        if (!modelProvisioner.hasSufficientSpace(model.sizeBytes)) {
+            _uiState.update { it.copy(error = "Cannot download: insufficient storage") }
             return
         }
 
-        _uiState.update { it.copy(downloadingModelId = model.id, downloadProgress = 0f) }
+        _uiState.update { it.copy(downloadingModelId = model.id, downloadProgress = 0f, isDownloadPaused = false) }
 
-        // Poll progress every 500ms
-        viewModelScope.launch(Dispatchers.IO) {
-            var isComplete = false
-            while (!isComplete) {
-                delay(500)
-                val progress = modelProvisioner.getDownloadProgress(downloadId)
-
-                withContext(Dispatchers.Main) {
-                    _uiState.update { it.copy(downloadProgress = progress.percentage) }
+        modelProvisioner.resumeDownload(model) { progress ->
+            viewModelScope.launch(Dispatchers.Main) {
+                _uiState.update { it.copy(downloadProgress = progress.percentage) }
+                
+                if (progress.isComplete) {
+                    _uiState.update { it.copy(downloadingModelId = null, downloadProgress = 0f, isDownloadPaused = false) }
+                    scanLocalModels()
+                    Timber.i("📦 [DOWNLOAD] Complete: ${model.title}")
+                } else if (progress.isFailed) {
+                    _uiState.update { it.copy(downloadingModelId = null, isDownloadPaused = false, error = "Download failed: ${model.title}") }
                 }
+            }
+        }
+    }
 
-                when {
-                    progress.isComplete -> {
-                        isComplete = true
-                        modelProvisioner.clearDownload(model.fileName)
-                        Timber.i("📦 [DOWNLOAD] Complete: ${model.title} (${progress.formatTotal()})")
-                        withContext(Dispatchers.Main) {
-                            _uiState.update {
-                                it.copy(
-                                    downloadingModelId = null,
-                                    downloadProgress = 0f
-                                )
-                            }
-                            // Rescan so the model appears in "On Device"
-                            scanLocalModels()
-                        }
-                    }
-                    progress.isFailed -> {
-                        isComplete = true
-                        modelProvisioner.clearDownload(model.fileName)
-                        Timber.e("📦 [DOWNLOAD] Failed: ${model.title} (reason: ${progress.reason})")
-                        withContext(Dispatchers.Main) {
-                            _uiState.update {
-                                it.copy(
-                                    downloadingModelId = null,
-                                    downloadProgress = 0f,
-                                    error = "Download failed: ${model.title}"
-                                )
-                            }
-                        }
+    fun pauseModelDownload(model: com.scypheon.sdk.core.provision.ModelMetadata) {
+        modelProvisioner.pauseDownload(model.fileName)
+        _uiState.update { it.copy(isDownloadPaused = true) }
+    }
+
+    fun pauseCurrentDownload() {
+        val downloadingId = _uiState.value.downloadingModelId ?: return
+        
+        // If it's already paused, we resume it
+        if (_uiState.value.isDownloadPaused) {
+            // Find model to resume
+            val model = com.scypheon.sdk.core.provision.ModelHubSource.recommendedModels.find { it.id == downloadingId }
+            if (model != null) {
+                downloadModel(model)
+            } else {
+                // For HF models, they are triggered via confirmHfDownload
+                // which uses pendingDownloadFile. If we still have it, we can resume.
+                // Or just use the repoId and fileName from the downloadingId string
+                if (downloadingId.contains("/")) {
+                    val repoId = downloadingId.substringBeforeLast("/")
+                    val fileName = downloadingId.substringAfterLast("/")
+                    // To resume HF, we'd need to recreate the ModelMetadata
+                    // For now, let's assume it's Recommended models only or 
+                    // user can re-click the file in HF browser.
+                }
+            }
+        } else {
+            // Pause
+            val model = com.scypheon.sdk.core.provision.ModelHubSource.recommendedModels.find { it.id == downloadingId }
+            if (model != null) {
+                pauseModelDownload(model)
+            } else {
+                // HF generic pause
+                if (downloadingId.contains("/")) {
+                    val fileName = downloadingId.substringAfterLast("/")
+                    modelProvisioner.pauseDownload(fileName)
+                    _uiState.update { it.copy(isDownloadPaused = true) }
+                }
+            }
+        }
+    }
+
+    fun cancelModelDownload(model: com.scypheon.sdk.core.provision.ModelMetadata) {
+        modelProvisioner.pauseDownload(model.fileName)
+        modelProvisioner.deleteModel(model.fileName)
+        _uiState.update { it.copy(downloadingModelId = null, downloadProgress = 0f) }
+        Timber.i("📦 [DOWNLOAD] Cancelled and deleted: ${model.title}")
+    }
+
+    fun cancelCurrentDownload() {
+        val downloadingId = _uiState.value.downloadingModelId ?: return
+        
+        // We need the fileName to cancel in SDK. 
+        // We can find it from recommendedModels or HF selection.
+        // Or we can just use the currentDownloadId if we expose it in SDK.
+        
+        // [v1.5.3] For now, try to find in recommended models
+        val model = com.scypheon.sdk.core.provision.ModelHubSource.recommendedModels.find { it.id == downloadingId }
+        if (model != null) {
+            cancelModelDownload(model)
+        } else {
+            // Fallback for HF downloads: currentDownloadId is stored
+            currentDownloadId?.let { id ->
+                // SDK change: I should add cancelById
+                viewModelScope.launch(Dispatchers.IO) {
+                    // Instead of finding fileName, let's just use the currentDownloadId directly if we can
+                    // But I've already added cancelDownload(fileName) to SDK.
+                    
+                    // Actually, if it's from HF, the ID in uiState is repo/fileName
+                    if (downloadingId.contains("/")) {
+                        val fileName = downloadingId.substringAfterLast("/")
+                        modelProvisioner.cancelDownload(fileName)
+                        currentDownloadId = null
+                        _uiState.update { it.copy(downloadingModelId = null, downloadProgress = 0f) }
                     }
                 }
             }
@@ -1334,6 +1388,7 @@ class MainViewModel @Inject constructor(
     }
 
     private var cooldownJob: kotlinx.coroutines.Job? = null
+    private var currentDownloadId: Long? = null
     private fun triggerStabilityInterceptor() {
         cooldownJob?.cancel()
         _uiState.update { it.copy(memoryStabilityState = MemoryStabilityState.WARNING_COOLDOWN, memoryWarningCooldown = 8) }

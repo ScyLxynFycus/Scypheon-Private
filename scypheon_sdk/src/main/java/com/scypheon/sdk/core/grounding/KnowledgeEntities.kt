@@ -47,4 +47,14 @@ interface KnowledgeDao {
 
     @Query("SELECT content FROM knowledge_base WHERE term = :term AND domain = :domain LIMIT 1")
     suspend fun getExact(term: String, domain: String): String?
+
+    @Query("""
+        SELECT kb.id, kb.domain, kb.term, kb.content, kb.source, kb.confidence, kb.lastUpdated 
+        FROM knowledge_base_fts fts 
+        JOIN knowledge_base kb ON fts.rowid = kb.id 
+        WHERE knowledge_base_fts MATCH :query 
+        AND kb.domain = :domain
+        LIMIT :limit
+    """)
+    suspend fun searchByDomain(query: String, domain: String, limit: Int = 10): List<KnowledgeEntry>
 }

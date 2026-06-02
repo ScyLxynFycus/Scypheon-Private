@@ -43,7 +43,7 @@ class FirstAidTool @Inject constructor(
                 ToolResult.Success(
                     data = protocol,
                     latencyMs = System.currentTimeMillis() - start,
-                    meta = mapOf("symptom" to symptom)
+                    metadata = mapOf("symptom" to symptom)
                 )
             } else {
                 ToolResult.Fallback(

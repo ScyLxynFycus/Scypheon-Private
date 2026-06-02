@@ -117,29 +117,63 @@ class AgenticSkillOrchestrator @Inject constructor(
             state.messages.add(Message("assistant", thought, isThinking = true))
             blackBoxVault.logEvent("AGENT_THINKING", "[Iter ${state.retryCount + 1}] $thought")
 
-            // 5. TOOL EXECUTION (Blocking for Origa)
-            val call = ToolCall("general_query", mapOf("query" to query))
-            val results = toolMesh.dispatch(listOf(call), ExecutionContext(sessionId, 5000L))
-            val result = results.firstOrNull()
+            // 5. TOOL DISCOVERY & EXECUTION (Blocking for Origa)
+            val history = state.messages.map { msg ->
+                val role = when(msg.role) { 
+                    "user" -> NeuralGateway.NeuralTurn.Role.USER 
+                    "system" -> NeuralGateway.NeuralTurn.Role.SYSTEM 
+                    else -> NeuralGateway.NeuralTurn.Role.ASSISTANT 
+                }
+                NeuralGateway.NeuralTurn(role, msg.content)
+            }.toMutableList()
+            
+            val toolPrompt = toolRegistry.generateToolDefinitionsPrompt()
+            if (history.none { it.content.contains("Gunakan format XML <tool_call>") }) {
+                history.add(0, NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, toolPrompt))
+            }
 
-            if (result is ToolResult.Success) {
-                val data = result.data.toString()
-                state.messages.add(Message("system", "Tool Output: $data"))
+            var generatedText = ""
+            var dynamicToolCall: ToolCall? = null
+            
+            // Simulate internal thought process (Blocking)
+            streamingToolParser.reset()
+            gateway.generateResponse(history, topK = 50, topP = 0.9f, temp = 0.7f, maxTokens = 2048, enableThinking = true)
+                .collect { token ->
+                    generatedText += token
+                    val parsedCall = streamingToolParser.processToken(token)
+                    if (parsedCall != null) {
+                        dynamicToolCall = parsedCall
+                    }
+                }
+            
+            if (dynamicToolCall != null) {
+                blackBoxVault.logEvent("ORIGA_TOOL_DECISION", "LLM dynamically selected: ${dynamicToolCall!!.toolName}")
+                val results = toolMesh.dispatch(listOf(dynamicToolCall!!), ExecutionContext(sessionId, 5000L))
+                val result = results.firstOrNull()
 
-                // Pillar 1: Self-Correction & Reflection
-                val reflection = "Reflection: Output received. Does this fulfill the mission goal?"
-                state.messages.add(Message("assistant", reflection, isThinking = true))
-                blackBoxVault.logEvent("AGENT_REFLECTION", "[Iter ${state.retryCount + 1}] $reflection")
+                if (result is ToolResult.Success) {
+                    val data = result.data.toString()
+                    state.messages.add(Message("system", "Tool Output: $data"))
 
-                if (data.contains("SUCCESS") || state.retryCount >= MAX_SELF_CORRECTION_RETRIES) {
-                    state.finalReport = data
-                    state.isCompleted = true
+                    val reflection = "Reflection: Output received from ${dynamicToolCall!!.toolName}. Does this fulfill the mission goal?"
+                    state.messages.add(Message("assistant", reflection, isThinking = true))
+                    blackBoxVault.logEvent("AGENT_REFLECTION", "[Iter ${state.retryCount + 1}] $reflection")
+
+                    // Simple completion evaluation
+                    if (data.contains("SUCCESS") || data.length > 50 || state.retryCount >= MAX_SELF_CORRECTION_RETRIES) {
+                        state.finalReport = data
+                        state.isCompleted = true
+                    } else {
+                        state.retryCount++
+                    }
                 } else {
+                    blackBoxVault.logEvent("TOOL_ERROR", "Tool failed. Retrying.", "WARNING")
                     state.retryCount++
                 }
             } else {
-                blackBoxVault.logEvent("TOOL_ERROR", "Tool failed. Retrying with fallback.", "WARNING")
-                state.retryCount++
+                // LLM decided no tools needed, or generated a final answer directly.
+                state.finalReport = generatedText
+                state.isCompleted = true
             }
         }
 
@@ -259,7 +293,7 @@ class AgenticSkillOrchestrator @Inject constructor(
                     // Brief UI status indicator (not raw data)
                     val toolActivity = toolRegistry.resolve(toolCall.toolName)?.getActivityDescription(toolCall.arguments)
                         ?: "Processing ${toolCall.toolName}..."
-                    emit("\n\n*🔍 $toolActivity*\n\n")
+                    emit("\n\n[TOOL_EXECUTION] $toolActivity\n\n")
                     
                     val context = ExecutionContext(sessionId, 5000L, allowNetwork = allowNetwork)
                     val results = toolMesh.dispatch(listOf(toolCall), context)

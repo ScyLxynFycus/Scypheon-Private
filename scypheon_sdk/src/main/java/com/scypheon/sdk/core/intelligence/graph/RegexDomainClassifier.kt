@@ -17,7 +17,7 @@ class RegexDomainClassifier @Inject constructor() : DomainClassifier {
         private val HUMANITARIAN = setOf("bantuan", "pengungsi", "logistik", "kemanusiaan", "aid", "refugee", "relief", "humanitarian", "wfp", "pmi")
     }
 
-    override fun classify(query: String): ReasoningDomain {
+    override suspend fun classify(query: String): ReasoningDomain {
         val lower = query.lowercase()
         return when {
             MEDICAL.any { lower.contains(it) } -> ReasoningDomain.MEDICAL

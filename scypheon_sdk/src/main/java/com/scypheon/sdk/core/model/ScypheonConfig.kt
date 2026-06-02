@@ -6,7 +6,17 @@ import java.io.File
  * ScypheonConfig holds the session-level AI tuning parameters.
  * Moved to the SDK to allow Secure Vault persistence without App-module dependencies.
  */
+enum class ThemeMode {
+    SYSTEM, LIGHT, DARK
+}
+
+enum class ChatBubbleStyle {
+    GRADIENT_BLUE, GRADIENT_WARM, GRADIENT_GREEN, MINIMALIST_SOLID
+}
+
 data class ScypheonConfig(
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val chatBubbleStyle: ChatBubbleStyle = ChatBubbleStyle.GRADIENT_BLUE,
     val maxTokens: Int = 4096,
     val contextWindow: Int = 4096,
     val topK: Int = 51,

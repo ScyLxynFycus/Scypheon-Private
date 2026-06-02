@@ -2,9 +2,11 @@ package com.scypheon.app.ui.screens
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -13,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,42 +23,61 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.scypheon.sdk.core.live.LiveSessionOrchestrator
 import com.scypheon.sdk.core.live.LiveSessionOrchestrator.LiveState
+import kotlin.math.cos
+import kotlin.math.sin
 
 // ═══════════════════════════════════════════════════════════════════
-// [v1.5.4-SAR] SCYPHEON LIVE — Immersive Deep Obsidian Dark Theme
-// Premium dark mode, Manual Push-to-Talk Orb flow with top close button
+// [v3.1.0-SAR] SCYPHEON LIVE — HALO Holographic × Seamless Circular Audio Waves
+// Premium light UI matching Main Screen background.
+// Fluid Halo-Cortana holographic orb with 90-bar seamless circular soundwave bars.
 // ═══════════════════════════════════════════════════════════════════
 
-// Design Tokens (Aesthetic Obsidian Dark Theme)
-private val LiveBg = Color(0xFF090A0F)
-private val LiveSurface = Color(0xFF131520)
-private val LiveBorderColor = Color(0x2BFFFFFF)
-private val LiveAccentBlue = Color(0xFF00E5FF)  // Premium neon cyan/blue
-private val LiveAccentPurple = Color(0xFFC084FC) // Soft bright violet
-private val LiveAccentCyan = Color(0xFF38BDF8)
-private val LiveAccentGreen = Color(0xFF34D399) // Mint green
-private val LiveAccentRed = Color(0xFFFB7185)   // Salmon red
-private val LiveTextPrimary = Color(0xFFF1F5F9)  // Off white
-private val LiveTextSecondary = Color(0xFF94A3B8)// Slate secondary
-private val LiveTextDim = Color(0xFF64748B)      // Muted slate
+// ─── Design Tokens ─── Light Premium Palette ───
+private val LiveBgStart = Color(0xFFFCFDFF)          // Matches Main Chat Bg start (white)
+private val LiveBgEnd = Color(0xFFF0F4FA)            // Matches Main Chat Bg end (soft blue-gray)
 
-private data class QuadColors(
-    val c1: Color,
-    val c2: Color,
-    val c3: Color,
+// Typography colors for light theme
+private val TextPrimary = Color(0xFF1D1D1F)           // Apple-like black
+private val TextSecondary = Color(0xFF5F6368)         // Slate gray
+private val TextDim = Color(0xFF86868B)               // Muted gray
+private val TextMuted = Color(0x995F6368)             // 60% secondary text
+
+// Halo Holographic Gradients (Cortana/Energy Shield inspired)
+private val HaloCyan = Color(0xFF00F0FF)              // Active hologram cyan
+private val HaloCortanaBlue = Color(0xFF0055FF)       // Cortana deep blue
+private val HaloPurple = Color(0xFF8B00FF)            // Hologram purple
+private val HaloMagenta = Color(0xFFFF00D6)           // Cortana magenta highlight
+private val HaloWhite = Color(0xFFFFFFFF)             // High-intensity white core
+private val HaloAmber = Color(0xFFFF9D00)             // Shield recharge amber
+private val HaloGreen = Color(0xFF00FF88)             // Systems active green
+private val HaloRed = Color(0xFFFF2442)               // Rampancy alert red
+
+// Orb quad-color structure for state-based rendering
+private data class OrbPalette(
+    val primary: Color,
+    val secondary: Color,
+    val highlight: Color,
     val glow: Color
 )
+
+// ═══════════════════════════════════════════════════════════════════
+// Main Screen Composable
+// ═══════════════════════════════════════════════════════════════════
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
@@ -68,17 +90,28 @@ fun LiveModeScreen(
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "LiveAmbient")
 
-    // State for Developer Preview Info Dialog
-    var showInfoDialog by remember { mutableStateOf(false) }
+    // Elapsed time counter
+    var elapsedSeconds by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000)
+            elapsedSeconds++
+        }
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(LiveBg)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(LiveBgStart, LiveBgEnd)
+                )
+            )
     ) {
-        // ─── Ambient Pastel Background Glows ───
+        // ─── Layer 0: Halo Ambient Hologram Glows ───
         LiveAmbientBackground(infiniteTransition, liveState, audioLevel)
 
+        // ─── Main Content Column ───
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -86,22 +119,31 @@ fun LiveModeScreen(
                 .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // ─── Top Bar with Interactive Preview, Info Badge & Frosted Close Button ───
+            // ─── Top Bar ───
             LiveTopBar(
-                onInfoClick = { showInfoDialog = true },
+                elapsedSeconds = elapsedSeconds,
                 onEndSession = onEndSession
             )
 
-            Spacer(Modifier.weight(0.7f))
+            Spacer(Modifier.weight(0.55f))
 
-            // ─── Central Fluid Sphere (Manual Orb Trigger) ───
+            // ─── Central Voice Orb & Seamless Circular Audio Wave ───
             Box(
                 modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable { onOrbClick() }
-                    .border(1.5.dp, Color.White.copy(alpha = 0.12f), CircleShape),
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onOrbClick() },
                 contentAlignment = Alignment.Center
             ) {
+                // Expanding Soundwave Ripples (Base)
+                LiveVoiceRipples(
+                    liveState = liveState,
+                    audioLevel = audioLevel,
+                    infiniteTransition = infiniteTransition
+                )
+
+                // Halo Holographic Orb & the Seamless Circular Soundwave Bars
                 LivePulsingOrb(
                     liveState = liveState,
                     audioLevel = audioLevel,
@@ -109,113 +151,76 @@ fun LiveModeScreen(
                 )
             }
 
-            Spacer(Modifier.height(36.dp))
+            Spacer(Modifier.weight(0.15f))
 
-            // ─── Live State Indicator Subtitle ───
+            // ─── State Label ───
             LiveStateLabel(liveState)
 
             Spacer(Modifier.height(16.dp))
 
-            // ─── Live Transcript ───
-            LiveTranscript(
-                transcript = transcript,
+            // ─── Transcript Area with top gradient fade ───
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(horizontal = 24.dp)
-            )
+            ) {
+                LiveTranscript(
+                    transcript = transcript,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 28.dp)
+                )
 
-            Spacer(Modifier.height(16.dp))
-        }
-
-        // ─── Beautiful Glassmorphic Developer Preview Dialog ───
-        if (showInfoDialog) {
-            AlertDialog(
-                onDismissRequest = { showInfoDialog = false },
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Science,
-                            contentDescription = null,
-                            tint = LiveAccentPurple,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Text(
-                            text = "Live Voice Preview",
-                            style = TextStyle(
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = LiveTextPrimary
+                // Gradient fade at top of transcript
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .align(Alignment.TopCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(LiveBgStart, Color.Transparent)
                             )
                         )
-                    }
-                },
-                text = {
-                    Text(
-                        text = "Scypheon Live uses cutting-edge, offline-native speech recognition and local LLM inference engines to enable real-time voice interactions.\n\nSince this pipeline runs entirely on-device to guarantee offline security in disaster zones, it is computationally intensive and may experience instability, latency, or voice engine initialization lag on some hardware configurations.",
-                        style = TextStyle(
-                            fontSize = 14.sp,
-                            color = LiveTextSecondary,
-                            lineHeight = 20.sp
-                        )
-                    )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = { showInfoDialog = false },
-                        shape = RoundedCornerShape(20.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = LiveAccentBlue)
-                    ) {
-                        Text(
-                            "Got it",
-                            style = TextStyle(
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.Black
-                            )
-                        )
-                    }
-                },
-                shape = RoundedCornerShape(24.dp),
-                containerColor = LiveSurface.copy(alpha = 0.95f),
-                modifier = Modifier
-                    .padding(16.dp)
-                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
-            )
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Top Bar — Minimal status & interactive sandbox toggle
+// Top Bar — Minimalist, Light Frosted Button
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
 private fun LiveTopBar(
-    onInfoClick: () -> Unit,
+    elapsedSeconds: Int,
     onEndSession: () -> Unit
 ) {
+    val minutes = elapsedSeconds / 60
+    val seconds = elapsedSeconds % 60
+    val timeString = "%d:%02d".format(minutes, seconds)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // Left Side: Pulsing Live dot
+        // Left: Pulsing hologram indicator dot + elapsed time
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            val infiniteTransition = rememberInfiniteTransition(label = "LiveDot")
+            val infiniteTransition = rememberInfiniteTransition(label = "TopDot")
             val dotAlpha by infiniteTransition.animateFloat(
-                initialValue = 0.3f,
+                initialValue = 0.4f,
                 targetValue = 1f,
                 animationSpec = infiniteRepeatable(
-                    animation = tween(800, easing = FastOutSlowInEasing),
+                    animation = tween(1200, easing = FastOutSlowInEasing),
                     repeatMode = RepeatMode.Reverse
                 ),
                 label = "DotPulse"
@@ -225,83 +230,112 @@ private fun LiveTopBar(
                 modifier = Modifier
                     .size(8.dp)
                     .graphicsLayer { alpha = dotAlpha }
-                    .background(LiveAccentGreen, CircleShape)
+                    .background(HaloCyan, CircleShape)
             )
+
             Text(
-                "Scypheon Live",
+                text = timeString,
                 style = TextStyle(
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = LiveTextPrimary,
+                    color = TextSecondary,
                     letterSpacing = 0.5.sp
                 )
             )
         }
 
-        // Right Side: Beautiful Preview Badge with Info Icon Button & Close Button
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // Right: Frosted glass close button
+        Surface(
+            onClick = onEndSession,
+            shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.05f),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                Color.Black.copy(alpha = 0.05f)
+            ),
+            modifier = Modifier.size(40.dp)
         ) {
-            // "Preview" badge
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0x2BFFFFFF),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x3DFFFFFF)),
-                modifier = Modifier.height(26.dp)
-            ) {
-                Box(
-                    modifier = Modifier.padding(horizontal = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Preview",
-                        style = TextStyle(
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = LiveTextSecondary,
-                            letterSpacing = 0.3.sp
-                        )
-                    )
-                }
-            }
-
-            // Info icon button next to it
-            IconButton(
-                onClick = onInfoClick,
-                modifier = Modifier.size(28.dp)
-            ) {
+            Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = "Preview Info",
-                    tint = LiveAccentBlue,
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "End Session",
+                    tint = TextPrimary,
                     modifier = Modifier.size(18.dp)
                 )
-            }
-
-            // Modern Frosted Close Icon Button
-            Surface(
-                onClick = onEndSession,
-                shape = CircleShape,
-                color = Color.White.copy(alpha = 0.08f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
-                modifier = Modifier.size(36.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close Live Mode",
-                        tint = LiveTextPrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
             }
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Dynamic Organic Morphing Watercolor Sphere — Pure watercolor visual art
+// Voice Ripples — Halo Energy Shield Pulse Rings
+// ═══════════════════════════════════════════════════════════════════
+
+@Composable
+private fun LiveVoiceRipples(
+    liveState: LiveState,
+    audioLevel: Float,
+    infiniteTransition: InfiniteTransition
+) {
+    if (liveState == LiveState.Idle) return
+
+    val audioScale by animateFloatAsState(
+        targetValue = audioLevel.coerceIn(0f, 1f),
+        animationSpec = spring(dampingRatio = 0.4f, stiffness = 120f),
+        label = "RippleAudioScale"
+    )
+
+    val phase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(6000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "RipplePhase"
+    )
+
+    val color = when (liveState) {
+        is LiveState.Listening -> HaloCyan
+        is LiveState.UserSpeaking -> HaloAmber
+        is LiveState.Processing -> HaloPurple
+        is LiveState.AiSpeaking -> HaloGreen
+        is LiveState.Error -> HaloRed
+        else -> TextDim
+    }
+
+    val animatedColor by animateColorAsState(
+        targetValue = color,
+        animationSpec = tween(600),
+        label = "RippleColor"
+    )
+
+    Box(contentAlignment = Alignment.Center) {
+        for (i in 0..2) {
+            val progress = (phase + i / 3f) % 1f
+            val scale = 1.0f + progress * (1.3f + audioScale * 0.9f)
+            val alpha = (1f - progress) * (0.12f + audioScale * 0.22f)
+
+            Box(
+                modifier = Modifier
+                    .size(175.dp)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        this.alpha = alpha
+                    }
+                    .border(
+                        width = (1.5.dp / scale).coerceAtLeast(0.5.dp),
+                        color = animatedColor,
+                        shape = CircleShape
+                    )
+            )
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Voice Orb — Halo Cortana Holographic Orb + Circular Soundwaves
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
@@ -310,266 +344,350 @@ private fun LivePulsingOrb(
     audioLevel: Float,
     infiniteTransition: InfiniteTransition
 ) {
-    // ─── Continuous Smooth Angles for Liquid Morphing ───
+    // Rotation angles for organic hologram swirl (slowed down for buttery smoothness)
     val angle1 by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
-        animationSpec = infiniteRepeatable(animation = tween(14000, easing = LinearEasing)),
-        label = "Angle1"
+        animationSpec = infiniteRepeatable(animation = tween(24000, easing = LinearEasing)),
+        label = "OrbAngle1"
     )
     val angle2 by infiniteTransition.animateFloat(
         initialValue = 360f,
         targetValue = 0f,
-        animationSpec = infiniteRepeatable(animation = tween(19000, easing = LinearEasing)),
-        label = "Angle2"
-    )
-    val angle3 by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(animation = tween(25000, easing = LinearEasing)),
-        label = "Angle3"
+        animationSpec = infiniteRepeatable(animation = tween(34000, easing = LinearEasing)),
+        label = "OrbAngle2"
     )
 
-    // Breathing scales for natural organic shape changes
+    // Fluid breathing sizes (slowed down and smoothed with cubic-bezier EaseInOut)
     val breathe1 by infiniteTransition.animateFloat(
-        initialValue = 0.94f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(tween(2800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        initialValue = 0.96f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(
+            tween(6000, easing = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)),
+            RepeatMode.Reverse
+        ),
         label = "Breathe1"
     )
     val breathe2 by infiniteTransition.animateFloat(
-        initialValue = 1.06f,
-        targetValue = 0.94f,
-        animationSpec = infiniteRepeatable(tween(3600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        initialValue = 1.04f,
+        targetValue = 0.96f,
+        animationSpec = infiniteRepeatable(
+            tween(7500, easing = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)),
+            RepeatMode.Reverse
+        ),
         label = "Breathe2"
     )
 
-    // Spring-based reactive audio scale for immersive liquid feedback
-    val dynamicAudioScale by animateFloatAsState(
-        targetValue = audioLevel * 0.45f,
-        animationSpec = spring(dampingRatio = 0.38f, stiffness = 160f),
-        label = "DynamicAudio"
+    // Slower, fluid wave phase progression (loop-free and buttery smooth)
+    val wavePhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2 * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(24000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "WavePhase"
     )
 
-    // Custom aesthetic HSL quad-color schemes for each state
-    val (color1, color2, color3, glowColor) = when (liveState) {
-        is LiveState.Listening -> QuadColors(
-            Color(0xFF007AFF), // Deep Cobalt Blue
-            Color(0xFF00C7FF), // Cyan Cloud
-            Color(0xFFE3F2FD), // Bright Ice Highlight
-            Color(0xFF58A6FF)  // Radial Background Glow
+    // Responsive audio scale
+    val audioScale by animateFloatAsState(
+        targetValue = audioLevel.coerceIn(0f, 1f),
+        animationSpec = spring(dampingRatio = 0.35f, stiffness = 150f),
+        label = "OrbAudioScale"
+    )
+
+    // State-based Halo/Cortana Palettes
+    val palette = when (liveState) {
+        is LiveState.Listening -> OrbPalette(
+            primary = HaloCortanaBlue,
+            secondary = HaloPurple,
+            highlight = HaloCyan,
+            glow = HaloCyan
         )
-        is LiveState.UserSpeaking -> QuadColors(
-            Color(0xFF7C3AED), // Indigo Purple
-            Color(0xFF00C7FF), // Bright Cyan
-            Color(0xFFFFFFFF), // Brilliant White
-            Color(0xFF7C3AED)  // Violet Neon Glow
+        is LiveState.UserSpeaking -> OrbPalette(
+            primary = HaloAmber,
+            secondary = HaloMagenta,
+            highlight = HaloWhite,
+            glow = HaloAmber
         )
-        is LiveState.Processing -> QuadColors(
-            Color(0xFF7C3AED), // Royal Purple
-            Color(0xFFEC4899), // Deep Magenta
-            Color(0xFFFEF08A), // Soft Golden Highlight
-            Color(0xFFD8B4FE)  // Lavender Soft Glow
+        is LiveState.Processing -> OrbPalette(
+            primary = HaloPurple,
+            secondary = HaloMagenta,
+            highlight = HaloCyan,
+            glow = HaloPurple
         )
-        is LiveState.AiSpeaking -> QuadColors(
-            Color(0xFF10B981), // Emerald Green
-            Color(0xFF06B6D4), // Sky Blue-Green
-            Color(0xFFECFDF5), // Mint White Highlight
-            Color(0xFF34D399)  // Lime-Emerald Glow
+        is LiveState.AiSpeaking -> OrbPalette(
+            primary = HaloCyan,
+            secondary = HaloCortanaBlue,
+            highlight = HaloGreen,
+            glow = HaloCyan
         )
-        is LiveState.Error -> QuadColors(
-            Color(0xFFEF4444), // Coral Red
-            Color(0xFFF59E0B), // Ember Orange
-            Color(0xFFFEF2F2), // Pale Rose Highlight
-            Color(0xFFFCA5A5)  // Crimson Background Glow
+        is LiveState.Error -> OrbPalette(
+            primary = HaloRed,
+            secondary = HaloMagenta,
+            highlight = HaloWhite,
+            glow = HaloRed
         )
-        else -> QuadColors(
-            Color(0xFF4B5563),
-            Color(0xFF374151),
-            Color(0xFFF3F4F6),
-            Color(0xFF9CA3AF)
+        else -> OrbPalette(
+            primary = Color(0xFF1558D6),      // Main UI Premium Accent Blue!
+            secondary = Color(0xFF00F0FF),    // Active hologram cyan gradient!
+            highlight = Color(0xFFFFFFFF),    // Bright core
+            glow = Color(0xFF1558D6)
         )
     }
 
+    val animPrimary by animateColorAsState(targetValue = palette.primary, animationSpec = tween(600), label = "Primary")
+    val animSecondary by animateColorAsState(targetValue = palette.secondary, animationSpec = tween(600), label = "Secondary")
+    val animHighlight by animateColorAsState(targetValue = palette.highlight, animationSpec = tween(600), label = "Highlight")
+    val animGlow by animateColorAsState(targetValue = palette.glow, animationSpec = tween(600), label = "Glow")
+
     Box(
         modifier = Modifier
-            .size(240.dp)
+            .size(320.dp)
             .graphicsLayer {
-                val totalScale = 1.0f + dynamicAudioScale * 0.22f
+                val totalScale = 1.0f + audioScale * 0.12f
                 scaleX = totalScale
                 scaleY = totalScale
             },
         contentAlignment = Alignment.Center
     ) {
-        // ─── Ambient Glow Halo (Behind the Sphere) ───
+        // ─── Layer 0: Deep Ambient Nebula Glow (The Singularity Core) ───
+        // This replaces the solid orb. It's a massive, highly blurred, intensely colorful glowing cloud.
         Box(
             modifier = Modifier
-                .size(220.dp)
-                .blur(42.dp)
-                .alpha(0.6f + dynamicAudioScale * 0.35f)
+                .size(260.dp)
+                .graphicsLayer {
+                    val pulse = 1.0f + audioScale * 0.4f
+                    scaleX = pulse
+                    scaleY = pulse
+                }
+                .blur(50.dp)
+                .alpha(0.85f + audioScale * 0.15f)
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(glowColor.copy(alpha = 0.45f), Color.Transparent)
+                        colors = listOf(
+                            animHighlight,
+                            animPrimary.copy(alpha = 0.8f),
+                            animSecondary.copy(alpha = 0.4f),
+                            Color.Transparent
+                        )
                     ),
                     CircleShape
                 )
         )
 
-        // ─── Organic Morphing Watercolor Sphere ───
+        // ─── Layer 1: Inner Swirling Plasma ───
+        // A subtle secondary glow to give the core movement and depth
         Box(
             modifier = Modifier
-                .size(165.dp)
-                .clip(CircleShape)
-                .border(1.5.dp, Color.White.copy(alpha = 0.15f), CircleShape)
-        ) {
-            // Layer 1: Base Organic Gradient
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        rotationZ = angle1
-                        scaleX = breathe1 * 1.12f
-                        scaleY = breathe2 * 1.12f
-                    }
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(color1, color2)
-                        )
-                    )
-            )
-
-            // Layer 2: Swirling Secondary Core (Double Blend Mode)
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        rotationZ = angle2
-                        scaleX = breathe2 * 1.25f
-                        scaleY = breathe1 * 0.85f
-                        translationX = 14f * breathe1
-                        translationY = -14f * breathe2
-                        alpha = 0.85f
-                    }
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(color2.copy(alpha = 0.92f), Color.Transparent),
-                            radius = 260f
-                        )
-                    )
-            )
-
-            // Layer 3: High-contrast Fluid Highlight Cloud (Highly Reactive to Voice)
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        rotationZ = angle3
-                        scaleX = 0.85f + dynamicAudioScale * 0.6f
-                        scaleY = 0.85f + dynamicAudioScale * 0.6f
-                        translationX = -12f * breathe2
-                        translationY = 12f * breathe1
-                        alpha = 0.8f
-                    }
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(color3.copy(alpha = 0.9f), Color.Transparent),
-                            radius = 190f
-                        )
-                    )
-            )
-
-            // Layer 4: Premium Glass-like Inner Shading Overlay
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.16f),
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.22f)
-                            )
-                        )
-                    )
-            )
-        }
-
-        // ─── Outer Transparent Glass Ring (Adds gloss and precision) ───
-        Box(
-            modifier = Modifier
-                .size(167.dp)
-                .border(2.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+                .size(150.dp)
+                .graphicsLayer {
+                    rotationZ = angle1
+                    scaleX = breathe1 * (1.0f + audioScale * 0.5f)
+                    scaleY = breathe2 * (1.0f + audioScale * 0.5f)
+                    alpha = 0.6f + audioScale * 0.4f
+                }
+                .blur(30.dp)
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(animSecondary, Color.Transparent, animPrimary)
+                    ),
+                    CircleShape
+                )
         )
+
+        // ─── Layer 2: Seamless Circular Equalizer Bars (The Singularity Ring) ───
+        // Bold, thick, inward & outward radiating bars
+        val barCount = 48 // Reduced count for thicker, bolder bars
+        Canvas(modifier = Modifier.size(360.dp)) { // Increased canvas size for larger soundwave
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val baseRadius = 100.dp.toPx() // Invisible boundary where bars start
+
+            for (i in 0 until barCount) {
+                val angleDeg = i * (360f / barCount)
+                val angleRad = (angleDeg * Math.PI / 180.0).toFloat()
+                val cosA = cos(angleRad)
+                val sinA = sin(angleRad)
+
+                // Perfect circular looping using strictly INTEGER multipliers for wavePhase
+                val wave1 = sin(angleRad * 3.0f - wavePhase) * 0.25f
+                val wave2 = cos(angleRad * 5.0f + wavePhase * 1.0f) * 0.15f
+                val wave3 = sin(angleRad * 2.0f + wavePhase * 2.0f) * 0.20f
+                
+                // Ambient idle movement + active audio height factor
+                val audioSpread = sin(angleRad * 4.0f - wavePhase * 1.0f) * 0.4f + 0.6f
+                val audioSpike = audioScale * audioSpread * 1.2f // Larger spike
+                
+                val totalHeightFactor = (0.15f + wave1 + wave2 + wave3 + audioSpike).coerceIn(0.02f, 1.8f)
+                
+                // Bar lengths
+                val maxOuterHeight = 45.dp.toPx()
+                val maxInnerHeight = 25.dp.toPx()
+                
+                // Bars extend both OUTWARD and INWARD from the base radius
+                val outerExt = totalHeightFactor * maxOuterHeight
+                val innerExt = (totalHeightFactor * maxInnerHeight * 0.6f) + (audioScale * maxInnerHeight * 0.8f)
+                
+                val startRadius = baseRadius - innerExt
+                val endRadius = baseRadius + outerExt
+                
+                val startX = center.x + startRadius * cosA
+                val startY = center.y + startRadius * sinA
+                val endX = center.x + endRadius * cosA
+                val endY = center.y + endRadius * sinA
+
+                // Color interpolation: Gradient matches the core
+                val colorProgress = ((sin(angleRad + wavePhase) + 1f) / 2f)
+                val baseColor = androidx.compose.ui.graphics.lerp(animPrimary, animSecondary, colorProgress)
+                val barColor = androidx.compose.ui.graphics.lerp(baseColor, animHighlight, (audioScale * 0.4f).coerceIn(0f, 1f))
+
+                drawLine(
+                    color = barColor.copy(alpha = 0.9f), // Highly visible premium bars
+                    start = Offset(startX, startY),
+                    end = Offset(endX, endY),
+                    strokeWidth = 4.5.dp.toPx(), // Thicker, bolder bars
+                    cap = StrokeCap.Round
+                )
+            }
+        }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// State Label
+// State Label — Elegant Dark Legible Typography
 // ═══════════════════════════════════════════════════════════════════
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 private fun LiveStateLabel(liveState: LiveState) {
-    val text = when (liveState) {
-        is LiveState.Listening -> "Tap Orb to Speak"
-        is LiveState.UserSpeaking -> if (liveState.partialText.isBlank()) "Listening..." else liveState.partialText
-        is LiveState.Processing -> "Thinking..."
-        is LiveState.AiSpeaking -> liveState.responseText
-        is LiveState.Error -> "Neural core lag... retrying"
-        else -> "Standby"
+    val (text, subtext) = when (liveState) {
+        is LiveState.Listening -> "Ready" to "Tap to speak"
+        is LiveState.UserSpeaking -> {
+            val partial = liveState.partialText
+            if (partial.isBlank()) "Listening..." to null
+            else partial to "Tap to send"
+        }
+        is LiveState.Processing -> "Analyzing Core..." to null
+        is LiveState.AiSpeaking -> liveState.responseText to "Tap to interrupt"
+        is LiveState.Error -> "Re-establishing connection..." to null
+        else -> "Standby" to null
     }
 
-    val color = when (liveState) {
-        is LiveState.Listening -> LiveTextSecondary
-        is LiveState.UserSpeaking -> LiveTextPrimary
-        is LiveState.Processing -> LiveAccentPurple
-        is LiveState.AiSpeaking -> LiveTextPrimary
-        else -> LiveTextDim
-    }
+    val primaryColor by animateColorAsState(
+        targetValue = when (liveState) {
+            is LiveState.Listening -> TextSecondary
+            is LiveState.UserSpeaking -> TextPrimary
+            is LiveState.Processing -> HaloPurple
+            is LiveState.AiSpeaking -> TextPrimary
+            is LiveState.Error -> HaloRed
+            else -> TextDim
+        },
+        animationSpec = tween(500),
+        label = "LabelColor"
+    )
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.padding(horizontal = 40.dp)
     ) {
         AnimatedContent(
             targetState = text,
             transitionSpec = {
-                fadeIn(tween(350)) + slideInVertically { it / 3 } togetherWith
-                    fadeOut(tween(250)) + slideOutVertically { -it / 3 }
+                (fadeIn(tween(400)) + slideInVertically { it / 4 }) togetherWith
+                    (fadeOut(tween(300)) + slideOutVertically { -it / 4 })
             },
             label = "StateLabel"
         ) { label ->
             Text(
-                label,
+                text = label,
                 style = TextStyle(
-                    fontSize = if (liveState is LiveState.UserSpeaking) 18.sp else 16.sp,
-                    fontWeight = if (liveState is LiveState.UserSpeaking) FontWeight.Medium else FontWeight.Normal,
-                    color = color,
+                    fontSize = when (liveState) {
+                        is LiveState.UserSpeaking -> 18.sp
+                        is LiveState.AiSpeaking -> 15.sp
+                        else -> 16.sp
+                    },
+                    fontWeight = when (liveState) {
+                        is LiveState.UserSpeaking, is LiveState.AiSpeaking -> FontWeight.SemiBold
+                        else -> FontWeight.Medium
+                    },
+                    color = primaryColor,
                     textAlign = TextAlign.Center,
-                    letterSpacing = if (liveState is LiveState.UserSpeaking) (-0.2).sp else 0.4.sp
+                    letterSpacing = when (liveState) {
+                        is LiveState.Listening -> 2.sp
+                        is LiveState.Processing -> 1.5.sp
+                        else -> 0.sp
+                    },
+                    lineHeight = 24.sp
                 ),
                 maxLines = 3,
-                modifier = Modifier.padding(horizontal = 36.dp)
+                overflow = TextOverflow.Ellipsis
             )
         }
 
-        if (liveState is LiveState.UserSpeaking) {
-            Text(
-                "Tap Orb to Send",
-                style = TextStyle(
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Light,
-                    color = LiveTextDim,
-                    textAlign = TextAlign.Center
-                ),
-                modifier = Modifier.alpha(0.8f)
+        // Subtext action hints
+        AnimatedVisibility(
+            visible = subtext != null,
+            enter = fadeIn(tween(400)) + expandVertically(),
+            exit = fadeOut(tween(300)) + shrinkVertically()
+        ) {
+            subtext?.let {
+                Text(
+                    text = it,
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = TextDim,
+                        textAlign = TextAlign.Center,
+                        letterSpacing = 0.5.sp
+                    )
+                )
+            }
+        }
+
+        // Circular processing progress indicators
+        if (liveState is LiveState.Processing) {
+            Spacer(Modifier.height(4.dp))
+            ProcessingDots(infiniteTransition = rememberInfiniteTransition(label = "ProcDots"))
+        }
+    }
+}
+
+@Composable
+private fun ProcessingDots(infiniteTransition: InfiniteTransition) {
+    val dot1 by infiniteTransition.animateFloat(
+        initialValue = 0.3f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "Dot1"
+    )
+    val dot2 by infiniteTransition.animateFloat(
+        initialValue = 0.3f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(600, delayMillis = 150, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "Dot2"
+    )
+    val dot3 by infiniteTransition.animateFloat(
+        initialValue = 0.3f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(600, delayMillis = 300, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "Dot3"
+    )
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        listOf(dot1, dot2, dot3).forEach { alpha ->
+            Box(
+                modifier = Modifier
+                    .size(5.dp)
+                    .graphicsLayer { this.alpha = alpha }
+                    .background(HaloPurple, CircleShape)
             )
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Live Transcript — Scrolling conversation log
+// Transcript — Minimalist Light Entries
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
@@ -579,7 +697,6 @@ private fun LiveTranscript(
 ) {
     val listState = rememberLazyListState()
 
-    // Auto-scroll to latest entry
     LaunchedEffect(transcript.size) {
         if (transcript.isNotEmpty()) {
             listState.animateScrollToItem(transcript.lastIndex)
@@ -589,12 +706,12 @@ private fun LiveTranscript(
     if (transcript.isEmpty()) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
             Text(
-                "Transcript log will stream here",
+                "Holographic link stabilized. Transcripts active.",
                 style = TextStyle(
                     fontSize = 13.sp,
-                    color = LiveTextDim,
-                    textAlign = TextAlign.Center,
-                    letterSpacing = 0.2.sp
+                    fontWeight = FontWeight.Medium,
+                    color = TextDim,
+                    textAlign = TextAlign.Center
                 )
             )
         }
@@ -602,55 +719,61 @@ private fun LiveTranscript(
         LazyColumn(
             modifier = modifier,
             state = listState,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(vertical = 8.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(top = 44.dp, bottom = 8.dp)
         ) {
             items(transcript) { entry ->
-                LiveTranscriptBubble(entry)
+                LiveTranscriptItem(entry)
             }
         }
     }
 }
 
 @Composable
-private fun LiveTranscriptBubble(entry: LiveSessionOrchestrator.TranscriptEntry) {
-    val alignment = if (entry.isUser) Alignment.CenterEnd else Alignment.CenterStart
-    val bubbleColor = if (entry.isUser) LiveAccentBlue.copy(alpha = 0.08f) else LiveSurface
-    val borderStroke = if (entry.isUser) {
-        androidx.compose.foundation.BorderStroke(1.dp, LiveAccentBlue.copy(alpha = 0.25f))
-    } else {
-        androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f))
-    }
-    val textColor = if (entry.isUser) LiveAccentBlue else LiveTextPrimary
-    val shape = if (entry.isUser) {
-        RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp)
-    } else {
-        RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp)
-    }
+private fun LiveTranscriptItem(entry: LiveSessionOrchestrator.TranscriptEntry) {
+    val alignment = if (entry.isUser) Alignment.End else Alignment.Start
 
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = alignment) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = alignment
+    ) {
+        Text(
+            text = if (entry.isUser) "You" else "Scypheon",
+            style = TextStyle(
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (entry.isUser) HaloCortanaBlue.copy(alpha = 0.8f) else TextDim,
+                letterSpacing = 0.5.sp
+            ),
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+
         Surface(
-            shape = shape,
-            color = bubbleColor,
-            border = borderStroke,
-            modifier = Modifier.widthIn(max = 280.dp),
-            shadowElevation = 0.dp
+            shape = RoundedCornerShape(16.dp),
+            color = if (entry.isUser) {
+                HaloCortanaBlue.copy(alpha = 0.08f)
+            } else {
+                Color.Black.copy(alpha = 0.04f)
+            },
+            modifier = Modifier.widthIn(max = 300.dp)
         ) {
             Text(
-                entry.text,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                text = entry.text,
                 style = TextStyle(
                     fontSize = 14.sp,
-                    color = textColor,
-                    lineHeight = 20.sp
-                )
+                    fontWeight = FontWeight.Normal,
+                    color = TextPrimary,
+                    lineHeight = 21.sp,
+                    textAlign = if (entry.isUser) TextAlign.End else TextAlign.Start
+                ),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
             )
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Ambient Background — Soft Pastel Glowing Orbs
+// Ambient Background — Hologram Glows
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
@@ -659,33 +782,52 @@ private fun LiveAmbientBackground(
     liveState: LiveState,
     audioLevel: Float
 ) {
-    val shift by infiniteTransition.animateFloat(
+    val drift by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(10000, easing = LinearEasing),
+            animation = tween(14000, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "AmbientShift"
+        label = "AmbientDrift"
     )
 
-    val orbColor = when (liveState) {
-        is LiveState.Listening, is LiveState.UserSpeaking -> LiveAccentBlue
-        is LiveState.Processing -> LiveAccentPurple
-        is LiveState.AiSpeaking -> LiveAccentGreen
-        else -> LiveTextDim
-    }
+    val secondaryDrift by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(18000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "SecondaryDrift"
+    )
 
-    // Left orb (Pastel Cyan / Violet)
+    val ambientColor by animateColorAsState(
+        targetValue = when (liveState) {
+            is LiveState.Listening -> HaloCyan
+            is LiveState.UserSpeaking -> HaloAmber
+            is LiveState.Processing -> HaloPurple
+            is LiveState.AiSpeaking -> HaloGreen
+            is LiveState.Error -> HaloRed
+            else -> TextDim
+        },
+        animationSpec = tween(1000),
+        label = "AmbientColor"
+    )
+
+    // Center-left primary hologram glow
     Box(
         modifier = Modifier
             .size(380.dp)
-            .offset(x = (-130).dp, y = (180 + shift * 60).dp)
-            .blur(170.dp)
+            .offset(
+                x = (-80 + drift * 30).dp,
+                y = (180 + drift * 60).dp
+            )
+            .blur(160.dp)
             .background(
                 Brush.radialGradient(
                     colors = listOf(
-                        orbColor.copy(alpha = 0.05f + audioLevel * 0.03f),
+                        ambientColor.copy(alpha = 0.08f + audioLevel * 0.04f),
                         Color.Transparent
                     )
                 ),
@@ -693,18 +835,21 @@ private fun LiveAmbientBackground(
             )
     )
 
-    // Right orb (Soft Lavender)
+    // Top-right secondary glow
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .wrapContentWidth(Alignment.End)
-            .size(330.dp)
-            .offset(x = 110.dp, y = (80 + shift * 50).dp)
-            .blur(150.dp)
+            .size(320.dp)
+            .offset(
+                x = (60 + secondaryDrift * 30).dp,
+                y = (80 + secondaryDrift * 50).dp
+            )
+            .blur(140.dp)
             .background(
                 Brush.radialGradient(
                     colors = listOf(
-                        LiveAccentPurple.copy(alpha = 0.04f),
+                        HaloAmber.copy(alpha = 0.05f + audioLevel * 0.02f),
                         Color.Transparent
                     )
                 ),

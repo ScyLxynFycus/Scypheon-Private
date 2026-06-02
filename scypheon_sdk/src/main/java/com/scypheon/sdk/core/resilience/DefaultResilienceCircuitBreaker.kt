@@ -14,9 +14,10 @@ import javax.inject.Singleton
 @Singleton
 class DefaultResilienceCircuitBreaker @Inject constructor() : ResilienceCircuitBreaker {
 
+    var maxFailures: Int = 3
+    var resetTimeoutMs: Long = 30000L
+
     private val circuits = ConcurrentHashMap<String, CircuitState>()
-    private val failureThreshold = 5
-    private val recoveryTimeoutMs = 30000L // 30 seconds
 
     // Menggunakan Atomics untuk thread-safety tanpa memblokir (Lock-Free)
     private class CircuitState {
@@ -37,7 +38,7 @@ class DefaultResilienceCircuitBreaker @Inject constructor() : ResilienceCircuitB
 
         if (currentState == State.OPEN) {
             val timeSinceFailure = System.currentTimeMillis() - circuit.lastFailureTime.get()
-            if (timeSinceFailure > recoveryTimeoutMs) {
+            if (timeSinceFailure > resetTimeoutMs) {
                 // HALF_OPEN Probe: Gunakan compareAndSet agar hanya SATU thread yang lolos menjadi probe
                 if (circuit.state.compareAndSet(State.OPEN, State.HALF_OPEN)) {
                     Timber.d("🛡️ [CIRCUIT] $key shifted to HALF_OPEN (Probe dispatched)")
@@ -77,13 +78,13 @@ class DefaultResilienceCircuitBreaker @Inject constructor() : ResilienceCircuitB
                 Timber.e("💀 [CIRCUIT] Probe failed. $key forced back to OPEN.")
             }
         } else if (currentState == State.CLOSED) {
-            if (currentFailures >= failureThreshold) {
+            if (currentFailures >= maxFailures) {
                 // Threshold tercapai, buka sirkuit
                 if (circuit.state.compareAndSet(State.CLOSED, State.OPEN)) {
                     Timber.e("💀 [CIRCUIT] $key OPENED due to $currentFailures failures.")
                 }
             } else {
-                Timber.d("⚠️ [CIRCUIT] $key recorded failure ($currentFailures/$failureThreshold)")
+                Timber.d("⚠️ [CIRCUIT] $key recorded failure ($currentFailures/$maxFailures)")
             }
         }
     }

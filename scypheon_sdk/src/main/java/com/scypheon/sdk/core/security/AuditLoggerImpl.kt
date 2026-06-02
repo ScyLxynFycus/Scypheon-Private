@@ -10,30 +10,6 @@ import javax.inject.Singleton
 import com.scypheon.sdk.core.agent.tool.ToolCall
 import com.scypheon.sdk.core.agent.tool.ToolResult
 
-@Entity(tableName = "audit_logs")
-data class AuditLogEntry(
-    @PrimaryKey val id: String = UUID.randomUUID().toString(),
-    val traceId: String,
-    val timestamp: Long,
-    val eventType: String,
-    val payload: String,
-    val chainHash: String
-)
-
-@Dao
-interface AuditLogDao {
-    @Insert suspend fun insert(entry: AuditLogEntry)
-    @Query("SELECT chainHash FROM audit_logs ORDER BY timestamp DESC LIMIT 1")
-    suspend fun getLastHash(): String?
-    @Query("SELECT * FROM audit_logs WHERE traceId = :traceId ORDER BY timestamp ASC")
-    suspend fun getByTrace(traceId: String): List<AuditLogEntry>
-}
-
-@Database(entities = [AuditLogEntry::class], version = 1, exportSchema = false)
-abstract class AuditDatabase : RoomDatabase() {
-    abstract fun auditLogDao(): AuditLogDao
-}
-
 @Singleton
 class AuditLoggerImpl @Inject constructor(@dagger.hilt.android.qualifiers.ApplicationContext context: Context) : 
     com.scypheon.sdk.core.agent.RouterAuditLogger, 
