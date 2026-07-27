@@ -158,15 +158,9 @@ fun ModelHubScreen(
                 RecommendedModelCard(
                     model = model,
                     isDownloaded = isDownloaded,
-<<<<<<< Updated upstream
-                    isDownloading = isDownloading,
-                    isPaused = uiState.isDownloadPaused && isDownloading,
-                    downloadProgress = uiState.downloadProgress,
-=======
                     isDownloading = isDownloadingActive,
                     isPaused = isPaused,
                     downloadProgress = progressPercent,
->>>>>>> Stashed changes
                     scope = scope,
                     onDownload = { viewModel.downloadModel(model) },
                     onPause = { viewModel.pauseModelDownload(model) },
@@ -674,65 +668,7 @@ private fun RecommendedModelCard(
 
             // Action area
             if (isDownloading) {
-<<<<<<< Updated upstream
-                // Download progress
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        LinearProgressIndicator(
-                            progress = { downloadProgress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(3.dp)),
-                            color = if (isPaused) HubOrange else HubAccent,
-                            trackColor = (if (isPaused) HubOrange else HubAccent).copy(alpha = 0.12f)
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            if (isPaused) "Paused at ${(downloadProgress * 100).toInt()}%" else "Downloading... ${(downloadProgress * 100).toInt()}%",
-                            style = TextStyle(fontSize = 12.sp, color = if (isPaused) HubOrange else HubAccent, fontWeight = FontWeight.Medium)
-                        )
-                    }
-
-                    // Pause/Resume Button
-                    IconButton(
-                        onClick = { if (isPaused) onDownload() else onPause() },
-                        modifier = Modifier
-                            .size(32.dp)
-                            .background(HubBg, CircleShape)
-                    ) {
-                        Icon(
-                            if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                            contentDescription = if (isPaused) "Resume" else "Pause",
-                            tint = if (isPaused) HubOrange else HubAccent,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    // Cancel Button
-                    IconButton(
-                        onClick = { scope.launch { delay(50); onDelete() } },
-                        modifier = Modifier
-                            .size(32.dp)
-                            .background(HubRed.copy(alpha = 0.1f), CircleShape)
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "Cancel Download",
-                            tint = HubRed,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            } else if (isDownloaded) {
-                // Downloaded — show Try + Delete
-=======
                 // Downloading progress bar & pause/cancel actions
->>>>>>> Stashed changes
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,

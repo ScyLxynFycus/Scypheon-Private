@@ -319,59 +319,7 @@ class DualMemoryManager @Inject constructor(
         db.update(ScypheonDbHelper.TABLE_SESSIONS, values, "id = ?", arrayOf(sessionId))
     }
 
-<<<<<<< Updated upstream
-    suspend fun deleteSession(sessionId: String) = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        db.beginTransaction()
-        try {
-            db.delete(ScypheonDbHelper.TABLE_MESSAGES, "session_id = ?", arrayOf(sessionId))
-            db.delete(ScypheonDbHelper.TABLE_SESSIONS, "id = ?", arrayOf(sessionId))
-            db.setTransactionSuccessful()
-            Timber.i("Session $sessionId deleted successfully")
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to delete session")
-        } finally {
-            db.endTransaction()
-        }
-    }
-
     suspend fun archiveSession(sessionId: String) = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        db.rawQuery("SELECT title FROM ${ScypheonDbHelper.TABLE_SESSIONS} WHERE id = ?", arrayOf(sessionId)).use { cursor ->
-            if (cursor.moveToFirst()) {
-                val currentTitle = cursor.getString(0)
-                if (!currentTitle.startsWith("[ARCHIVED]")) {
-                    val values = ContentValues().apply {
-                        put("title", "[ARCHIVED] $currentTitle")
-                    }
-                    db.update(ScypheonDbHelper.TABLE_SESSIONS, values, "id = ?", arrayOf(sessionId))
-                }
-            }
-        }
-    }
-
-    suspend fun unarchiveSession(sessionId: String) = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        db.rawQuery("SELECT title FROM ${ScypheonDbHelper.TABLE_SESSIONS} WHERE id = ?", arrayOf(sessionId)).use { cursor ->
-            if (cursor.moveToFirst()) {
-                val currentTitle = cursor.getString(0)
-                if (currentTitle.startsWith("[ARCHIVED] ")) {
-                    val values = ContentValues().apply {
-                        put("title", currentTitle.removePrefix("[ARCHIVED] "))
-                    }
-                    db.update(ScypheonDbHelper.TABLE_SESSIONS, values, "id = ?", arrayOf(sessionId))
-                }
-            }
-        }
-    }
-
-    /**
-     * Expires "zombie" tasks that have been awaiting approval for too long.
-     */
-    fun expireAwaitingApprovalTasks(fifteenMinsAgo: Long) {
-=======
-    suspend fun archiveSession(sessionId: String) = withContext(Dispatchers.IO) {
->>>>>>> Stashed changes
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply {
             put("is_archived", 1)

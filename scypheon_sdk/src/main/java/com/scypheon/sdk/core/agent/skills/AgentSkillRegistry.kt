@@ -125,11 +125,6 @@ class AgentSkillRegistry @Inject constructor(
         )
     )
 
-<<<<<<< Updated upstream
-    enum class SkillType { MEDICAL, EDUCATION, STEM, ACCESSIBILITY, EXPLAINABILITY, GENERAL, RESEARCH, DISASTER }
-
-=======
->>>>>>> Stashed changes
     fun getSkill(type: SkillType): SkillDefinition? {
         return skillDefinitions[type]
     }

@@ -39,30 +39,6 @@ class StreamingToolParser {
         var safeEmit = ""
         var foundToolCall: ToolCall? = null
 
-<<<<<<< Updated upstream
-        val startIndex = currentText.indexOf("<tool_call>")
-        val endIndex = currentText.indexOf("</tool_call>")
-
-        if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
-            val jsonText = currentText.substring(startIndex + 11, endIndex).trim()
-            return try {
-                val json = parseFaultTolerantJson(jsonText)
-                val name = if (json.has("toolName")) json.getString("toolName") else json.getString("name")
-                val argsJson = json.optJSONObject("arguments")
-                
-                val args = mutableMapOf<String, Any?>()
-                argsJson?.keys()?.forEach { key ->
-                    args[key] = argsJson.get(key)
-                }
-
-                Timber.i("🛠️ [TOOL_PARSER] Intercepted call: $name")
-                buffer.delete(0, endIndex + 12)
-                ToolCall(name, args)
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to parse tool call JSON even with auto-recovery: $jsonText")
-                buffer.delete(0, endIndex + 12)
-                null
-=======
         var processing = true
         while (processing) {
             if (!isInsideToolCall) {
@@ -107,7 +83,6 @@ class StreamingToolParser {
                 } else {
                     processing = false
                 }
->>>>>>> Stashed changes
             }
         }
         

@@ -13,11 +13,7 @@ class RegexDomainClassifier @Inject constructor() : DomainClassifier {
         private val HUMANITARIAN = setOf("bantuan", "pengungsi", "logistik", "kemanusiaan", "aid", "refugee", "relief", "humanitarian", "wfp", "pmi")    
     }
 
-<<<<<<< Updated upstream
-    override suspend fun classify(query: String): ReasoningDomain {
-=======
     override suspend fun classify(query: String): Map<ReasoningDomain, Float> {
->>>>>>> Stashed changes
         val lower = query.lowercase()
         val scores = mutableMapOf<ReasoningDomain, Float>()
 

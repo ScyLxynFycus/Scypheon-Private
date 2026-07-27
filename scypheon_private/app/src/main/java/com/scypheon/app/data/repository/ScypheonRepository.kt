@@ -161,14 +161,6 @@ class ScypheonRepository @Inject constructor(
             // --- TIER 1: ELITE ENGINE (LiteRT) ---
             if (customElitePath != null) {
                 _engineState.emit(InitializationState.Analyzing("Initializing Elite Engine..."))
-<<<<<<< Updated upstream
-                
-                // [PHOENIX] Cross-Engine Unloading: Ensure Llama is unloaded to free up RAM/VRAM for LiteRT
-                gateway.releaseLlama()
-                
-                val loadSuccess = gateway.initializeLiteRt(customElitePath, nCtx)
-                return@withLock if (loadSuccess) {
-=======
 
                 // [PHOENIX] Cross-Engine Unloading: Ensure Llama is unloaded to free up RAM/VRAM for LiteRT
                 gateway.releaseLlama()
@@ -181,7 +173,6 @@ class ScypheonRepository @Inject constructor(
                 }
 
                 if (eliteLoadSuccess) {
->>>>>>> Stashed changes
                     triageState.set(TriageState.READY)
                     scope.launch {
                         initializeEmbedder(registry, health)
@@ -208,17 +199,10 @@ class ScypheonRepository @Inject constructor(
             }
 
             val modelSize = File(finalUniversalPath).length()
-<<<<<<< Updated upstream
-            
-            // [PHOENIX] Cross-Engine Unloading: Ensure LiteRT is unloaded to free up RAM for Llama
-            gateway.releaseLiteRt()
-            
-=======
 
             // [PHOENIX] Cross-Engine Unloading: Ensure LiteRT is unloaded to free up RAM for Llama
             gateway.releaseLiteRt()
 
->>>>>>> Stashed changes
             // [v1.0.5-SAR] Strict Memory Enforcement
             if (!MemoryGatekeeper.canLoadModel(context, modelSize)) {
                 Timber.e(" [GUARD] Memory Gatekeeper VETO: Model too large for current available RAM.")

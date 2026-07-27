@@ -1030,40 +1030,7 @@ class MainViewModel @Inject constructor(
                 Timber.d("👁️ [VISION] Keyframe captured: ${bitmap.width}x${bitmap.height}")
             }
         }
-<<<<<<< Updated upstream
-
-        // 4. Forward transcript to UI
-        viewModelScope.launch {
-            liveOrchestrator.transcript.collectLatest { entries ->
-                _uiState.update { it.copy(liveTranscript = entries) }
-            }
-        }
-
-        // 5. Forward audio level to UI
-        viewModelScope.launch {
-            liveOrchestrator.audioLevel.collectLatest { level ->
-                _uiState.update { it.copy(liveAudioLevel = level) }
-            }
-        }
-        // 6. Start Vision Pipeline (continuous camera → object detection → context)
-        // [v1.5.1-SAR] Offload detector init to IO thread to prevent StrictMode DiskReadViolation
-        // (native lib loading + getCacheDir() both perform disk I/O)
-        viewModelScope.launch(Dispatchers.IO) {
-            liveVisionPipeline.initializeDetector()
-            // Wire callbacks after init completes (thread-safe: callbacks are invoked from analysis executor)
-            liveVisionPipeline.onSceneUpdated = { scene ->
-                liveOrchestrator.injectVisionContext(scene.toContextString())
-            }
-            liveVisionPipeline.onKeyframeCaptured = { bitmap ->
-                liveOrchestrator.injectCameraFrame(bitmap)
-            }
-        }
-        // Camera will be started from the UI (needs LifecycleOwner)
-
-        // 7. Start Audio Pipeline (continuous mic → VAD → ambient context)
-=======
         
->>>>>>> Stashed changes
         liveAudioPipeline.start()
         liveAudioPipeline.onAudioLevel = { level ->
             onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.AudioLevelChanged(level * 40f - 40f))
@@ -1129,22 +1096,14 @@ class MainViewModel @Inject constructor(
     }
 
     fun downloadModel(model: com.scypheon.sdk.core.provision.ModelMetadata) {
-<<<<<<< Updated upstream
-        if (!modelProvisioner.hasSufficientSpace(model.sizeBytes)) {
-=======
         if (!modelManagementUseCase.hasSufficientSpace(model.sizeBytes)) {
->>>>>>> Stashed changes
             _uiState.update { it.copy(error = "Cannot download: insufficient storage") }
             return
         }
 
         _uiState.update { it.copy(downloadingModelId = model.id, downloadProgress = 0f, isDownloadPaused = false) }
 
-<<<<<<< Updated upstream
-        modelProvisioner.resumeDownload(model) { progress ->
-=======
         modelManagementUseCase.resumeDownload(model) { progress ->
->>>>>>> Stashed changes
             viewModelScope.launch(Dispatchers.Main) {
                 _uiState.update { it.copy(downloadProgress = progress.percentage) }
                 
@@ -1160,11 +1119,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun pauseModelDownload(model: com.scypheon.sdk.core.provision.ModelMetadata) {
-<<<<<<< Updated upstream
-        modelProvisioner.pauseDownload(model.fileName)
-=======
         modelManagementUseCase.pauseDownload(model.fileName)
->>>>>>> Stashed changes
         _uiState.update { it.copy(isDownloadPaused = true) }
     }
 
@@ -1198,11 +1153,7 @@ class MainViewModel @Inject constructor(
                 // HF generic pause
                 if (downloadingId.contains("/")) {
                     val fileName = downloadingId.substringAfterLast("/")
-<<<<<<< Updated upstream
-                    modelProvisioner.pauseDownload(fileName)
-=======
                     modelManagementUseCase.pauseDownload(fileName)
->>>>>>> Stashed changes
                     _uiState.update { it.copy(isDownloadPaused = true) }
                 }
             }
@@ -1210,13 +1161,8 @@ class MainViewModel @Inject constructor(
     }
 
     fun cancelModelDownload(model: com.scypheon.sdk.core.provision.ModelMetadata) {
-<<<<<<< Updated upstream
-        modelProvisioner.pauseDownload(model.fileName)
-        modelProvisioner.deleteModel(model.fileName)
-=======
         modelManagementUseCase.pauseDownload(model.fileName)
         modelManagementUseCase.deleteModel(model.fileName)
->>>>>>> Stashed changes
         _uiState.update { it.copy(downloadingModelId = null, downloadProgress = 0f) }
         Timber.i("📦 [DOWNLOAD] Cancelled and deleted: ${model.title}")
     }
@@ -1243,11 +1189,7 @@ class MainViewModel @Inject constructor(
                     // Actually, if it's from HF, the ID in uiState is repo/fileName
                     if (downloadingId.contains("/")) {
                         val fileName = downloadingId.substringAfterLast("/")
-<<<<<<< Updated upstream
-                        modelProvisioner.cancelDownload(fileName)
-=======
                         modelManagementUseCase.cancelDownload(fileName)
->>>>>>> Stashed changes
                         currentDownloadId = null
                         _uiState.update { it.copy(downloadingModelId = null, downloadProgress = 0f) }
                     }

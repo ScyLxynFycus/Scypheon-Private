@@ -16,17 +16,11 @@ import java.security.MessageDigest
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
-<<<<<<< Updated upstream
-import com.scypheon.sdk.core.agent.tool.ToolCall
-import com.scypheon.sdk.core.agent.tool.ToolResult
-
-=======
 
 /**
  * AuditLoggerImpl: Enterprise-grade tamper-evident audit trail.
  * Uses a Room database with a SHA-256 hash chain to ensure log integrity.
  */
->>>>>>> Stashed changes
 @Singleton
 class AuditLoggerImpl @Inject constructor(
     @ApplicationContext context: Context

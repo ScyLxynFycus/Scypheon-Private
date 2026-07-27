@@ -19,10 +19,7 @@ class DefaultResilienceCircuitBreaker @Inject constructor() : ResilienceCircuitB
     var resetTimeoutMs: Long = 30000L
 
     private val circuits = ConcurrentHashMap<String, CircuitState>()
-<<<<<<< Updated upstream
-=======
     private val failureThreshold = 5
->>>>>>> Stashed changes
 
     /** Lock-free circuit state container using atomics for non-blocking thread-safety. */
     private class CircuitState {
@@ -59,15 +56,10 @@ class DefaultResilienceCircuitBreaker @Inject constructor() : ResilienceCircuitB
 
         if (currentState == State.OPEN) {
             val timeSinceFailure = System.currentTimeMillis() - circuit.lastFailureTime.get()
-<<<<<<< Updated upstream
-            if (timeSinceFailure > resetTimeoutMs) {
-                // HALF_OPEN Probe: Gunakan compareAndSet agar hanya SATU thread yang lolos menjadi probe
-=======
             val currentCooldown = circuit.cooldownMs.get()
             
             if (timeSinceFailure > currentCooldown) {
                 // HALF_OPEN Probe: CAS ensures exactly one thread wins the probe race
->>>>>>> Stashed changes
                 if (circuit.state.compareAndSet(State.OPEN, State.HALF_OPEN)) {
                     Timber.d("🛡️ [CIRCUIT] $key shifted to HALF_OPEN (Probe dispatched)")
                     return true
@@ -126,15 +118,9 @@ class DefaultResilienceCircuitBreaker @Inject constructor() : ResilienceCircuitB
             if (circuit.state.compareAndSet(State.HALF_OPEN, State.OPEN)) {
                 Timber.e("💀 [CIRCUIT] Probe failed. $key forced back to OPEN. Cooldown increased to $newCooldown ms.")
             }
-<<<<<<< Updated upstream
-        } else if (currentState == State.CLOSED) {
-            if (currentFailures >= maxFailures) {
-                // Threshold tercapai, buka sirkuit
-=======
         } else if (lastState == State.CLOSED) {
             if (currentFailures >= failureThreshold) {
                 // Failure threshold breached — open the circuit
->>>>>>> Stashed changes
                 if (circuit.state.compareAndSet(State.CLOSED, State.OPEN)) {
                     Timber.e("💀 [CIRCUIT] $key OPENED due to $currentFailures failures.")
                 }

@@ -164,90 +164,12 @@ class AgenticSkillOrchestrator @Inject constructor(
             null 
         }
 
-<<<<<<< Updated upstream
-        // 3. Pillar 3: Implicit Planning
-        val plan = "PLAN: 1. Audit context. 2. Invoke specialized tools. 3. Reflect & Validate. 4. Synthesize response."
-        state.messages.add(Message("assistant", plan, isThinking = true))
-        blackBoxVault.logEvent("AGENT_PLANNING", "Plan generated: $plan")
-
-        // 4. MAIN QUERY LOOP (Claude Code while(true) style)
-        while (state.retryCount <= MAX_SELF_CORRECTION_RETRIES && !state.isCompleted) {
-            
-            // Pillar 2: Dynamic Context Pruning
-            contextManager.manage(state.messages)
-
-            Timber.i("🧠 [REASONING] Iteration ${state.retryCount + 1}: Thinking...")
-            
-            // SIMULATED LLM TURN: In production, this calls gateway.generateResponse
-            val thought = "Reasoning: Processing query '$query' with current context. Initiating tool discovery."
-            state.messages.add(Message("assistant", thought, isThinking = true))
-            blackBoxVault.logEvent("AGENT_THINKING", "[Iter ${state.retryCount + 1}] $thought")
-
-            // 5. TOOL DISCOVERY & EXECUTION (Blocking for Origa)
-            val history = state.messages.map { msg ->
-                val role = when(msg.role) { 
-                    "user" -> NeuralGateway.NeuralTurn.Role.USER 
-                    "system" -> NeuralGateway.NeuralTurn.Role.SYSTEM 
-                    else -> NeuralGateway.NeuralTurn.Role.ASSISTANT 
-                }
-                NeuralGateway.NeuralTurn(role, msg.content)
-            }.toMutableList()
-            
-            val toolPrompt = toolRegistry.generateToolDefinitionsPrompt()
-            if (history.none { it.content.contains("Gunakan format XML <tool_call>") }) {
-                history.add(0, NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, toolPrompt))
-            }
-
-            var generatedText = ""
-            var dynamicToolCall: ToolCall? = null
-            
-            // Simulate internal thought process (Blocking)
-            streamingToolParser.reset()
-            gateway.generateResponse(history, topK = 50, topP = 0.9f, temp = 0.7f, maxTokens = 2048, enableThinking = true)
-                .collect { token ->
-                    generatedText += token
-                    val parsedCall = streamingToolParser.processToken(token)
-                    if (parsedCall != null) {
-                        dynamicToolCall = parsedCall
-                    }
-                }
-            
-            if (dynamicToolCall != null) {
-                blackBoxVault.logEvent("ORIGA_TOOL_DECISION", "LLM dynamically selected: ${dynamicToolCall!!.toolName}")
-                val results = toolMesh.dispatch(listOf(dynamicToolCall!!), ExecutionContext(sessionId, 5000L))
-                val result = results.firstOrNull()
-
-                if (result is ToolResult.Success) {
-                    val data = result.data.toString()
-                    state.messages.add(Message("system", "Tool Output: $data"))
-
-                    val reflection = "Reflection: Output received from ${dynamicToolCall!!.toolName}. Does this fulfill the mission goal?"
-                    state.messages.add(Message("assistant", reflection, isThinking = true))
-                    blackBoxVault.logEvent("AGENT_REFLECTION", "[Iter ${state.retryCount + 1}] $reflection")
-
-                    // Simple completion evaluation
-                    if (data.contains("SUCCESS") || data.length > 50 || state.retryCount >= MAX_SELF_CORRECTION_RETRIES) {
-                        state.finalReport = data
-                        state.isCompleted = true
-                    } else {
-                        state.retryCount++
-                    }
-                } else {
-                    blackBoxVault.logEvent("TOOL_ERROR", "Tool failed. Retrying.", "WARNING")
-                    state.retryCount++
-                }
-            } else {
-                // LLM decided no tools needed, or generated a final answer directly.
-                state.finalReport = generatedText
-                state.isCompleted = true
-=======
         // GAP 3: Optimistic Prefetching
         val sessionContext = SessionContext(sessionId)
         val predictedTools = predictToolCalls(query, sessionContext)
         val prefetchJobs = predictedTools.map { toolName ->
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 prefetchToolData(toolName, query, sessionContext)
->>>>>>> Stashed changes
             }
         }
 
@@ -743,51 +665,6 @@ class AgenticSkillOrchestrator @Inject constructor(
                     .collect { token ->
                         emit(token)
                     }
-<<<<<<< Updated upstream
-                    
-                    // Brief UI status indicator (not raw data)
-                    val toolActivity = toolRegistry.resolve(toolCall.toolName)?.getActivityDescription(toolCall.arguments)
-                        ?: "Processing ${toolCall.toolName}..."
-                    emit("\n\n[TOOL_EXECUTION] $toolActivity\n\n")
-                    
-                    val context = ExecutionContext(sessionId, 5000L, allowNetwork = allowNetwork)
-                    val results = toolMesh.dispatch(listOf(toolCall), context)
-                    val result = results.firstOrNull()
-
-                    if (result is ToolResult.AwaitingApproval) {
-                        emit("\n⚠️ *This action requires your confirmation: ${result.reason}*\n")
-                        history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.ASSISTANT, cleanAssistantText))
-                        history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, "[AWAITING_APPROVAL] User must authorize ${result.toolName}"))
-                        isFinalResponse = true
-                    } else {
-                        // [v1.4.0-SAR] Extract clean data and feed back to LLM for synthesis.
-                        // The LLM will CONTINUE generating to explain the results to the user.
-                        val resultText = when (result) {
-                            is ToolResult.Success -> result.data?.toString() ?: "No data returned"
-                            is ToolResult.Error -> "Error: ${result.reason}"
-                            is ToolResult.Fallback -> "Fallback: ${result.data?.toString() ?: "No data"}"
-                            else -> "Unknown result"
-                        }
-                        
-                        history.add(NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.ASSISTANT, cleanAssistantText))
-                        
-                        // [v1.5.0-SAR] Inject PostToolUse hook contexts (e.g., clinical disclaimers)
-                        val hookContexts = toolMesh.lastPostHookContexts
-                        val hookContextStr = if (hookContexts.isNotEmpty()) {
-                            "\n\nSYSTEM CONTEXT FROM SAFETY HOOKS:\n" + hookContexts.joinToString("\n")
-                        } else ""
-                        
-                        history.add(NeuralGateway.NeuralTurn(
-                            NeuralGateway.NeuralTurn.Role.SYSTEM, 
-                            "Tool '${toolCall.toolName}' returned: $resultText$hookContextStr\n\nNow explain this result to the user in a clear, helpful way. Do NOT emit another <tool_call>."
-                        ))
-                        
-                        // DON'T emit raw results — the while-loop continues and 
-                        // the LLM will generate a human-readable synthesis on the next turn.
-                    }
-                    
-                    blackBoxVault.logEvent("STREAM_TOOL_EXEC", "Tool: ${toolCall.toolName} processed.")
-=======
             }
             SkillIntentRouter.RoutingPath.ORIGA_REASONING -> {
                 Timber.i("🧠 [STREAM] Routing to ORIGA_REASONING (True ReAct)")
@@ -798,7 +675,6 @@ class AgenticSkillOrchestrator @Inject constructor(
                 if (history.size > 1) {
                     skillDef?.let { history.add(history.size - 1, NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, it.systemMandate)) }
                     history.add(history.size - 1, NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, toolPrompt))
->>>>>>> Stashed changes
                 } else {
                     skillDef?.let { history.add(0, NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, it.systemMandate)) }
                     history.add(0, NeuralGateway.NeuralTurn(NeuralGateway.NeuralTurn.Role.SYSTEM, toolPrompt))

@@ -20,17 +20,11 @@ android {
         ndk {
             abiFilters.add("arm64-v8a")
         }
-<<<<<<< Updated upstream
-        buildConfigField("String", "MODEL_MANIFEST_PUBLIC_KEY", "\"\"")
-        buildConfigField("String", "CORPUS_VERIFICATION_PUBLIC_KEY", "\"\"")
-        buildConfigField("int", "VERSION_CODE", "1")
-=======
         buildConfigField("String", "REMOTE_CONFIG_BACKEND", "\"github\"")
         buildConfigField("int", "VERSION_CODE", "1")
         buildConfigField("String", "CORPUS_VERIFICATION_PUBLIC_KEY", "\"04a3b2c1d0e9f804a3b2c1d0e9f804a3b2c1d0e9f804a3b2c1d0e9f8\"")
         buildConfigField("String", "CORPUS_VERIFICATION_KEY_ID", "\"scypheon-corpus-2026-q2\"")
         buildConfigField("String", "MODEL_MANIFEST_PUBLIC_KEY", "\"\"")
->>>>>>> Stashed changes
     }
 
     buildTypes {

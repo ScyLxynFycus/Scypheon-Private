@@ -128,12 +128,6 @@ fun GraphExplorerScreen(
     var selectedNode by remember { mutableStateOf<GraphNode?>(null) }
     
     // Viewport State
-<<<<<<< Updated upstream
-    var scale by remember { mutableStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
-    
-    val layoutState by viewModel.physics.layout.collectAsState()
-=======
     var isUserInteracting by remember { mutableStateOf(false) }
     var userScale by remember { mutableFloatStateOf(1f) }
     var userOffset by remember { mutableStateOf(Offset.Zero) }
@@ -154,7 +148,6 @@ fun GraphExplorerScreen(
     
     val viewMode by viewModel.currentView.collectAsState()
     var vizMode by remember { mutableStateOf(0) } // 0 = Network, 1 = Overlay
->>>>>>> Stashed changes
 
     LaunchedEffect(graphData) {
         viewModel.initGraph(graphData)
@@ -290,36 +283,6 @@ fun GraphExplorerScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-<<<<<<< Updated upstream
-                if (graphData.isEmpty()) {
-                    NeuralVaultEmptyState(
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                } else {
-                    AndroidView(
-                        factory = { ctx ->
-                            NeuralGraphView(ctx).apply {
-                                setLifecycle(lifecycleOwner.lifecycle)
-                                setOnNodeClickListener { node ->
-                                    selectedNode = node
-                                }
-                                bindPhysics(viewModel.physics.layout, scope)
-                            }
-                        },
-                        update = { view ->
-                            // [v1.5.3-SAR] Auto-center viewport on first valid layout.
-                            // The physics engine positions nodes around (500, 500) but the
-                            // viewport matrix starts at origin (0, 0), rendering nodes off-screen.
-                            if (!hasAutoCentered && view.width > 0 && view.height > 0) {
-                                val layout = layoutState
-                                if (layout.nodes.isNotEmpty()) {
-                                    val cx = layout.nodes.map { it.posX }.average().toFloat()
-                                    val cy = layout.nodes.map { it.posY }.average().toFloat()
-                                    // Offset = screen center - node centroid
-                                    offset = androidx.compose.ui.geometry.Offset(
-                                        view.width / 2f - cx,
-                                        view.height / 2f - cy
-=======
                 AnimatedContent(
                     targetState = viewMode,
                     transitionSpec = {
@@ -386,7 +349,6 @@ fun GraphExplorerScreen(
                                         userOffset = userOffset,
                                         density = density,
                                         baseColor = colors.textPrimary
->>>>>>> Stashed changes
                                     )
                                 }
 

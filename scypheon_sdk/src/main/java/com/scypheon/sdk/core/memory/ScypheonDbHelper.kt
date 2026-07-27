@@ -12,11 +12,7 @@ import timber.log.Timber
 class ScypheonDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     companion object {
-<<<<<<< Updated upstream
-        private const val DATABASE_VERSION = 6
-=======
         private const val DATABASE_VERSION = 7
->>>>>>> Stashed changes
         private const val DATABASE_NAME = "ScypheonCore.db"
 
         // Legacy Tables
