@@ -9,6 +9,7 @@ plugins {
     id("com.google.dagger.hilt.android")
     id("app.cash.sqldelight") version "2.0.2"
     id("org.jetbrains.kotlin.plugin.serialization") version "2.1.10"
+    jacoco
 }
 
 android {
@@ -230,4 +231,53 @@ tasks.register("generateModelHashes") {
 // Ensure hashes are generated before compilation
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     dependsOn("generateModelHashes")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ── JaCoCo Code Coverage ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    dependsOn("testDebugUnitTest")
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        csv.required.set(false)
+    }
+
+    val fileFilter = listOf(
+        "**/R.class", "**/R$*.class", "**/BuildConfig.*",
+        "**/Manifest*.*", "**/*Test*.*", "**/di/*",
+        "**/*_Factory.*", "**/*_MembersInjector.*",
+        "**/databinding/**", "**/binding/**"
+    )
+
+    val debugTree = layout.buildDirectory.dir("intermediates/javac/debug/classes").get().asFile
+    val kotlinSrc = layout.buildDirectory.dir("tmp/kotlin-classes/debug").get().asFile
+
+    sourceDirectories.setFrom(files(debugTree, kotlinSrc))
+    classDirectories.setFrom(
+        files(
+            tree(classDirectories) { matching ->
+                fileFilter.forEach { matching.exclude(it) }
+            }
+        )
+    )
+    executionData.setFrom(
+        layout.buildDirectory.file("jacoco/testDebugUnitTest.exec")
+    )
+
+    additionalSourceDirs.setFrom(files("src/main/java", "src/main/kotlin"))
+}
+
+tasks.register("checkCoverage") {
+    dependsOn("jacocoTestReport")
+    doLast {
+        val reportDir = layout.buildDirectory.dir("reports/jacoco/jacocoTestReport/html").get().asFile
+        if (!reportDir.exists()) {
+            throw GradleException("JaCoCo report not found at ${reportDir.absolutePath}")
+        }
+        println("✅ JaCoCo coverage report generated at: ${reportDir.absolutePath}")
+    }
 }
