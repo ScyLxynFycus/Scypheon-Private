@@ -17,7 +17,7 @@ import javax.inject.Singleton
  * Ported from PR #3.
  */
 @Singleton
-class BlackBoxLogger @Inject constructor(private val context: Context) : Timber.Tree() {
+class BlackBoxLogger @Inject constructor(@dagger.hilt.android.qualifiers.ApplicationContext private val context: Context) : Timber.Tree() {
 
     private val logFile: File
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)

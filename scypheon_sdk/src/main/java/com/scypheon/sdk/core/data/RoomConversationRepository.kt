@@ -31,7 +31,7 @@ abstract class ConversationDatabase : RoomDatabase() {
 
 @Singleton
 class RoomConversationRepository @Inject constructor(
-    context: Context
+    @dagger.hilt.android.qualifiers.ApplicationContext context: Context
 ) : com.scypheon.sdk.core.agent.ooda.ConversationRepository {
     private val dao = Room.databaseBuilder(context, ConversationDatabase::class.java, "conversations.db")
         .fallbackToDestructiveMigration()

@@ -73,4 +73,25 @@ class MedicalTypeConverters {
         for (i in arr.indices) arr[i] = buffer.float
         return arr
     }
+
+    @TypeConverter
+    fun fromMemoryTier(tier: com.scypheon.sdk.core.memory.MemoryTier): String {
+        return tier.name
+    }
+
+    @TypeConverter
+    fun toMemoryTier(name: String): com.scypheon.sdk.core.memory.MemoryTier {
+        return com.scypheon.sdk.core.memory.MemoryTier.valueOf(name)
+    }
+
+    @TypeConverter
+    fun fromStringList(list: List<String>?): String {
+        return list?.joinToString(separator = "|") ?: ""
+    }
+
+    @TypeConverter
+    fun toStringList(data: String?): List<String> {
+        if (data.isNullOrEmpty()) return emptyList()
+        return data.split("|")
+    }
 }

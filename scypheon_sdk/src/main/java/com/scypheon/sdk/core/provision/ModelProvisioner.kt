@@ -1,6 +1,11 @@
 package com.scypheon.sdk.core.provision
 
 import android.app.DownloadManager
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.RandomAccessFile
+import kotlinx.coroutines.*
+
 import android.content.Context
 import android.database.Cursor
 import android.net.Uri
@@ -31,6 +36,14 @@ class ModelProvisioner @Inject constructor(
 
     // Track active download IDs mapped to model filenames
     private val activeDownloads = mutableMapOf<String, Long>()
+    private val okHttpClient = OkHttpClient.Builder()
+        .addInterceptor(com.scypheon.sdk.core.security.SsrfProtectionInterceptor())
+        .build()
+    private val activeJobs = mutableMapOf<String, Job>()
+    private val _downloadStates = mutableMapOf<String, DownloadProgress>()
+    private val downloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    val STATUS_PAUSED = 100
+
 
     /**
      * Checks if the device has enough free space for the model.
@@ -186,6 +199,12 @@ class ModelProvisioner @Inject constructor(
      * Check if a model is actively being downloaded.
      */
     fun isDownloading(fileName: String): Boolean {
+        if (activeJobs.containsKey(fileName)) {
+            val job = activeJobs[fileName]
+            if (job != null && job.isActive) {
+                return true
+            }
+        }
         val downloadId = activeDownloads[fileName] ?: return false
         val progress = getDownloadProgress(downloadId)
         val isActive = progress.status == DownloadManager.STATUS_RUNNING || progress.status == DownloadManager.STATUS_PENDING
@@ -200,8 +219,137 @@ class ModelProvisioner @Inject constructor(
     /**
      * Clear tracking for a completed download.
      */
+    /**
+     * Cancels an active download.
+     */
+
+    /**
+     * Pauses an active download.
+     */
+    fun pauseDownload(fileName: String) {
+        activeJobs[fileName]?.cancel()
+        activeJobs.remove(fileName)
+        val current = _downloadStates[fileName]
+        if (current != null) {
+            _downloadStates[fileName] = current.copy(status = STATUS_PAUSED)
+        }
+        Timber.i("📦 [PROVISION] Paused: $fileName")
+    }
+
+    /**
+     * Resumes a paused download or starts a new one.
+     */
+    /**
+     * Resumes a paused download or starts a new one.
+     */
+    fun resumeDownload(model: ModelMetadata, onProgress: (DownloadProgress) -> Unit) {
+        if (activeJobs.containsKey(model.fileName)) return
+
+        val job = downloadScope.launch {
+            try {
+                val finalFile = getModelPath(model.fileName)
+                val tempFile = File(finalFile.parentFile, "${model.fileName}.download")
+                val existingLength = if (tempFile.exists()) tempFile.length() else 0L
+                
+                val requestBuilder = Request.Builder()
+                    .url(model.downloadUrl)
+                
+                if (existingLength > 0) {
+                    requestBuilder.header("Range", "bytes=$existingLength-")
+                }
+
+                if (model.isGated) {
+                    val token = vault.getHfToken()
+                    if (!token.isNullOrBlank()) {
+                        requestBuilder.header("Authorization", "Bearer $token")
+                    }
+                }
+
+                okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                    if (!response.isSuccessful && response.code != 206) {
+                        val err = "Download failed: ${response.code}"
+                        _downloadStates[model.fileName] = DownloadProgress(existingLength, model.sizeBytes, 0f, 16, 0) // 16 is failed
+                        return@launch
+                    }
+
+                    val body = response.body ?: return@launch
+                    val totalSize = if (response.code == 206) {
+                        val range = response.header("Content-Range")
+                        range?.substringAfterLast("/")?.toLongOrNull() ?: model.sizeBytes
+                    } else {
+                        body.contentLength() + existingLength
+                    }
+
+                    RandomAccessFile(tempFile, "rw").use { raf ->
+                        if (response.code == 206) {
+                            raf.seek(existingLength)
+                        } else {
+                            raf.setLength(0)
+                        }
+
+                        val buffer = ByteArray(64 * 1024)
+                        var bytesRead: Int
+                        var currentBytes = existingLength
+                        body.byteStream().use { inputStream ->
+                            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                                if (!isActive) break
+                                raf.write(buffer, 0, bytesRead)
+                                currentBytes += bytesRead
+                                
+                                val progress = DownloadProgress(
+                                    currentBytes,
+                                    totalSize,
+                                    (currentBytes.toFloat() / totalSize.toFloat()).coerceIn(0f, 1f),
+                                    2, // STATUS_RUNNING
+                                    0
+                                )
+                                _downloadStates[model.fileName] = progress
+                                onProgress(progress)
+                            }
+                        }
+                    }
+
+                    if (isActive) {
+                        if (tempFile.renameTo(finalFile)) {
+                            Timber.i("📦 [PROVISION] Successfully renamed temp download file to final model path")
+                        } else {
+                            Timber.e("📦 [PROVISION] Failed to rename temp download file")
+                            throw java.io.IOException("Failed to rename completed model file")
+                        }
+                        _downloadStates[model.fileName] = DownloadProgress(totalSize, totalSize, 1f, 8, 0) // 8 is SUCCESS
+                        activeJobs.remove(model.fileName)
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Download error for ${model.fileName}")
+                _downloadStates[model.fileName] = DownloadProgress(0, model.sizeBytes, 0f, 16, 0)
+            }
+        }
+        activeJobs[model.fileName] = job
+    }
+
+    /**
+     * Get the current download progress from the custom downloader.
+     */
+    fun getCustomDownloadProgress(fileName: String): DownloadProgress? {
+        return _downloadStates[fileName]
+    }
+    fun cancelDownload(fileName: String) {
+        activeDownloads[fileName]?.let { id ->
+            downloadManager.remove(id)
+        }
+        activeDownloads.remove(fileName)
+        activeJobs[fileName]?.cancel()
+        activeJobs.remove(fileName)
+        _downloadStates.remove(fileName)
+        val file = getModelPath(fileName)
+        val tempFile = File(file.parentFile, "$fileName.download")
+        if (tempFile.exists()) tempFile.delete()
+    }
+
     fun clearDownload(fileName: String) {
         activeDownloads.remove(fileName)
+        activeJobs.remove(fileName)
     }
 
     /**
@@ -219,16 +367,32 @@ class ModelProvisioner @Inject constructor(
     }
 
     /**
+     * Checks if a model's temp download file exists and is not empty.
+     */
+    fun isModelDownloadingOrPaused(fileName: String): Boolean {
+        val tempFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "$fileName.download")
+        return tempFile.exists() && tempFile.length() > 0
+    }
+
+    /**
      * Deletes a model file from disk.
      */
     fun deleteModel(fileName: String): Boolean {
         activeDownloads.remove(fileName)
+        activeJobs[fileName]?.cancel()
+        activeJobs.remove(fileName)
+        _downloadStates.remove(fileName)
         val file = getModelPath(fileName)
-        return if (file.exists()) {
-            val deleted = file.delete()
-            if (deleted) Timber.i("📦 [PROVISION] Deleted: $fileName")
-            deleted
-        } else false
+        val tempFile = File(file.parentFile, "$fileName.download")
+        var deleted = false
+        if (file.exists()) {
+            deleted = file.delete()
+        }
+        if (tempFile.exists()) {
+            deleted = tempFile.delete() || deleted
+        }
+        if (deleted) Timber.i("📦 [PROVISION] Deleted: $fileName")
+        return deleted
     }
 
     /**

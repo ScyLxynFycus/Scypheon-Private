@@ -68,8 +68,10 @@ class AutonomousOracleAgent @Inject constructor(
         // 3. CONFIRM & VALIDATE (L5C Grounding)
         val verifiedFindings = mutableListOf<String>()
         var isOverallValid = true
+        var hasFindings = false
 
         for (fact in findings) {
+            hasFindings = true
             val validation = clinicalValidator.validateResponse(fact)
             if (validation.isSafe) {
                 verifiedFindings.add(fact)
@@ -77,6 +79,10 @@ class AutonomousOracleAgent @Inject constructor(
                 Timber.e("⛔ [AUTONOMOUS_AGENT] Fact rejected by Grounding: $fact")
                 isOverallValid = false 
             }
+        }
+
+        if (!hasFindings) {
+            isOverallValid = false
         }
 
         return InvestigationStatus(
@@ -88,9 +94,47 @@ class AutonomousOracleAgent @Inject constructor(
     }
 
     private fun shouldTriggerInvestigation(query: String): Boolean {
-        val keywords = listOf("allergy", "allergic", "alergi", "dose", "dosis", "stok", "stock", "yesterday", "kemarin")
         val normalized = query.lowercase()
-        return keywords.any { normalized.contains(it) } || query.length > 150 
+
+        // 1. Dosage/quantity detection (critical for medical safety)
+        val dosePattern = Regex(
+            """\b(\d+(?:\.\d+)?)\s*(mg|g|ml|mcg|units?|drops?|tablets?|pills?|capsules?)\b""",
+            RegexOption.IGNORE_CASE
+        )
+        if (dosePattern.containsMatchIn(normalized)) {
+            Timber.d("🔍 Trigger: Dosage detected in query")
+            return true
+        }
+
+        // 2. Critical drug name detection
+        val criticalDrugs = listOf(
+            "paracetamol", "acetaminophen", "ibuprofen", "aspirin", "warfarin", 
+            "penicillin", "amoxicillin", "insulin", "metformin", "lisinopril",
+            "atorvastatin", "omeprazole", "salbutamol", "albuterol"
+        )
+        if (criticalDrugs.any { normalized.contains(it) }) {
+            Timber.d("🔍 Trigger: Critical drug name detected")
+            return true
+        }
+
+        // 3. Medical keywords
+        val keywords = listOf(
+            "allergy", "allergic", "alergi", "dose", "dosis", "stok", "stock", "yesterday", "kemarin",
+            "interaction", "interaksi", "side effect", "efek samping", "contraindication", "kontraindikasi",
+            "overdose", "keracunan", "toxicity", "toksisitas"
+        )
+        if (keywords.any { normalized.contains(it) }) {
+            Timber.d("🔍 Trigger: Medical keyword detected")
+            return true
+        }
+
+        // 4. Long query heuristic
+        if (query.length > 150) {
+            Timber.d("🔍 Trigger: Long query (${query.length} chars)")
+            return true
+        }
+
+        return false
     }
 
     fun buildFinalIntelligencePrompt(query: String, status: InvestigationStatus): String {

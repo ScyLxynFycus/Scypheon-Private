@@ -2,12 +2,8 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
-    id("org.jetbrains.kotlin.kapt")
     id("com.google.dagger.hilt.android")
-}
-
-kapt {
-    correctErrorTypes = true
+    id("com.google.devtools.ksp")
 }
 
 android {
@@ -22,6 +18,23 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "com.scypheon.app.HiltTestRunner"
+        
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                arguments += "-DANDROID_STL=c++_shared"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {
@@ -34,6 +47,9 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    androidResources {
+        noCompress.addAll(listOf("bin", "gguf"))
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -64,6 +80,11 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
+
+    // Filament 3D Engine for Graph Rendering
+    implementation("com.google.android.filament:filament-android:1.45.0")
+    implementation("com.google.android.filament:filament-utils-android:1.45.0")
+
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 
@@ -71,7 +92,7 @@ dependencies {
     implementation("androidx.core:core-splashscreen:1.0.1")
 
     // Jetpack Compose
-    val composeBom = platform("androidx.compose:compose-bom:2025.05.01")
+    val composeBom = platform("androidx.compose:compose-bom:2026.05.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)
     implementation("androidx.compose.ui:ui")
@@ -86,7 +107,7 @@ dependencies {
 
     // Dagger Hilt for Dependency Injection
     implementation("com.google.dagger:hilt-android:2.55")
-    kapt("com.google.dagger:hilt-android-compiler:2.55")
+    ksp("com.google.dagger:hilt-android-compiler:2.55")
     // hiltViewModel() support inside Composables
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
 
@@ -94,7 +115,7 @@ dependencies {
     val work_version = "2.9.0"
     implementation("androidx.work:work-runtime-ktx:$work_version")
     implementation("androidx.hilt:hilt-work:1.2.0")
-    kapt("androidx.hilt:hilt-compiler:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
 
     // Timber for Logging
     implementation("com.jakewharton.timber:timber:5.0.1")
@@ -106,7 +127,7 @@ dependencies {
     val room_version = "2.6.1"
     implementation("androidx.room:room-runtime:$room_version")
     implementation("androidx.room:room-ktx:$room_version")
-    kapt("androidx.room:room-compiler:$room_version")
+    ksp("androidx.room:room-compiler:$room_version")
 
     // Kotlin Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
@@ -119,15 +140,19 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation("com.google.dagger:hilt-android-testing:2.55")
-    kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.55")
+    kspAndroidTest("com.google.dagger:hilt-android-compiler:2.55")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Image Loading (Coil)
     implementation("io.coil-kt:coil-compose:2.5.0")
 
+    // CameraX View for Live Mode Preview
+    implementation("androidx.camera:camera-view:1.3.1")
+
     // ML Kit Vision
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.0")
+    implementation("com.google.android.gms:play-services-mlkit-image-labeling:16.0.8")
 
     // Coroutines Play Services (for await() on Tasks)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
@@ -137,6 +162,10 @@ dependencies {
 
     // Baseline Profiles for Startup Optimization
     implementation("androidx.profileinstaller:profileinstaller:1.3.1")
+
+    // Security & Encrypted DB Support for isolated processes
+    implementation("net.zetetic:sqlcipher-android:4.5.4")
+    implementation("androidx.sqlite:sqlite-ktx:2.4.0")
 
     // Memory Leak Detection (Debug Only)
     debugImplementation("com.squareup.leakcanary:leakcanary-android:2.12")

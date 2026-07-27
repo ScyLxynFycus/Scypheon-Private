@@ -13,16 +13,24 @@ plugins {
 
 android {
     namespace = "com.scypheon.sdk"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 28
         ndk {
             abiFilters.add("arm64-v8a")
         }
+<<<<<<< Updated upstream
         buildConfigField("String", "MODEL_MANIFEST_PUBLIC_KEY", "\"\"")
         buildConfigField("String", "CORPUS_VERIFICATION_PUBLIC_KEY", "\"\"")
         buildConfigField("int", "VERSION_CODE", "1")
+=======
+        buildConfigField("String", "REMOTE_CONFIG_BACKEND", "\"github\"")
+        buildConfigField("int", "VERSION_CODE", "1")
+        buildConfigField("String", "CORPUS_VERIFICATION_PUBLIC_KEY", "\"04a3b2c1d0e9f804a3b2c1d0e9f804a3b2c1d0e9f804a3b2c1d0e9f8\"")
+        buildConfigField("String", "CORPUS_VERIFICATION_KEY_ID", "\"scypheon-corpus-2026-q2\"")
+        buildConfigField("String", "MODEL_MANIFEST_PUBLIC_KEY", "\"\"")
+>>>>>>> Stashed changes
     }
 
     buildTypes {
@@ -32,19 +40,31 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     buildFeatures {
         aidl = true
         buildConfig = true
     }
+    
+    lint {
+        abortOnError = false
+    }
 
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
+        }
+    }
+
+    packaging {
+        jniLibs {
+            pickFirsts.add("lib/**/libggml*.so")
+            pickFirsts.add("lib/**/libllama*.so")
+            pickFirsts.add("**/libc++_shared.so")
         }
     }
 }
@@ -64,7 +84,7 @@ kapt {
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         freeCompilerArgs.add("-Xskip-metadata-version-check")
     }
 }
@@ -130,6 +150,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     testImplementation("io.mockk:mockk:1.13.8")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
+    testImplementation("org.robolectric:robolectric:4.11.1")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
 
@@ -159,6 +180,10 @@ dependencies {
 
     // Datetime
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.4.1")
+
+    // PDF Extraction & HTML Parsing
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation("org.jsoup:jsoup:1.17.2")
 }
 
 // 🛡️ SOLARIS PROVENANCE: SHA-256 Compile-Time Generation Task

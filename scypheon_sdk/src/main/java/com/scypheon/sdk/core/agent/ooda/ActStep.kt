@@ -42,6 +42,7 @@ interface AuditLogger {
     fun logExecutionError(executionId: String, toolName: String, error: Throwable)
     fun logPipelineStart(traceId: String, metadata: String)
     fun logPipelineCompletion(traceId: String, success: Boolean, failureReason: String?, latencyMs: Long)
+    fun logDegradation(traceId: String, category: String, reason: String)
 }
 
 // --- Core ActStep Implementation ---
@@ -131,7 +132,7 @@ class ActStep @Inject constructor(
             val elapsed = SystemClock.elapsedRealtime() - startTime
 
             if (!validation.isValid) {
-                Timber.w("⚠️ [OODA_ACT] Output validation failed: ${validation.reason}")
+                Timber.w("⚠�E�E[OODA_ACT] Output validation failed: ${validation.reason}")
                 return@withContext FastPathResult(
                     skillName = orientation.selectedSkill.type.name,
                     toolName = decision.toolName,
@@ -150,7 +151,7 @@ class ActStep @Inject constructor(
                 is ToolResult.AwaitingApproval -> "[AWAITING_APPROVAL] ${execResult.toolName}: ${execResult.reason}"
             }
 
-            Timber.i("✅ [OODA_ACT] Executed & validated in ${elapsed}ms | Trace: $executionId")
+            Timber.i("✁E[OODA_ACT] Executed & validated in ${elapsed}ms | Trace: $executionId")
             FastPathResult(
                 skillName = orientation.selectedSkill.type.name,
                 toolName = decision.toolName,
@@ -162,7 +163,7 @@ class ActStep @Inject constructor(
 
         } catch (e: Exception) {
             val elapsed = SystemClock.elapsedRealtime() - startTime
-            Timber.e(e, "❌ [OODA_ACT] Execution failed: ${decision.toolName} | Trace: $executionId")
+            Timber.e(e, "❁E[OODA_ACT] Execution failed: ${decision.toolName} | Trace: $executionId")
             auditLogger.logExecutionError(executionId, decision.toolName, e)
             
             FastPathResult(
@@ -177,3 +178,4 @@ class ActStep @Inject constructor(
         }
     }
 }
+

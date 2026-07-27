@@ -3,23 +3,34 @@ package com.scypheon.sdk.core.memory
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import timber.log.Timber
 
 /**
  * Enterprise-grade ACID compliant SQLite Database for Scypheon SDK.
- * Ensures data persistency and fast transactional throughput across threads.
+ * Version 5: Introduces Unified Memory Tiers and SHA-256 Deduplication support.
  */
 class ScypheonDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     companion object {
+<<<<<<< Updated upstream
         private const val DATABASE_VERSION = 6
+=======
+        private const val DATABASE_VERSION = 7
+>>>>>>> Stashed changes
         private const val DATABASE_NAME = "ScypheonCore.db"
 
-        // Tables
+        // Legacy Tables
         const val TABLE_SESSIONS = "sessions"
         const val TABLE_MESSAGES = "messages"
         const val TABLE_PROFILE = "user_profile"
 
-        // Message Status Constants (Phoenix & Solaris Protocols)
+        // [v5.0] Unified Enterprise Memory
+        const val TABLE_MEMORY_ENTRIES = "memory_entries"
+        
+        // [v6.0] Searchable Encryption Tokens
+        const val TABLE_SEARCHABLE_TOKENS = "searchable_tokens"
+
+        // Memory Status Constants
         const val STATUS_SUCCESS = 0
         const val STATUS_FAILED = 1
         const val STATUS_SYSTEM = 2
@@ -33,11 +44,12 @@ class ScypheonDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
             CREATE TABLE $TABLE_SESSIONS (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
-                timestamp INTEGER NOT NULL
+                timestamp INTEGER NOT NULL,
+                is_archived INTEGER DEFAULT 0
             )
         """)
 
-        // Create Messages Table with Phoenix Protocol support
+        // Create Messages Table
         db.execSQL("""
             CREATE TABLE $TABLE_MESSAGES (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,37 +64,39 @@ class ScypheonDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
             )
         """)
 
-        // Enterprise Feature: BM25 Keyword Search Index (FTS4)
+        // [v5.0] Unified Memory Entry Table with Deduplication Support
         db.execSQL("""
-            CREATE VIRTUAL TABLE ${TABLE_MESSAGES}_fts USING fts4(
-                content='$TABLE_MESSAGES',
-                text
+            CREATE TABLE $TABLE_MEMORY_ENTRIES (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_hash TEXT UNIQUE NOT NULL, -- SHA-256 hash for deduplication
+                content TEXT NOT NULL,
+                tier TEXT NOT NULL, -- WORKING, EPISODIC, SEMANTIC
+                source_id TEXT, -- message_id or trace_id
+                timestamp INTEGER NOT NULL,
+                importance REAL DEFAULT 0.5,
+                embedding BLOB,
+                metadata TEXT -- JSON encoded extra data
             )
         """)
 
-        // Triggers to keep FTS index synced automatically with the main messages table
+        // [v6.0] Searchable Encryption Tokens Table
         db.execSQL("""
-            CREATE TRIGGER messages_ai AFTER INSERT ON $TABLE_MESSAGES
-            BEGIN
-                INSERT INTO ${TABLE_MESSAGES}_fts(rowid, text) VALUES (new.id, new.text);
-            END;
+            CREATE TABLE $TABLE_SEARCHABLE_TOKENS (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL,
+                encrypted_token TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                token_type TEXT NOT NULL,
+                relevance_weight REAL DEFAULT 1.0,
+                FOREIGN KEY (message_id) REFERENCES $TABLE_MESSAGES(id) ON DELETE CASCADE
+            )
         """)
+        
+        db.execSQL("CREATE INDEX idx_searchable_tokens_hash ON $TABLE_SEARCHABLE_TOKENS(token_hash)")
+        db.execSQL("CREATE INDEX idx_searchable_tokens_message ON $TABLE_SEARCHABLE_TOKENS(message_id)")
 
-        db.execSQL("""
-            CREATE TRIGGER messages_ad AFTER DELETE ON $TABLE_MESSAGES
-            BEGIN
-                INSERT INTO ${TABLE_MESSAGES}_fts(${TABLE_MESSAGES}_fts, rowid, text) VALUES ('delete', old.id, old.text);
-            END;
-        """)
-
-        db.execSQL("""
-            CREATE TRIGGER messages_au AFTER UPDATE OF text ON $TABLE_MESSAGES
-            BEGIN
-                UPDATE ${TABLE_MESSAGES}_fts SET text = new.text WHERE rowid = old.id;
-            END;
-        """)
-
-        // Create User Profile Table (for Medical Allergies, preferences)
+        // User Profile Table
         db.execSQL("""
             CREATE TABLE $TABLE_PROFILE (
                 key TEXT PRIMARY KEY,
@@ -90,52 +104,68 @@ class ScypheonDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
             )
         """)
 
-        // Insert a default empty allergy profile so it can be updated later
         db.execSQL("INSERT INTO $TABLE_PROFILE (key, value) VALUES ('allergies', 'None recorded')")
     }
 
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
         if (!db.isReadOnly) {
-            // Enable WAL for concurrency and PRAGMA foreign_keys for integrity
             db.execSQL("PRAGMA foreign_keys=ON;")
             db.enableWriteAheadLogging()
             db.rawQuery("PRAGMA synchronous=NORMAL;", null).close()
-            
-            // FTS Recovery Protocol: Detect and rebuild corrupted FTS index without data loss
-            db.rawQuery("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='${TABLE_MESSAGES}_fts'", null).use { cursor ->
-                if (cursor.moveToFirst() && cursor.getInt(0) == 0) {
-                    db.beginTransaction()
-                    try {
-                        // Re-create the FTS table and triggers
-                        db.execSQL("""
-                            CREATE VIRTUAL TABLE IF NOT EXISTS ${TABLE_MESSAGES}_fts USING fts4(
-                                content='$TABLE_MESSAGES',
-                                text
-                            )
-                        """)
-                        // Sync existing data to FTS
-                        db.execSQL("INSERT INTO ${TABLE_MESSAGES}_fts(rowid, text) SELECT id, text FROM $TABLE_MESSAGES")
-                        db.setTransactionSuccessful()
-                    } finally { db.endTransaction() }
-                }
-            }
         }
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Log the upgrade for diagnostics
-        android.util.Log.w("ScypheonDb", "Upgrading database from version $oldVersion to $newVersion")
+        Timber.w("Upgrading database from $oldVersion to $newVersion")
         
-        if (oldVersion < 4) {
-            // Fix: Trigger update to prevent SQL logic error on BLOB update
-            db.execSQL("DROP TRIGGER IF EXISTS messages_au")
+        if (oldVersion < 5) {
+            // Upgrade to v5.0: Add Unified Memory Entries
             db.execSQL("""
-                CREATE TRIGGER messages_au AFTER UPDATE OF text ON $TABLE_MESSAGES
-                BEGIN
-                    UPDATE ${TABLE_MESSAGES}_fts SET text = new.text WHERE rowid = old.id;
-                END;
+                CREATE TABLE IF NOT EXISTS $TABLE_MEMORY_ENTRIES (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_hash TEXT UNIQUE NOT NULL,
+                    content TEXT NOT NULL,
+                    tier TEXT NOT NULL,
+                    source_id TEXT,
+                    timestamp INTEGER NOT NULL,
+                    importance REAL DEFAULT 0.5,
+                    embedding BLOB,
+                    metadata TEXT
+                )
             """)
+        }
+        
+        if (oldVersion < 6) {
+            // Drop broken FTS infrastructure
+            db.execSQL("DROP TRIGGER IF EXISTS messages_ai")
+            db.execSQL("DROP TRIGGER IF EXISTS messages_ad")
+            db.execSQL("DROP TRIGGER IF EXISTS messages_au")
+            db.execSQL("DROP TABLE IF EXISTS ${TABLE_MESSAGES}_fts")
+            
+            // Create new searchable tokens table
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS $TABLE_SEARCHABLE_TOKENS (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id INTEGER NOT NULL,
+                    token_hash TEXT NOT NULL,
+                    encrypted_token TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    token_type TEXT NOT NULL,
+                    relevance_weight REAL DEFAULT 1.0,
+                    FOREIGN KEY (message_id) REFERENCES $TABLE_MESSAGES(id) ON DELETE CASCADE
+                )
+            """)
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_searchable_tokens_hash ON $TABLE_SEARCHABLE_TOKENS(token_hash)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_searchable_tokens_message ON $TABLE_SEARCHABLE_TOKENS(message_id)")
+        }
+        
+        if (oldVersion < 7) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_SESSIONS ADD COLUMN is_archived INTEGER DEFAULT 0")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to alter sessions table for is_archived column")
+            }
         }
     }
 }

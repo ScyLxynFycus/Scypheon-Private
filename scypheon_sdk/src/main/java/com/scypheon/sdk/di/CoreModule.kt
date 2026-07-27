@@ -23,7 +23,6 @@ import javax.inject.Singleton
 abstract class CoreBindingsModule {
     @Binds @Singleton abstract fun bindSystemMonitor(impl: SystemMonitorImpl): com.scypheon.sdk.core.agent.SystemMonitor
     @Binds @Singleton abstract fun bindInputSanitizer(impl: InputSanitizerImpl): InputSanitizer
-    @Binds @Singleton abstract fun bindSafetyPipeline(impl: SafetyPipelineImpl): com.scypheon.sdk.core.agent.SafetyPipeline
     
     @Binds @Singleton abstract fun bindRouterOutputValidator(impl: OutputValidatorImpl): com.scypheon.sdk.core.agent.RouterOutputValidator
     @Binds @Singleton abstract fun bindOodaOutputValidator(impl: OutputValidatorImpl): com.scypheon.sdk.core.agent.ooda.OutputValidator
@@ -50,4 +49,7 @@ object InfrastructureModule {
 
     @Provides @Singleton
     fun provideOrientationConfig(): com.scypheon.sdk.core.agent.ooda.OrientationConfig = com.scypheon.sdk.core.agent.ooda.OrientationConfig()
+
+    @Provides @Singleton
+    fun providePqcConfig(): com.scypheon.sdk.core.security.PqcConfig = com.scypheon.sdk.core.security.PqcConfig()
 }

@@ -112,6 +112,9 @@ object DatabaseModule {
     fun provideGraphDao(db: AppDatabase): com.scypheon.sdk.core.intelligence.graph.GraphDao = db.graphDao()
 
     @Provides
+    fun provideMemoryDao(db: AppDatabase): com.scypheon.sdk.core.memory.MemoryDao = db.memoryDao()
+
+    @Provides
     @Singleton
     fun provideMedicalQueries(driver: SqlDriver): MedicalQueries {
         return MedicalDatabase(driver).medicalQueries

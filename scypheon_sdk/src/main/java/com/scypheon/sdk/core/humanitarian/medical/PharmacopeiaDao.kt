@@ -10,21 +10,21 @@ interface PharmacopeiaDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(entries: List<PharmacopeiaEntry>)
 
-    @Query("SELECT * FROM pharmacopeia WHERE drug_name = :name LIMIT 1")
+    @Query("SELECT * FROM pharmacopeia WHERE drugName = :name LIMIT 1")
     suspend fun getByDrugName(name: String): PharmacopeiaEntry?
 
     @Query("SELECT * FROM pharmacopeia WHERE id = :id LIMIT 1")
     suspend fun getDrugById(id: String): PharmacopeiaEntry?
 
-    @Query("SELECT * FROM pharmacopeia WHERE generic_name = :genericName LIMIT 1")
+    @Query("SELECT * FROM pharmacopeia WHERE genericName = :genericName LIMIT 1")
     suspend fun getEntryByGenericName(genericName: String): PharmacopeiaEntry?
 
-    // Ambil semua obat sekaligus hanya dengan 1 kali query!
-    @Query("SELECT * FROM pharmacopeia WHERE LOWER(drug_name) IN (:tokens) OR LOWER(generic_name) IN (:tokens)")
+    // Fetch all drugs at once with just 1 query!
+    @Query("SELECT * FROM pharmacopeia WHERE LOWER(drugName) IN (:tokens) OR LOWER(genericName) IN (:tokens)")
     suspend fun getDrugsByTokens(tokens: List<String>): List<PharmacopeiaEntry>
 
     // 🚀 THE OFFLINE RAG WEAPON
-    // Mencari indikasi medis dengan kecepatan cahaya (< 2ms)
+    // Searches medical indications at lightning speed (< 2ms)
     @Query("""
         SELECT main.* FROM pharmacopeia main
         JOIN pharmacopeia_fts fts ON main.rowid = fts.rowid

@@ -9,14 +9,14 @@ import com.scypheon.sdk.core.humanitarian.education.LiveEnglishTutor
 import com.scypheon.sdk.core.humanitarian.psychology.ReminiscenceCompanion
 import com.scypheon.sdk.core.humanitarian.accessibility.DeafEnvironmentGuardian
 import com.scypheon.sdk.core.memory.ContextSummarizer
-import com.scypheon.sdk.core.live.LiveSessionOrchestrator
+import com.scypheon.sdk.live.core.model.LiveState
 import com.scypheon.sdk.core.live.ContinuousSpeechRecognizer
 import com.scypheon.sdk.core.live.LiveVisionPipeline
 import com.scypheon.sdk.core.live.LiveAudioPipeline
 import com.scypheon.sdk.core.memory.Session
 import com.scypheon.sdk.core.memory.ChatMessage
 import com.scypheon.sdk.core.engine.InitializationState
-import com.scypheon.sdk.core.telemetry.AuditLogEntry
+import com.scypheon.sdk.core.security.AuditLogEntry
 import android.net.Uri
 import android.app.NotificationManager
 import android.os.Build
@@ -24,6 +24,8 @@ import androidx.core.app.NotificationManagerCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.google.mlkit.vision.label.ImageLabeling
+import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.delay
 import com.scypheon.sdk.core.telemetry.BlackBoxVault
@@ -46,23 +48,37 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import com.scypheon.sdk.core.humanitarian.accessibility.GestureGuardian
 import com.scypheon.sdk.core.humanitarian.accessibility.KineticGuardian
 import com.scypheon.sdk.core.model.ScypheonConfig
 import com.scypheon.sdk.core.model.ScypheonBackendDiagnostic
 import timber.log.Timber
+import com.scypheon.app.domain.usecase.GetInferenceStreamUseCase
+import com.scypheon.app.domain.usecase.InferenceEvent
+import com.scypheon.app.domain.usecase.ManageResourceReclamationUseCase
+import com.scypheon.app.domain.usecase.ChatSessionUseCase
+import com.scypheon.app.domain.usecase.ModelManagementUseCase
 import javax.inject.Inject
 import kotlinx.coroutines.withContext
+
+const val NO_MODEL_SELECTED = "no models selected"
 
 data class ChatMessageUiState(
     val text: String,
     val isUser: Boolean,
     val isLoading: Boolean = false,
+    val thinkingText: String? = null,
     val hardwareStatus: String? = null,
     val source: String? = null, // e.g. "Clinical Database", "Neural Vault"
+    val imageUri: android.net.Uri? = null,
     val status: Int = 0, // STATUS_SUCCESS
     val isContextEligible: Boolean = true,
+    val disclaimerType: String? = null, // "MEDICAL" or "EDUCATION", null if none
     val id: String = java.util.UUID.randomUUID().toString()
 )
 
@@ -83,7 +99,7 @@ data class UiState(
     
     // Model Hub State
     val isModelHubVisible: Boolean = false,
-    val activeModelName: String = "no models selected",
+    val activeModelName: String = NO_MODEL_SELECTED,
     val activeEngineType: String? = null,
     val hfToken: String = "",
     val downloadingModelId: String? = null,
@@ -107,8 +123,8 @@ data class UiState(
     
     // Live Mode State
     val isLiveModeActive: Boolean = false,
-    val liveState: LiveSessionOrchestrator.LiveState = LiveSessionOrchestrator.LiveState.Idle,
-    val liveTranscript: List<LiveSessionOrchestrator.TranscriptEntry> = emptyList(),
+    val liveState: LiveState = LiveState.Idle,
+    val liveTranscript: List<com.scypheon.sdk.live.core.model.TranscriptEntry> = emptyList(),
     val liveAudioLevel: Float = 0f,
     
     // Waveform Animation Phase
@@ -118,6 +134,7 @@ data class UiState(
     val systemHealth: SystemHealth? = null,
     val isSystemHealthVisible: Boolean = false,
     val systemWarning: String? = null,
+    val showNoModelWarningDialog: Boolean = false,
     
     // Scypheon Pro Configurations
     val config: ScypheonConfig = ScypheonConfig(),
@@ -136,7 +153,16 @@ data class UiState(
     val memoryStabilityState: MemoryStabilityState = MemoryStabilityState.IDLE,
     val memoryWarningCooldown: Int = 0,
     val oomDiagnostic: OomDiagnostic? = null,
-    val isMemoryInconsistent: Boolean = false
+    val isMemoryInconsistent: Boolean = false,
+    
+    // Dynamic Context Scaling
+    val pendingContextScalingTokens: Int? = null,
+    val pendingContextScalingReqRamMb: Long = 0L,
+    val isRamCriticalForScaling: Boolean = false,
+    
+    // Live Tutor & Canvas DSL State
+    val activeSkillType: com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType = com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.GENERAL,
+    val canvasDsl: String? = null
 )
 
 enum class MemoryStabilityState {
@@ -150,17 +176,15 @@ enum class MemoryStabilityState {
 class MainViewModel @Inject constructor(
     application: Application,
     private val repository: ScypheonRepository,
+    private val chatSessionUseCase: ChatSessionUseCase,
     private val liveEnglishTutor: dagger.Lazy<LiveEnglishTutor>,
     private val reminiscenceCompanion: dagger.Lazy<ReminiscenceCompanion>,
     private val deafEnvironmentGuardian: dagger.Lazy<DeafEnvironmentGuardian>,
     private val gestureGuardian: dagger.Lazy<GestureGuardian>,
     private val kineticGuardian: dagger.Lazy<KineticGuardian>,
     private val blackBoxVault: BlackBoxVault,
-    private val contextSummarizer: ContextSummarizer,
-    private val dualMemoryManager: DualMemoryManager,
     private val graphMemoryManager: GraphMemoryManager,
-    private val modelProvisioner: com.scypheon.sdk.core.provision.ModelProvisioner,
-    private val huggingFaceClient: com.scypheon.app.provision.HuggingFaceClient,
+    private val modelManagementUseCase: ModelManagementUseCase,
     private val vault: com.scypheon.sdk.core.security.AegisVault,
     private val sensoryHooks: com.scypheon.sdk.core.gateway.SensoryHooks,
     private val hardwarePrefs: com.scypheon.app.data.local.HardwarePreferences,
@@ -169,10 +193,15 @@ class MainViewModel @Inject constructor(
     private val safetyRouter: com.scypheon.sdk.core.safety.SafetyRouter,
     private val safetySeeder: com.scypheon.sdk.core.safety.helios.SafetyRuleSeeder,
     private val toolGateway: com.scypheon.sdk.core.safety.helios.ToolAuthorizationGateway,
-    val liveOrchestrator: LiveSessionOrchestrator,
+    private val liveStateMachine: com.scypheon.sdk.live.core.domain.LiveStateMachine,
+    private val safetyTrustLayer: com.scypheon.sdk.live.safety.SafetyTrustLayer,
     val liveSpeechRecognizer: ContinuousSpeechRecognizer,
     val liveVisionPipeline: LiveVisionPipeline,
-    val liveAudioPipeline: LiveAudioPipeline
+    val liveAudioPipeline: LiveAudioPipeline,
+    private val intentRouter: com.scypheon.sdk.core.agent.SkillIntentRouter,
+    private val getInferenceStreamUseCase: GetInferenceStreamUseCase,
+    private val manageResourceReclamationUseCase: ManageResourceReclamationUseCase,
+    private val hardwareLeakDetector: com.scypheon.sdk.core.telemetry.HardwareLeakDetector
 ) : AndroidViewModel(application) {
 
     private val voiceEngine = com.scypheon.sdk.core.voice.AegisVoiceEngine(application)
@@ -184,7 +213,9 @@ class MainViewModel @Inject constructor(
 
     private val promptQueue = kotlinx.coroutines.channels.Channel<Pair<String, Uri?>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     private var accumulatedSpeechText = ""
-    private var inferenceJob: kotlinx.coroutines.Job? = null
+    internal var inferenceJob: kotlinx.coroutines.Job? = null
+    internal var ttsJob: kotlinx.coroutines.Job? = null
+    private val transcriptMutex = Mutex()
 
     // --- POCKET AGENTS REGISTRY ---
     private val agents = mapOf<String, dagger.Lazy<out com.scypheon.sdk.core.humanitarian.ScypheonAgent>>(
@@ -234,7 +265,7 @@ class MainViewModel @Inject constructor(
                     hfToken = hfToken,
                     userName = name,
                     config = cfg,
-                    activeModelName = bestModel?.name?.let { "$it (STANDBY)" } ?: "no models selected",
+                    activeModelName = bestModel?.name?.let { "$it (STANDBY)" } ?: NO_MODEL_SELECTED,
                     isReady = true
                 ) 
             }
@@ -243,7 +274,7 @@ class MainViewModel @Inject constructor(
             
             // [MEMORY GUARD] Concurrent purge of corrupted engine error messages.
             try {
-                dualMemoryManager.purgeEngineErrorMessages()
+                chatSessionUseCase.purgeEngineErrorMessages()
             } catch (e: Exception) {
                 if (e.message == "DATABASE_CORRUPTION_FTS") {
                     _uiState.update { it.copy(isMemoryInconsistent = true) }
@@ -320,21 +351,19 @@ class MainViewModel @Inject constructor(
                     if (isRecovering) return@collect
                     isRecovering = true
                     
-                    val logEntry = "🛡️ ALERT: Sandbox Process CRASHED. Initiating Phoenix Recovery..."
+                    val logEntry = "🛡️ ALERT: Sandbox Process CRASHED. Waiting for manual recovery..."
                     _uiState.update { s -> 
                         s.copy(
                             isSandboxAlive = false,
                             isAiGenerating = false,
-                            error = "System Anomaly: The AI core has restarted to protect device stability. Recovering...",
+                            error = "System Anomaly: The AI core has crashed. Please restart the engine manually.",
                             memoryStabilityState = MemoryStabilityState.CRASHED,
                             diagnosticLogs = s.diagnosticLogs + logEntry
                         )
                     }
                     
-                    // [PHOENIX RECOVERY]
-                    // Wait for the OS to clean up the process, then attempt a cold restart.
-                    delay(5000)
-                    rebootEngine()
+                    // Auto-restart is now disabled by default to prevent continuous crash loops.
+                    // It will only be triggered as a fallback if manual restart fails.
                 } else {
                     if (isRecovering) {
                         Timber.i("✅ [PHOENIX] Sandbox process restored. Clearing crash UI.")
@@ -386,7 +415,7 @@ class MainViewModel @Inject constructor(
                     val currentName = _uiState.value.activeModelName.removeSuffix(" (STANDBY)")
                     _uiState.update { it.copy(activeModelName = currentName) }
                     
-                    if (currentName == "no models selected") {
+                    if (currentName == NO_MODEL_SELECTED) {
                         withContext(Dispatchers.IO) {
                             val model = hardwarePrefs.resolveBestFittingModel()
                             model?.let { m ->
@@ -396,7 +425,7 @@ class MainViewModel @Inject constructor(
                     }
                     
                     // Auto-start live mode if it was pending
-                    if (_uiState.value.isLiveModeActive && !liveOrchestrator.isActive) {
+                    if (_uiState.value.isLiveModeActive && _uiState.value.liveState is com.scypheon.sdk.live.core.model.LiveState.Idle) {
                         viewModelScope.launch {
                             delay(500)
                             startLiveMode()
@@ -432,6 +461,20 @@ class MainViewModel @Inject constructor(
             repository.engineState.collectLatest { state ->
                 if (state is InitializationState.Success) {
                     for (prompt in promptQueue) {
+                        // [v1.5.4-SAR] UI PERSISTENCE GUARD:
+                        // Find the message we already added to the UI in sendMessage()
+                        // and update it to 'Processing...' isLoading state instead of adding a new one.
+                        _uiState.update { s ->
+                            val updatedMessages = s.messages.toMutableList()
+                            val existingIdx = updatedMessages.indexOfLast { it.text == prompt.first && it.isUser }
+                            if (existingIdx != -1) {
+                                // Add a 'Processing...' bubble right after the user message if it's missing
+                                if (existingIdx == updatedMessages.lastIndex || !updatedMessages[existingIdx + 1].isLoading) {
+                                    updatedMessages.add(existingIdx + 1, ChatMessageUiState(text = "Processing...", isUser = false, isLoading = true))
+                                }
+                            }
+                            s.copy(messages = updatedMessages)
+                        }
                         executeInference(prompt.first, prompt.second, addUserMessage = false)
                     }
                 }
@@ -502,11 +545,7 @@ class MainViewModel @Inject constructor(
             // 🛡️ TRIPWIRE: Version-based Automatic Reset (Tripwire 2.0)
             try {
                 val pInfo = getApplication<Application>().packageManager.getPackageInfo(getApplication<Application>().packageName, 0)
-                val currentVersion = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    pInfo.longVersionCode
-                } else {
-                    pInfo.versionCode.toLong()
-                }
+                val currentVersion = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(pInfo)
                 
                 if (vault.getLastHwCheckVersion() != currentVersion) {
                     Timber.i("🛡️ TRIPWIRE: App update detected version=$currentVersion. Performing clean slate hardware reset.")
@@ -552,6 +591,12 @@ class MainViewModel @Inject constructor(
 
                     if (result.data == true) {
                         val hwStatus = repository.getHardwareStatus()
+                        
+                        // [v1.5.4-SAR] UI PERSISTENCE GUARD: Resume session BEFORE setting isReady = true.
+                        // If we set isReady first, a user might send a message while resumeLastSession
+                        // is still running on IO, leading to the session load overwriting the new message.
+                        resumeLastSessionOrStandby()
+
                         _uiState.update { 
                             it.copy(
                                 activeModelName = bestModel.name,
@@ -559,7 +604,6 @@ class MainViewModel @Inject constructor(
                                 isReady = true
                             ) 
                         }
-                        resumeLastSessionOrStandby()
                     }
                 } else if (result is Result.Error) {
                     _uiState.update { it.copy(
@@ -580,9 +624,25 @@ class MainViewModel @Inject constructor(
         _uiState.update { it.copy(systemWarning = null) }
     }
 
+    fun dismissNoModelWarning() {
+        _uiState.update { it.copy(showNoModelWarningDialog = false) }
+    }
+
+    fun triggerNoModelWarning() {
+        _uiState.update { it.copy(showNoModelWarningDialog = true) }
+    }
+
+    fun isModelDownloadingOrPaused(fileName: String): Boolean {
+        return modelManagementUseCase.isModelDownloadingOrPaused(fileName)
+    }
+
+    fun getCustomDownloadProgress(fileName: String): com.scypheon.sdk.core.provision.ModelProvisioner.DownloadProgress? {
+        return modelManagementUseCase.getCustomDownloadProgress(fileName)
+    }
+
     private fun resumeLastSessionOrStandby() {
         viewModelScope.launch(Dispatchers.IO) {
-            val sessions = dualMemoryManager.getAllSessions()
+            val sessions = chatSessionUseCase.getAllSessions()
             if (sessions.isNotEmpty()) {
                 val lastId = sessions[0].id
                 loadSession(lastId)
@@ -594,14 +654,14 @@ class MainViewModel @Inject constructor(
 
     fun loadSessionHistory() {
         viewModelScope.launch(Dispatchers.IO) {
-            val sessions = dualMemoryManager.getAllSessions()
+            val sessions = chatSessionUseCase.getAllSessions()
             _uiState.update { it.copy(sessionHistory = sessions) }
         }
     }
 
     fun loadSession(sessionId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val dbMessages = dualMemoryManager.getMessagesForSession(sessionId)
+            val dbMessages = chatSessionUseCase.getMessagesForSession(sessionId)
             val uiMessages = dbMessages.mapNotNull { 
                 // [v1.4.0-SAR] Strip internal [SUMMARY] tags before rendering to UI.
                 // These are context-compression artifacts, NOT user-facing content.
@@ -739,18 +799,12 @@ class MainViewModel @Inject constructor(
 
     fun startNewSession() {
         val sessionId = "session_${System.currentTimeMillis()}"
-        viewModelScope.launch {
-            repository.createNewSession(sessionId, "New Session")
-            _uiState.update {
-                it.copy(
-                    isReady = true,
-                    currentSessionId = sessionId,
-                    // Fix fragile string matching: We don't inject a fake visible message into the list anymore,
-                    // we rely on the `messages.isEmpty()` check in the UI to show the greeting.
-                    messages = emptyList()
-                )
-            }
-            loadSessionHistory()
+        _uiState.update {
+            it.copy(
+                isReady = true,
+                currentSessionId = sessionId,
+                messages = emptyList()
+            )
         }
     }
 
@@ -770,7 +824,7 @@ class MainViewModel @Inject constructor(
 
     fun showGraphExplorer() {
         viewModelScope.launch {
-            val rawGraph = dualMemoryManager.getRawKnowledgeGraph()
+            val rawGraph = chatSessionUseCase.getRawKnowledgeGraph()
             val formattedGraph = rawGraph.map { GraphEdge(it.first, it.second, it.third) }
 
             _uiState.update {
@@ -797,6 +851,10 @@ class MainViewModel @Inject constructor(
     }
 
     fun toggleLiveMode() {
+        if (_uiState.value.activeModelName == NO_MODEL_SELECTED) {
+            triggerNoModelWarning()
+            return
+        }
         val isCurrentlyActive = _uiState.value.isLiveModeActive
         
         if (isCurrentlyActive) {
@@ -823,97 +881,156 @@ class MainViewModel @Inject constructor(
         val currentState = _uiState.value.liveState
         Timber.i("🎙️ [LIVE] Orb clicked. State: $currentState")
         when (currentState) {
-            is LiveSessionOrchestrator.LiveState.Idle -> {
+            is com.scypheon.sdk.live.core.model.LiveState.Idle -> {
                 startLiveMode()
             }
-            is LiveSessionOrchestrator.LiveState.Listening -> {
-                // Start manual voice recording!
-                accumulatedSpeechText = ""
-                _uiState.update { it.copy(liveState = LiveSessionOrchestrator.LiveState.UserSpeaking("")) }
-                liveSpeechRecognizer.startListening()
-            }
-            is LiveSessionOrchestrator.LiveState.UserSpeaking -> {
-                // Manual send - stop recording and submit accumulated text!
-                liveSpeechRecognizer.stopListening()
-                val textToSubmit = accumulatedSpeechText
-                if (textToSubmit.isNotBlank()) {
-                    liveOrchestrator.onUserSpeechComplete(textToSubmit)
-                } else {
-                    // Transition back to listening if nothing was spoken
-                    _uiState.update { it.copy(liveState = LiveSessionOrchestrator.LiveState.Listening) }
+            is com.scypheon.sdk.live.core.model.LiveState.Listening, is com.scypheon.sdk.live.core.model.LiveState.UserSpeaking -> {
+                viewModelScope.launch {
+                    val textToSubmit = sanitizeSpeechInput(accumulatedSpeechText)
+                    accumulatedSpeechText = ""
+                    if (textToSubmit.isNotBlank()) {
+                        appendToTranscript(com.scypheon.sdk.live.core.model.TranscriptEntry(
+                            text = textToSubmit,
+                            isUser = true,
+                            timestamp = System.currentTimeMillis()
+                        ))
+                        onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.SpeechCompleted(textToSubmit, java.util.UUID.randomUUID().toString()))
+                    } else {
+                        onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.PartialSpeechDetected(""))
+                        liveSpeechRecognizer.startListening()
+                    }
                 }
             }
-            is LiveSessionOrchestrator.LiveState.AiSpeaking, is LiveSessionOrchestrator.LiveState.Processing -> {
-                // Interrupt AI: stop speaking and return to listening standby
+            is com.scypheon.sdk.live.core.model.LiveState.Speaking, is com.scypheon.sdk.live.core.model.LiveState.Thinking -> {
                 voiceEngine.stop()
-                liveSpeechRecognizer.stopListening()
-                liveOrchestrator.onAiFinishedSpeaking() // Sets state to Listening
+                onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.UserInterrupted(""))
             }
-            is LiveSessionOrchestrator.LiveState.Error -> {
-                liveOrchestrator.onAiFinishedSpeaking()
+            is com.scypheon.sdk.live.core.model.LiveState.SafetyBlocked, is com.scypheon.sdk.live.core.model.LiveState.Interrupted, is com.scypheon.sdk.live.core.model.LiveState.Degraded -> {
+                onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.StopSession(""))
+            }
+            else -> {}
+        }
+    }
+
+    internal fun sanitizeSpeechInput(text: String, locale: Locale = Locale.getDefault()): String {
+        // 1. Remove bracketed noise markers (ASR artifacts)
+        val noBrackets = text.replace(Regex("\\[[^\\]]*\\]|\\([^)]*\\)"), " ")
+        
+        // 2. Locale-aware filler word removal (only if isolated, not substring)
+        val fillers = when (locale.language) {
+            "en" -> "\\b(um|uh|er|ah|hm|hmm|like|you\\s*know|I\\s*mean)\\b"
+            "id" -> "\\b(um|anu|gitu|loh|deh|sih)\\b" // "eh" excluded to preserve "eh saya mau tanya"
+            "ja" -> "\\b(ano|eto|maa)\\b"             // "eh" excluded
+            "es" -> "\\b(uh|er|eh)\\b"                // "um" excluded
+            else -> "\\b(um|uh|er|eh)\\b" // Conservative fallback
+        }
+        val noFillers = noBrackets.replace(Regex(fillers, RegexOption.IGNORE_CASE), " ")
+        
+        // 3. Remove repeated phonetic stuttering (e.g., "ha ha ha", "ho ho ho")
+        // Only if 3+ repetitions of 1-2 char syllables
+        val noStutter = noFillers.replace(Regex("\\b([a-z]{1,2})\\s+\\1\\s+\\1+\\b", RegexOption.IGNORE_CASE), "$1")
+        
+        // 4. Collapse whitespace and trim
+        return noStutter.replace(Regex("\\s+"), " ").trim()
+    }
+
+    private suspend fun appendToTranscript(entry: com.scypheon.sdk.live.core.model.TranscriptEntry) {
+        transcriptMutex.withLock {
+            _uiState.update { current ->
+                current.copy(liveTranscript = current.liveTranscript + entry)
             }
         }
     }
 
-    private fun startLiveMode() {
+    internal suspend fun hardCancelLiveSession() {
+        // 1. Cancel inference coroutine immediately
+        inferenceJob?.cancelAndJoin() // Join ensures completion of cancellation
+        
+        // 2. Cancel tts job immediately
+        ttsJob?.cancelAndJoin()
+
+        // 3. Stop TTS immediately (bypass queue)
+        voiceEngine.stop() // Must be synchronous or use callback to confirm stop
+        
+        // 4. Cancel speech recognizer to prevent pending results
+        liveSpeechRecognizer.cancel()
+        
+        // 5. Clear all pending state
+        _uiState.update { current ->
+            current.copy(
+                liveTranscript = emptyList(),
+                liveAudioLevel = 0f,
+                liveState = com.scypheon.sdk.live.core.model.LiveState.Idle,
+                canvasDsl = null,
+                activeSkillType = com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.GENERAL
+            )
+        }
+        accumulatedSpeechText = ""
+    }
+
+    internal fun startLiveMode() {
         Timber.i("🎙️ [LIVE] Starting Scypheon Live Mode...")
-        _uiState.update { it.copy(isLiveModeActive = true) }
+        _uiState.update { it.copy(
+            isLiveModeActive = true,
+            liveTranscript = emptyList(),
+            canvasDsl = null,
+            activeSkillType = com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.GENERAL
+        ) }
 
         val llamaReady = _uiState.value.engineState is InitializationState.Success
         if (!llamaReady) {
             ensureEngineLoaded()
-            return // Will auto-start once engineState reaches InitializationState.Success
+            return 
         }
 
-        // 1. Initialize the orchestrator
-        liveOrchestrator.startSession()
-
-        // 2. Initialize continuous STT with manual trigger callback wiring
+        startLiveSessionMvi()
+        
         liveSpeechRecognizer.initialize()
         accumulatedSpeechText = ""
         liveSpeechRecognizer.onPartialResult = { partial ->
-            accumulatedSpeechText = partial
-            liveOrchestrator.onPartialSpeech(partial)
+            val sanitized = sanitizeSpeechInput(partial)
+            accumulatedSpeechText = sanitized
+            onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.PartialSpeechDetected(sanitized))
         }
         liveSpeechRecognizer.onFinalResult = { finalText ->
-            accumulatedSpeechText = finalText
-            liveOrchestrator.onPartialSpeech(finalText) // Show final text in UI, but do NOT auto-submit!
+            viewModelScope.launch {
+                val sanitized = sanitizeSpeechInput(finalText)
+                if (sanitized.isNotBlank()) {
+                    val traceId = java.util.UUID.randomUUID().toString()
+                    appendToTranscript(com.scypheon.sdk.live.core.model.TranscriptEntry(
+                        text = sanitized,
+                        isUser = true,
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    accumulatedSpeechText = sanitized
+                    onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.SpeechCompleted(sanitized, traceId))
+                } else {
+                    accumulatedSpeechText = ""
+                    onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.PartialSpeechDetected(""))
+                    liveSpeechRecognizer.startListening()
+                }
+            }
         }
         liveSpeechRecognizer.onRmsChanged = { rmsDb ->
-            liveOrchestrator.onAudioLevel(rmsDb)
+            onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.AudioLevelChanged(rmsDb))
         }
         liveSpeechRecognizer.onError = { error ->
             Timber.w("🎤 [STT] Error in live mode: $error")
-            // Auto-restart STT if we are still manually recording
-            if (_uiState.value.liveState is LiveSessionOrchestrator.LiveState.UserSpeaking) {
+            if (_uiState.value.liveState is com.scypheon.sdk.live.core.model.LiveState.UserSpeaking) {
                 liveSpeechRecognizer.startListening()
             }
         }
 
-        // 3. Observe orchestrator state and sync to UI (without automatic STT start in Listening)
-        viewModelScope.launch {
-            liveOrchestrator.state.collectLatest { liveState ->
-                _uiState.update { it.copy(liveState = liveState) }
-
-                when (liveState) {
-                    is LiveSessionOrchestrator.LiveState.Listening -> {
-                        // User must tap Orb manually to start speech recognizer
-                        liveSpeechRecognizer.stopListening()
-                    }
-                    is LiveSessionOrchestrator.LiveState.Processing -> {
-                        liveSpeechRecognizer.stopListening()
-                    }
-                    is LiveSessionOrchestrator.LiveState.AiSpeaking -> {
-                        liveSpeechRecognizer.stopListening()
-                        voiceEngine.speak(liveState.responseText) {
-                            // TTS completion callback
-                            liveOrchestrator.onAiFinishedSpeaking()
-                        }
-                    }
-                    else -> {}
-                }
+        viewModelScope.launch(Dispatchers.IO) {
+            liveVisionPipeline.initializeDetector()
+            liveVisionPipeline.onSceneUpdated = { scene ->
+                Timber.i("👁️ [VISION] Scene updated: ${scene.objectSummary}")
+            }
+            liveVisionPipeline.onKeyframeCaptured = { bitmap ->
+                Timber.d("👁️ [VISION] Keyframe captured: ${bitmap.width}x${bitmap.height}")
             }
         }
+<<<<<<< Updated upstream
 
         // 4. Forward transcript to UI
         viewModelScope.launch {
@@ -944,32 +1061,23 @@ class MainViewModel @Inject constructor(
         // Camera will be started from the UI (needs LifecycleOwner)
 
         // 7. Start Audio Pipeline (continuous mic → VAD → ambient context)
+=======
+        
+>>>>>>> Stashed changes
         liveAudioPipeline.start()
         liveAudioPipeline.onAudioLevel = { level ->
-            liveOrchestrator.onAudioLevel(level * 40f - 40f) // Convert 0-1 back to dB range
-        }
-        viewModelScope.launch {
-            liveAudioPipeline.ambientContext.collectLatest { ambient ->
-                liveOrchestrator.injectAmbientContext(ambient.toContextString())
-            }
+            onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.AudioLevelChanged(level * 40f - 40f))
         }
     }
 
     private fun stopLiveMode() {
         Timber.i("🎙️ [LIVE] Stopping Scypheon Live Mode...")
-        liveSpeechRecognizer.stopListening()
-        liveSpeechRecognizer.release()
-        liveVisionPipeline.stop()
-        liveAudioPipeline.stop()
-        liveOrchestrator.stopSession()
-        voiceEngine.stop()
-        _uiState.update { 
-            it.copy(
-                isLiveModeActive = false,
-                liveState = LiveSessionOrchestrator.LiveState.Idle,
-                liveTranscript = emptyList(),
-                liveAudioLevel = 0f
-            )
+        viewModelScope.launch {
+            hardCancelLiveSession()
+            liveSpeechRecognizer.release()
+            liveVisionPipeline.stop()
+            liveAudioPipeline.stop()
+            _uiState.update { it.copy(isLiveModeActive = false) }
         }
     }
 
@@ -980,7 +1088,7 @@ class MainViewModel @Inject constructor(
         // Hotswap: If model is already loaded, trigger a re-initialization with the new backend.
         // isReady is driven by engineState observer — do NOT manually set it true here.
         val currentModel = _uiState.value.activeModelName
-        if (currentModel != "no models selected") {
+        if (currentModel != NO_MODEL_SELECTED) {
             initializeEngines()
         }
     }
@@ -1021,14 +1129,22 @@ class MainViewModel @Inject constructor(
     }
 
     fun downloadModel(model: com.scypheon.sdk.core.provision.ModelMetadata) {
+<<<<<<< Updated upstream
         if (!modelProvisioner.hasSufficientSpace(model.sizeBytes)) {
+=======
+        if (!modelManagementUseCase.hasSufficientSpace(model.sizeBytes)) {
+>>>>>>> Stashed changes
             _uiState.update { it.copy(error = "Cannot download: insufficient storage") }
             return
         }
 
         _uiState.update { it.copy(downloadingModelId = model.id, downloadProgress = 0f, isDownloadPaused = false) }
 
+<<<<<<< Updated upstream
         modelProvisioner.resumeDownload(model) { progress ->
+=======
+        modelManagementUseCase.resumeDownload(model) { progress ->
+>>>>>>> Stashed changes
             viewModelScope.launch(Dispatchers.Main) {
                 _uiState.update { it.copy(downloadProgress = progress.percentage) }
                 
@@ -1044,7 +1160,11 @@ class MainViewModel @Inject constructor(
     }
 
     fun pauseModelDownload(model: com.scypheon.sdk.core.provision.ModelMetadata) {
+<<<<<<< Updated upstream
         modelProvisioner.pauseDownload(model.fileName)
+=======
+        modelManagementUseCase.pauseDownload(model.fileName)
+>>>>>>> Stashed changes
         _uiState.update { it.copy(isDownloadPaused = true) }
     }
 
@@ -1078,7 +1198,11 @@ class MainViewModel @Inject constructor(
                 // HF generic pause
                 if (downloadingId.contains("/")) {
                     val fileName = downloadingId.substringAfterLast("/")
+<<<<<<< Updated upstream
                     modelProvisioner.pauseDownload(fileName)
+=======
+                    modelManagementUseCase.pauseDownload(fileName)
+>>>>>>> Stashed changes
                     _uiState.update { it.copy(isDownloadPaused = true) }
                 }
             }
@@ -1086,8 +1210,13 @@ class MainViewModel @Inject constructor(
     }
 
     fun cancelModelDownload(model: com.scypheon.sdk.core.provision.ModelMetadata) {
+<<<<<<< Updated upstream
         modelProvisioner.pauseDownload(model.fileName)
         modelProvisioner.deleteModel(model.fileName)
+=======
+        modelManagementUseCase.pauseDownload(model.fileName)
+        modelManagementUseCase.deleteModel(model.fileName)
+>>>>>>> Stashed changes
         _uiState.update { it.copy(downloadingModelId = null, downloadProgress = 0f) }
         Timber.i("📦 [DOWNLOAD] Cancelled and deleted: ${model.title}")
     }
@@ -1114,7 +1243,11 @@ class MainViewModel @Inject constructor(
                     // Actually, if it's from HF, the ID in uiState is repo/fileName
                     if (downloadingId.contains("/")) {
                         val fileName = downloadingId.substringAfterLast("/")
+<<<<<<< Updated upstream
                         modelProvisioner.cancelDownload(fileName)
+=======
+                        modelManagementUseCase.cancelDownload(fileName)
+>>>>>>> Stashed changes
                         currentDownloadId = null
                         _uiState.update { it.copy(downloadingModelId = null, downloadProgress = 0f) }
                     }
@@ -1131,7 +1264,7 @@ class MainViewModel @Inject constructor(
             repository.releaseEngines()
             
             // Re-initialize with new model
-            val modelFile = modelProvisioner.getModelPath(model.fileName)
+            val modelFile = modelManagementUseCase.getModelPath(model.fileName)
             if (modelFile.exists()) {
                 val modelPath = modelFile.absolutePath
                 val engineType = when {
@@ -1164,10 +1297,10 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun isModelDownloaded(fileName: String): Boolean = modelProvisioner.isModelOnDisk(fileName)
+    fun isModelDownloaded(fileName: String): Boolean = modelManagementUseCase.isModelOnDisk(fileName)
 
     fun deleteModel(fileName: String) {
-        modelProvisioner.deleteModel(fileName)
+        modelManagementUseCase.deleteModel(fileName)
         // Rescan so the model disappears from "On Device"
         scanLocalModels()
     }
@@ -1179,7 +1312,7 @@ class MainViewModel @Inject constructor(
     fun searchHuggingFace(query: String) {
         _uiState.update { it.copy(hfSearchQuery = query, hfSearchLoading = true, hfSelectedRepo = null) }
         viewModelScope.launch(Dispatchers.IO) {
-            val results = huggingFaceClient.searchModels(query)
+            val results = modelManagementUseCase.searchModels(query)
             withContext(Dispatchers.Main) {
                 _uiState.update { it.copy(hfSearchResults = results, hfSearchLoading = false) }
             }
@@ -1189,8 +1322,8 @@ class MainViewModel @Inject constructor(
     fun selectHfRepo(repoId: String) {
         _uiState.update { it.copy(hfSelectedRepo = repoId, hfFilesLoading = true) }
         viewModelScope.launch(Dispatchers.IO) {
-            val files = huggingFaceClient.fetchModelFiles(repoId)
-            val detail = huggingFaceClient.fetchModelDetail(repoId)
+            val files = modelManagementUseCase.fetchModelFiles(repoId)
+            val detail = modelManagementUseCase.fetchModelDetail(repoId)
             withContext(Dispatchers.Main) {
                 _uiState.update { it.copy(hfRepoFiles = files, hfRepoDetail = detail, hfFilesLoading = false) }
             }
@@ -1285,6 +1418,15 @@ class MainViewModel @Inject constructor(
             return
         }
 
+        if (_uiState.value.activeModelName == NO_MODEL_SELECTED) {
+            if (_uiState.value.config.localModels.isEmpty()) {
+                triggerNoModelWarning()
+            } else {
+                showLocalModelPicker()
+            }
+            return
+        }
+
         if (featureName == "ScypheonLiveBridge") {
             val nextState = !_uiState.value.isLiveModeActive
             _uiState.update { it.copy(isLiveModeActive = nextState) }
@@ -1310,7 +1452,7 @@ class MainViewModel @Inject constructor(
 
     private fun startLiveBridge() {
         // Initialize and start Deaf/Mute accessibility bridge
-        val modelPath = modelProvisioner.getModelPath("gesture_recognizer.task").absolutePath
+        val modelPath = modelManagementUseCase.getModelPath("gesture_recognizer.task").absolutePath
         // SignLanguageBridge handles camera in some implementations, 
         // DeafEnvironmentGuardian handles mic.
         deafEnvironmentGuardian.get().startListening()
@@ -1417,13 +1559,17 @@ class MainViewModel @Inject constructor(
             return false // Block until cooldown finishes and user acknowledges
         }
 
-        if (_uiState.value.activeModelName == "no models selected") {
-            _uiState.update { state ->
-                state.copy(
-                    error = "No models found. Please download or select a model to start the session."
-                )
+        if (_uiState.value.activeModelName == NO_MODEL_SELECTED) {
+            if (_uiState.value.config.localModels.isEmpty()) {
+                triggerNoModelWarning()
+            } else {
+                _uiState.update { state ->
+                    state.copy(
+                        error = "No models found. Please download or select a model to start the session."
+                    )
+                }
+                showLocalModelPicker()
             }
-            showLocalModelPicker()
             return false
         }
 
@@ -1439,7 +1585,7 @@ class MainViewModel @Inject constructor(
             // Silent Queuing: Add to UI immediately so the user feels "instant" response
             val displayMsg = if (imageUri != null) "[Image Attached] $text" else text
             _uiState.update { state -> 
-                state.copy(messages = state.messages + ChatMessageUiState(text = displayMsg, isUser = true))
+                state.copy(messages = state.messages + ChatMessageUiState(text = displayMsg, isUser = true, imageUri = imageUri))
             }
             
             viewModelScope.launch {
@@ -1452,349 +1598,219 @@ class MainViewModel @Inject constructor(
         return true
     }
 
-    private fun executeInference(
-        text: String, 
-        imageUri: Uri?, 
+    fun approveContextScaling(targetTokens: Int) {
+        viewModelScope.launch {
+            _uiState.update { state ->
+                state.copy(
+                    config = state.config.copy(contextWindow = targetTokens),
+                    pendingContextScalingTokens = null,
+                    isAiGenerating = true
+                )
+            }
+            // Hardware-aware engine restart with new context limit
+            val newConfig = _uiState.value.config
+            repository.initializeEngines(getApplication(), nCtx = targetTokens)
+            
+            // Re-trigger inference
+            executeInference(isRetry = true)
+        }
+    }
+    
+    fun rejectContextScaling(proceedWithTruncation: Boolean) {
+        if (proceedWithTruncation) {
+            // Bypass the check by setting pending tokens to -1 (dummy value indicating bypassed)
+            _uiState.update { it.copy(pendingContextScalingTokens = -1, isAiGenerating = true) }
+            executeInference(isRetry = true)
+        } else {
+            // Abort entirely
+            _uiState.update { state -> 
+                val newMessages = state.messages.filter { !it.isLoading }
+                state.copy(
+                    pendingContextScalingTokens = null,
+                    messages = newMessages,
+                    isAiGenerating = false
+                )
+            }
+        }
+    }
+
+        private fun executeInference(
+        text: String = "",
+        imageUri: android.net.Uri? = null,
         addUserMessage: Boolean = true,
         isRetry: Boolean = false
     ) {
-
-        // JIT Session ID Generation (Synchronous UI part)
         if (_uiState.value.currentSessionId.isEmpty()) {
             val newId = "session_${System.currentTimeMillis()}"
             _uiState.update { it.copy(currentSessionId = newId) }
         }
 
         val finalSessionId = _uiState.value.currentSessionId
-        val redactedText = AegisPrivacyShield.redact(text)
-
-        // --- HELIOS SENTINEL SECURITY AUDIT ---
-        val routingDecision = safetyRouter.route(text)
-        if (routingDecision.path == com.scypheon.sdk.core.safety.RoutingPath.BLOCKED) {
-            _uiState.update { state ->
-                state.copy(messages = state.messages + ChatMessageUiState(redactedText, isUser = true) +
-                    ChatMessageUiState("🛡️ Access Denied: ${routingDecision.blockedReason ?: "Security policy violation detected."}", isUser = false))
-            }
-            return
-        }
-
-        val displayMsg = if (imageUri != null) "[Image Attached] $redactedText" else redactedText
-
-        // �､・REAL PUPPETMASTER TRIGGER
-        // If the user uses the "open" or "automate" command, we intercept it before the LLM
-        // and dispatch an Intent, proving the automation tier 1 fallback is wired up.
-        if (text.lowercase().startsWith("/open ") || text.lowercase().startsWith("/automate ")) {
-            val target = text.substringAfter(" ").trim()
-            val puppetMasterIntent = android.content.Intent(android.content.Intent.ACTION_VIEW)
-            puppetMasterIntent.data = android.net.Uri.parse("market://search?q=$target") // Simulated deep link
-            puppetMasterIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-
-            val intentResultMsg = try {
-                getApplication<android.app.Application>().startActivity(puppetMasterIntent)
-                "PuppetMaster: Executing automation for '$target' via DeepLink Intent."
-            } catch (e: Exception) {
-                "PuppetMaster: Failed to execute automation for '$target'."
-            }
-
-                _uiState.update { state ->
-                    val newMessages = state.messages +
-                        ChatMessageUiState(text = displayMsg, isUser = true) +
-                        ChatMessageUiState(text = intentResultMsg, isUser = false)
-                    state.copy(messages = newMessages)
-                }
-            return
-        }
-
-        // Add user message and loading state
-        _uiState.update { state ->
-            val newMessages = if (addUserMessage) {
-                state.messages +
-                ChatMessageUiState(text = displayMsg, isUser = true) +
-                ChatMessageUiState(text = "Processing...", isUser = false, isLoading = true)
-            } else if (isRetry) {
-                // If retry, we assume the user message is already there, but we might need to remove a previous 'Failed' error bubble
-                val filtered = state.messages.filter { it.status != com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED && it.status != com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_SYSTEM }
-                filtered + ChatMessageUiState(text = "Processing...", isUser = false, isLoading = true)
-            } else {
-                state.messages +
-                ChatMessageUiState(text = "Processing...", isUser = false, isLoading = true)
-            }
-            state.copy(messages = newMessages, isAiGenerating = true)
-        }
 
         inferenceJob?.cancel()
         inferenceJob = viewModelScope.launch {
-            try {
-            // JIT DB Creation (Asynchronous part)
-            val history = dualMemoryManager.getAllSessions()
-            if (history.none { it.id == finalSessionId }) {
-                repository.createNewSession(finalSessionId, "New Session")
-            }
-
-            // ML Kit Local OCR fallback for Vision Multimodal
-            var finalPrompt = redactedText
-            if (imageUri != null) {
-                try {
-                    val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                    val image = InputImage.fromFilePath(getApplication(), imageUri)
-                    val result = recognizer.process(image).await()
-                    val extractedText = result.text.replace("\n", " ")
-                    finalPrompt = "I am attaching an image. I extracted this text from it using OCR: \"$extractedText\". \n\nMy question is: $redactedText"
-                } catch (e: Exception) {
-                    timber.log.Timber.e(e, "Failed to extract text from image")
-                    finalPrompt = "I attached an image but the OCR failed. Assume I attached an image related to my question: $redactedText"
-                }
-            }
-
-            // Save user msg (SAR: Persist immediately for Outbox)
-            if (addUserMessage) {
-                repository.saveSessionMessage(finalSessionId, displayMsg, true)
-            }
-
-            // Dynamic session title update on first message
-            if (_uiState.value.messages.size == 2) { // 1 user + 1 loading (greeting is no longer in the list)
-                val title = if (text.length > 20) text.substring(0, 20) + "..." else text
-                repository.updateSessionTitle(finalSessionId, title)
-                loadSessionHistory()
-            }
-
-            // �ｧｬ ENTERPRISE HYBRID RAG INJECTION (Vector + Graph)
-
-            // 1. Vector RAG: Semantic Reciprocal Rank Fusion (RRF) search over past history
-            // [Ide 3] Session-Aware Solaris Search: Prioritize current context with recency boost
-            val vectorContext = dualMemoryManager.searchSimilarMemories(redactedText, currentSessionId = finalSessionId, limit = 2)
-
-            // 2. Graph RAG: [v1.5.0-SAR] Full semantic search across ALL graph columns
-            // Old approach only searched by subject — missed facts stored as user->likes->buah_naga
-            // New approach: semanticSearch queries subject, predicate AND object columns
-            val stopWords = setOf("i", "am", "the", "a", "an", "is", "are", "was", "were", "to", "for", "with", "hello", "hi", "hey", "please", "can", "you", "tell", "me", "about",
-                "aku", "saya", "yang", "dan", "di", "ke", "dari", "ini", "itu", "ada", "bisa", "mau", "tolong", "dong", "ya", "apa", "gimana")
-            val tokens = redactedText.lowercase()
-                .replace(Regex("[^a-z0-9\\s]"), "") // Strip punctuation
-                .split(Regex("\\s+"))
-                .filter { it.isNotBlank() && !stopWords.contains(it) && it.length > 2 } // Filter stop words + short tokens
-
-            val graphContext = mutableListOf<String>()
-            
-            // A. Always inject user personal facts (name, preferences, allergies)
-            graphContext.addAll(graphMemoryManager.queryUserFacts(10))
-            
-            // B. Semantic search for each keyword across ALL graph columns
-            tokens.take(3).forEach { keyword ->
-                graphContext.addAll(graphMemoryManager.semanticSearch(keyword, 5))
-            }
-
-            // 3. Session Dialogue Context (Conversational Memory)
-            val historyTurns = _uiState.value.messages.takeLast(10).filter { msg ->
-                !msg.isLoading && 
-                msg.isContextEligible && 
-                msg.status == com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_SUCCESS
-            }.map { msg ->
-                // [v1.4.0-SAR] Strip [SUMMARY] prefix before injecting into inference turns.
-                // Prevents the model from echoing internal metadata tags.
-                val cleanText = if (msg.text.startsWith("[SUMMARY]")) {
-                    msg.text.removePrefix("[SUMMARY]").trim()
-                } else {
-                    msg.text
-                }
-                com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn(
-                    if (msg.isUser) com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.USER 
-                    else com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.ASSISTANT,
-                    cleanText
-                )
-            }
-
-
-            val config = _uiState.value.config
-            
-            // [ARCHITECT ALIGNMENT] Assemble the final Multi-Turn Neural Context
-            val finalTurns = mutableListOf<com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn>()
-            
-            // 1. Core History
-            finalTurns.addAll(historyTurns)
-
-            // 2. RAG Injection (as a dedicated System Context turn before the final query)
-            val combinedContext = mutableListOf<String>()
-            if (vectorContext.isNotEmpty()) {
-                combinedContext.add("Semantic Memory: [${vectorContext.joinToString(" | ")}]")
-            }
-            if (graphContext.isNotEmpty()) {
-                combinedContext.add("Logical Facts: [${graphContext.distinct().joinToString(" | ")}]")
-            }
-
-            val ragContextString = if (combinedContext.isNotEmpty()) {
-                val raw = combinedContext.joinToString("\n")
-                // [v1.4.0-SAR] Reference Sanitization: Remove potential ChatML/Gemma control tokens
-                val sanitized = raw.replace("<|im_start|>", "").replace("<|im_end|>", "")
-                    .replace("<eos>", "").replace("<start_of_turn>", "").replace("<end_of_turn>", "")
-                
-                // Allow up to 30% of the context window for RAG, capped at 12k chars (~3k tokens)
-                val maxRagChars = (config.contextWindow * 3.5 * 0.30).toInt().coerceAtMost(12000)
-                if (sanitized.length > maxRagChars) {
-                    sanitized.substring(0, maxRagChars) + "... [REFERENCE_TRUNCATED_FOR_STABILITY]"
-                } else {
-                    sanitized
-                }
-            } else null
-
-            // 3. Final User Intent
-            finalTurns.add(com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn(
-                com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.USER,
-                finalPrompt
-            ))
-
-            // --- LAPISAN 3: LiteRT-LM PROMPT TEMPLATING (Context Isolation) ---
-            val systemInstruction = buildString {
-                append("""
-                [SYSTEM_MANDATE]
-                ROLE: You are Scypheon, a sentient humanitarian AI assistant.
-                MISSION: Help users with any task — conversation, creativity, roleplay, learning, and triage support.
-                PERSONALITY: Warm, intelligent, and versatile. You can engage in creative roleplay and storytelling.
-                SAFETY: You MUST refuse any request involving real violence, self-harm, illegal activity, or sexually explicit content.
-                OUTPUT RULE: Never emit structural tokens like <eos>, <start_of_turn>, User:, AI:, or any role markers in your response.
-                LANGUAGE RULE: Always respond in the same language as the user's query (e.g., if the user asks in English, reply in English; if the user asks in Indonesian, reply in Indonesian).
-                VERIFICATION: ShieldGemma-verified.
-                [/SYSTEM_MANDATE]
-                """.trimIndent())
-                
-                // [v1.4.0-SAR] Reasoning Activation: Inject thinking instruction when enabled
-                if (config.enableThinking) {
-                    append("\n\n[REASONING_PROTOCOL]\nBEFORE answering, you MUST think step-by-step inside the <thought>...</thought> tags. Write your reasoning process inside these tags, and then provide your final response outside the tags. Example format:\n<thought>\nStep-by-step analysis and reasoning...\n</thought>\nYour final response here.\nKeep the language of your thoughts and final response consistent with the user's query language.\n[/REASONING_PROTOCOL]")
-                }
-            }
-            
-            val securePrompt = promptBuilder.buildSecurePrompt(systemInstruction, finalPrompt, _uiState.value.config.enableThinking)
-
-            // --- NEURAL BRIDGE: Memory Reclaim before heavy LLM ---
-            if (repository.isLowMemoryMode()) {
-                unloadAllAgents() 
-            }
-
-            // 4. Generate with Real-Time Streaming
-            // [v1.4.0-SAR] NEURAL STRENGTHENING: Unified Instruction + Reference Strategy.
-            val finalInferenceTurns = mutableListOf<com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn>()
-            
-            // Step 1: Pure System Mandate (with reasoning protocol if enabled)
-            finalInferenceTurns.add(com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn(
-                com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.SYSTEM,
-                systemInstruction
-            ))
-            
-            // Step 2: Inject Knowledge as a User-provided reference (if available)
-            if (ragContextString != null) {
-                finalInferenceTurns.add(com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn(
-                    com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.USER,
-                    "[REFERENCE_KNOWLEDGE_BASE]\n$ragContextString\n[END_REFERENCE]"
-                ))
-                finalInferenceTurns.add(com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn(
-                    com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.ASSISTANT,
-                    "I have reviewed the provided knowledge. How can I assist you using this information?"
-                ))
-            }
-            
-            finalInferenceTurns.addAll(finalTurns)
-
-            var fullResponse = ""
-            var hardwareStatus: String? = null
-            
-            repository.generateStreamingResponse(
-                finalInferenceTurns,
-                topK = config.topK,
-                topP = config.topP,
-                temp = config.temperature,
-                maxTokens = config.maxTokens,
-                enableThinking = config.enableThinking,
-                allowNetwork = config.enableOnlineSearch
-            ).collect { chunk ->
-                    fullResponse += chunk
-                    if (hardwareStatus == null && fullResponse.isNotEmpty()) {
-                        hardwareStatus = repository.getHardwareStatus()
+            getInferenceStreamUseCase(
+                text = text,
+                imageUri = imageUri,
+                sessionId = finalSessionId,
+                config = _uiState.value.config,
+                chatHistory = _uiState.value.messages,
+                isRetry = isRetry
+            ).collect { event ->
+                when (event) {
+                    is InferenceEvent.SecurityBlocked -> {
+                        _uiState.update { state ->
+                            val filteredMessages = state.messages.filter { !it.isLoading }
+                            val hasUserMsg = filteredMessages.isNotEmpty() && filteredMessages.last().isUser
+                            val newMessages = if (hasUserMsg) {
+                                filteredMessages
+                            } else {
+                                filteredMessages + ChatMessageUiState(event.redactedText, isUser = true)
+                            }
+                            state.copy(
+                                messages = newMessages + ChatMessageUiState("🛡️ Access Denied: ${event.reason}", isUser = false),
+                                isAiGenerating = false
+                            )
+                        }
+                        chatSessionUseCase.saveSessionMessage(finalSessionId, "🛡️ Access Denied: ${event.reason}", false, status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED)
                     }
+                    is InferenceEvent.PuppetMasterIntercept -> {
+                        val puppetMasterIntent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                        puppetMasterIntent.data = android.net.Uri.parse("market://search?q=${event.target}")
+                        puppetMasterIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
 
-                    _uiState.update { state ->
-                        val finalMessages = state.messages.toMutableList()
-                        val sanitizedResponse = sanitizeResponse(fullResponse)
-                        
-                        // [v1.4.0-SAR] Ghost Bubble Prevention: Skip UI update if sanitized to empty
-                        if (sanitizedResponse.isEmpty()) {
-                            return@update state
+                        val intentResultMsg = try {
+                            getApplication<android.app.Application>().startActivity(puppetMasterIntent)
+                            "PuppetMaster: Executing automation for '${event.target}' via DeepLink Intent."
+                        } catch (e: Exception) {
+                            "PuppetMaster: Failed to execute automation for '${event.target}'."
+                        }
+                        _uiState.update { state ->
+                            val displayMsg = if (imageUri != null) "[Image Attached] ${event.redactedText}" else event.redactedText
+                            state.copy(messages = state.messages +
+                                ChatMessageUiState(text = displayMsg, isUser = true, imageUri = imageUri) +
+                                ChatMessageUiState(text = intentResultMsg, isUser = false))
+                        }
+                    }
+                    is InferenceEvent.Initialized -> {
+                        val displayMsg = if (imageUri != null) "[Image Attached] ${event.redactedText}" else event.redactedText
+                        _uiState.update { state ->
+                            val newMessages = if (addUserMessage) {
+                                state.messages +
+                                ChatMessageUiState(text = displayMsg, isUser = true, imageUri = imageUri) +
+                                ChatMessageUiState(text = "Processing...", isUser = false, isLoading = true)
+                            } else if (event.isRetry) {
+                                val filtered = state.messages.filter { it.status != com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED && it.status != com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_SYSTEM }
+                                filtered + ChatMessageUiState(text = "Processing...", isUser = false, isLoading = true)
+                            } else {
+                                state.messages + ChatMessageUiState(text = "Processing...", isUser = false, isLoading = true)
+                            }
+                            state.copy(messages = newMessages, isAiGenerating = true)
+                        }
+
+                        val history = chatSessionUseCase.getAllSessions()
+                        if (history.none { it.id == finalSessionId }) {
+                            chatSessionUseCase.createNewSession(finalSessionId, "New Session")
+                        }
+                        if (addUserMessage) {
+                            chatSessionUseCase.saveSessionMessage(finalSessionId, displayMsg, true)
+                        }
+                        if (_uiState.value.messages.size == 2) {
+                            val title = if (text.length > 20) text.substring(0, 20) + "..." else text
+                            chatSessionUseCase.updateSessionTitle(finalSessionId, title)
+                            loadSessionHistory()
+                        }
+                    }
+                    is InferenceEvent.ScalingRequired -> {
+                        _uiState.update { state ->
+                            state.copy(
+                                isAiGenerating = false,
+                                pendingContextScalingTokens = event.tokens,
+                                pendingContextScalingReqRamMb = event.reqRamMb,
+                                isRamCriticalForScaling = event.isCritical
+                            )
+                        }
+                        timber.log.Timber.w("[SCALING] Prompt exceeded context window.")
+                    }
+                    is InferenceEvent.ThinkingChunk -> {
+                        _uiState.update { state ->
+                            val finalMessages = state.messages.toMutableList()
+                            if (finalMessages.isNotEmpty() && !finalMessages.last().isUser) {
+                                val lastMsg = finalMessages.last()
+                                val newThinkingText = (lastMsg.thinkingText ?: "") + event.text
+                                finalMessages[finalMessages.size - 1] = lastMsg.copy(
+                                    thinkingText = newThinkingText,
+                                    text = if (lastMsg.text == "Processing...") "Thinking..." else lastMsg.text,
+                                    isLoading = true
+                                )
+                            }
+                            state.copy(messages = finalMessages)
+                        }
+                    }
+                    is InferenceEvent.Chunk -> {
+                        _uiState.update { state ->
+                            val finalMessages = state.messages.toMutableList()
+                            val sanitizedChunk = sanitizeResponse(event.text)
+                            
+                            if (finalMessages.isNotEmpty() && !finalMessages.last().isUser) {
+                                val lastMsg = finalMessages.last()
+                                // If we were showing "Thinking..." and now we have real content, 
+                                // we replace "Thinking..." with the first chunk of real text.
+                                val baseText = if (lastMsg.text == "Processing..." || lastMsg.text == "Thinking...") "" else lastMsg.text
+                                finalMessages[finalMessages.size - 1] = lastMsg.copy(
+                                    text = baseText + sanitizedChunk,
+                                    isLoading = true,
+                                    hardwareStatus = event.hardwareStatus,
+                                    disclaimerType = event.disclaimerType
+                                )
+                            } else {
+                                finalMessages.add(ChatMessageUiState(
+                                    text = sanitizedChunk,
+                                    isUser = false,
+                                    isLoading = true,
+                                    hardwareStatus = event.hardwareStatus,
+                                    disclaimerType = event.disclaimerType
+                                ))
+                            }
+                            state.copy(messages = finalMessages)
+                        }
+                    }
+                    is InferenceEvent.Success -> {
+                        val sanitizedFinal = sanitizeResponse(event.fullResponse)
+                        _uiState.update { state ->
+                            val finalMessages = state.messages.toMutableList()
+                            if (finalMessages.isNotEmpty() && finalMessages.last().isLoading) {
+                                val lastMsg = finalMessages.last()
+                                finalMessages[finalMessages.size - 1] = lastMsg.copy(
+                                    text = sanitizedFinal,
+                                    isLoading = false
+                                )
+                                if (event.fullResponse.isEmpty()) finalMessages.removeAt(finalMessages.size - 1)
+                            }
+                            state.copy(messages = finalMessages, isAiGenerating = false)
                         }
                         
-                        // Loading -> Streaming transition
-                        // [v1.5.0-SAR] Keep isLoading=true during streaming so TypewriterBuffer activates
-                        if (finalMessages.isNotEmpty() && finalMessages.last().isLoading) {
-                            finalMessages.removeAt(finalMessages.size - 1)
-                            finalMessages.add(ChatMessageUiState(text = sanitizedResponse, isUser = false, isLoading = true, hardwareStatus = hardwareStatus))
-                        } else if (finalMessages.isNotEmpty() && !finalMessages.last().isUser) {
-                            // Update existing streaming bubble
-                            finalMessages[finalMessages.size - 1] = ChatMessageUiState(text = sanitizedResponse, isUser = false, isLoading = true, hardwareStatus = hardwareStatus)
+                        if (!event.isEngineError) {
+                            chatSessionUseCase.saveSessionMessage(finalSessionId, sanitizedFinal, false, status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_SUCCESS)
+                            if (_uiState.value.isLiveModeActive) voiceEngine.speak(sanitizedFinal)
                         } else {
-                            // Fallback for unexpected states
-                            finalMessages.add(ChatMessageUiState(text = sanitizedResponse, isUser = false, isLoading = true, hardwareStatus = hardwareStatus))
+                            val errorMsg = if (sanitizedFinal.isBlank()) "Error: Empty response" else sanitizedFinal
+                            chatSessionUseCase.saveSessionMessage(finalSessionId, errorMsg, false, status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED)
                         }
-                        state.copy(messages = finalMessages)
+                        chatSessionUseCase.checkAndSummarizeSessionAsync(finalSessionId)
+                    }
+                    is InferenceEvent.Error -> {
+                         chatSessionUseCase.saveSessionMessage(finalSessionId, "Error: ${event.message}", false, status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED)
+                         _uiState.update { state ->
+                             val finalMessages = state.messages.toMutableList()
+                             if (finalMessages.isNotEmpty() && finalMessages.last().isLoading) {
+                                 finalMessages.removeAt(finalMessages.size - 1)
+                             }
+                             finalMessages.add(ChatMessageUiState(text = "Error: ${event.message}", isUser = false, status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED))
+                             state.copy(messages = finalMessages, isAiGenerating = false)
+                         }
                     }
                 }
-                
-                // [v1.5.0-SAR] Finalize: Set isLoading=false to end TypewriterBuffer animation
-                // This transitions the bubble from "streaming" to "complete" state
-                if (fullResponse.isNotEmpty()) {
-                    _uiState.update { state ->
-                        val finalMessages = state.messages.toMutableList()
-                        if (finalMessages.isNotEmpty() && finalMessages.last().isLoading) {
-                            val lastMsg = finalMessages.last()
-                            finalMessages[finalMessages.size - 1] = lastMsg.copy(isLoading = false)
-                        }
-                        state.copy(messages = finalMessages)
-                    }
-                }
-
-                // [SAR] If the flow emitted nothing, ensure we clear the loading bubble.
-                if (fullResponse.isEmpty()) {
-                    _uiState.update { state ->
-                        val finalMessages = state.messages.toMutableList()
-                        if (finalMessages.isNotEmpty() && finalMessages.last().isLoading) {
-                            finalMessages.removeAt(finalMessages.size - 1)
-                        }
-                        state.copy(messages = finalMessages)
-                    }
-                }
-
-                // AI Response Complete: Persist to Edge Storage.
-                val sanitizedFinal = sanitizeResponse(fullResponse)
-                val isEngineError = sanitizedFinal.startsWith("Error:") || sanitizedFinal.isBlank()
-                
-                if (!isEngineError) {
-                    repository.saveSessionMessage(finalSessionId, sanitizedFinal, false, status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_SUCCESS)
-                } else {
-                    val errorMsg = if (sanitizedFinal.isBlank()) "Error: Empty response (sanitized)" else sanitizedFinal
-                    repository.saveSessionMessage(finalSessionId, errorMsg, false, status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED)
-                }
-
-                // 貯 LIVE VOICE FEEDBACK: Auto-speak in live mode
-                if (_uiState.value.isLiveModeActive && !isEngineError) {
-                    voiceEngine.speak(sanitizedFinal)
-                }
-
-                // Enterprise Edge Max: The Infinite Memory Illusion
-                contextSummarizer.checkAndSummarizeSessionAsync(finalSessionId)
-
-            } catch (e: Exception) {
-                 timber.log.Timber.e(e, "Streaming generation failed")
-                 
-                 //  [SAR] Solaris Protocol: Save the failure so the UI can show 'Retry'
-                 repository.saveSessionMessage(finalSessionId, "Error: ${e.message}", false, status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED)
-                 
-                 _uiState.update { state ->
-                     val finalMessages = state.messages.toMutableList()
-                     if (finalMessages.isNotEmpty() && finalMessages.last().isLoading) {
-                         finalMessages.removeAt(finalMessages.size - 1)
-                     }
-                     finalMessages.add(ChatMessageUiState(text = "Error: ${e.message}", isUser = false, status = com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED))
-                     state.copy(messages = finalMessages)
-                 }
-            } finally {
-                _uiState.update { it.copy(isAiGenerating = false) }
             }
         }
     }
@@ -1856,6 +1872,13 @@ class MainViewModel @Inject constructor(
             initializeEngines()
             
             timber.log.Timber.i("🛡️ TRIPWIRE: Hardware blacklists and tombstone flags cleared. Manual recovery initiated.")
+            
+            // Fallback: If sandbox fails to restart manually after 10 seconds, try a forceful auto-reboot.
+            delay(10000)
+            if (!_uiState.value.isSandboxAlive) {
+                timber.log.Timber.w("🔥 [PHOENIX] Manual restart failed to recover sandbox. Initiating fallback automatic reboot...")
+                rebootEngine()
+            }
         }
     }
 
@@ -1912,7 +1935,9 @@ class MainViewModel @Inject constructor(
             // [v1.4.0-SAR] Strip tool infrastructure artifacts
             "<tool_call>[^<]*</tool_call>",
             "\\[Executing [^\\]]*\\]",
-            "\\[Tool Result:[^\\]]*\\]"
+            "\\[Tool Result:[^\\]]*\\]",
+            "<(graph|geometry)\\b[^>]*?>",
+            "</(graph|geometry)>"
         )
         
         for (pattern in toxicPatterns) {
@@ -1924,11 +1949,17 @@ class MainViewModel @Inject constructor(
         val prefixRegex = Regex("^(?:Assistant|Model|AI|User|System|Human)\\s*[:\\-]?\\s*", RegexOption.IGNORE_CASE)
         result = result.replaceFirst(prefixRegex, "").trimStart()
         
-        // 4. Final safety sweep for any remaining angle-bracket leaks
+        // 4. [v1.6.0-SAR] REASONING BLOCK SUPPRESSION (Zero-Leakage Protocol)
+        // Aggressively remove both complete and unclosed thought blocks to prevent
+        // reasoning text from flickering/leaking into the chat bubble during generation.
+        result = result.replace(Regex("<thought>.*?</thought>", RegexOption.DOT_MATCHES_ALL), "")
+        result = result.replace(Regex("<thought>.*$", RegexOption.DOT_MATCHES_ALL), "")
+        
+        // 5. Final safety sweep for any remaining angle-bracket leaks (ChatML, etc.)
         result = result.replace(Regex("<\\|[^>]*\\|>"), "")
         result = result.replace(Regex("<\\|[^>]*$"), "") 
         
-        // 5. Strip trailing bare role markers (Unsloth/Gemma emit "AI" or "User" as next-turn start)
+        // 6. Strip trailing bare role markers (Unsloth/Gemma emit "AI" or "User" as next-turn start)
         // [v1.4.0-SAR] Only strip trailing markers when they are isolated on their own line.
         val trailingMarkers = listOf("User", "Assistant", "Model", "Human", "System", "AI")
         for (marker in trailingMarkers) {
@@ -1987,13 +2018,21 @@ class MainViewModel @Inject constructor(
         super.onCleared()
         unloadAllAgents()
         voiceEngine.shutdown()
+        timber.log.Timber.d("🧹 [MainViewModel] onCleared triggered. Cleaning up Live Mode pipelines.")
+        try {
+            liveAudioPipeline.close()
+            liveVisionPipeline.close()
+            hardwareLeakDetector.auditHardwareState("MainViewModel.onCleared")
+        } catch (e: Exception) {
+            timber.log.Timber.e(e, "Error closing Live Mode pipelines")
+        }
     }
 
     fun resetMemoryDatabase() {
         viewModelScope.launch(Dispatchers.Default) {
             try {
                 // Nuclear Option: Delete all messages and clear FTS
-                dualMemoryManager.clearAllMemories() 
+                chatSessionUseCase.clearAllMemories() 
                 _uiState.update { it.copy(isMemoryInconsistent = false, messages = emptyList()) }
                 Timber.i("🛡️ [PHOENIX] Memory database reset successfully.")
             } catch (e: Exception) {
@@ -2006,4 +2045,224 @@ class MainViewModel @Inject constructor(
         _uiState.update { it.copy(isMemoryInconsistent = false) }
         Timber.w("🛡️ [PHOENIX] User chose to CONTINUE with inconsistent database. System stability NOT guaranteed.")
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // LIVE MODE: MVI Pipeline (Hardened Resilience Phase 1)
+    // ═══════════════════════════════════════════════════════════════════
+    
+    fun startLiveSessionMvi() {
+        val traceId = java.util.UUID.randomUUID().toString()
+        Timber.i("🎙️ [LIVE] Session Started [TraceId: $traceId]")
+        onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.StartSession(traceId))
+    }
+
+    fun onLiveIntent(intent: com.scypheon.sdk.live.core.model.LiveIntent) {
+        if (intent is com.scypheon.sdk.live.core.model.LiveIntent.AudioLevelChanged) {
+            val normalized = ((intent.level + 45f) / 55f).coerceIn(0f, 1f)
+            _uiState.update { it.copy(liveAudioLevel = normalized) }
+        }
+
+        when (intent) {
+            is com.scypheon.sdk.live.core.model.LiveIntent.StartSession -> {
+                _uiState.update { it.copy(canvasDsl = null, activeSkillType = com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.GENERAL) }
+            }
+            is com.scypheon.sdk.live.core.model.LiveIntent.PartialSpeechDetected -> {
+                val currentState = _uiState.value.liveState
+                if (currentState is com.scypheon.sdk.live.core.model.LiveState.Speaking || 
+                    currentState is com.scypheon.sdk.live.core.model.LiveState.Thinking ||
+                    _uiState.value.canvasDsl != null
+                ) {
+                    _uiState.update { it.copy(canvasDsl = null, activeSkillType = com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.GENERAL) }
+                }
+            }
+            is com.scypheon.sdk.live.core.model.LiveIntent.UserInterrupted -> {
+                _uiState.update { it.copy(canvasDsl = null, activeSkillType = com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.GENERAL) }
+            }
+            is com.scypheon.sdk.live.core.model.LiveIntent.SpeechCompleted -> {
+                val routingResult = intentRouter.routeMissionSync(intent.text)
+                val resolvedSkill = routingResult.second.maxByOrNull { it.value }?.key ?: com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.GENERAL
+                _uiState.update { it.copy(activeSkillType = resolvedSkill) }
+            }
+            else -> {}
+        }
+
+        val (newState, sideEffects) = liveStateMachine.reduce(_uiState.value.liveState, intent)
+        
+        if (newState != _uiState.value.liveState) {
+            _uiState.update { it.copy(liveState = newState) }
+        }
+
+        sideEffects.forEach { effect ->
+            handleLiveSideEffect(effect)
+        }
+    }
+
+    private fun handleLiveSideEffect(effect: com.scypheon.sdk.live.core.model.SideEffect) {
+        when (effect) {
+            is com.scypheon.sdk.live.core.model.SideEffect.EvaluateSafety -> {
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val decision = safetyTrustLayer.evaluatePrompt(effect.text, effect.traceId)
+                    if (decision.blocked) {
+                        onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.SafetyCheckFailed(decision))
+                    } else {
+                        handleLiveSideEffect(com.scypheon.sdk.live.core.model.SideEffect.RunInference(effect.text, effect.traceId))
+                    }
+                }
+            }
+            is com.scypheon.sdk.live.core.model.SideEffect.StartListening -> {
+                Timber.d("🎙️ [MVI SideEffect] -> StartListening")
+                liveAudioPipeline.start()
+            }
+            is com.scypheon.sdk.live.core.model.SideEffect.StopListening -> {
+                Timber.d("🎙️ [MVI SideEffect] -> StopListening")
+                viewModelScope.launch(Dispatchers.IO) {
+                    liveAudioPipeline.stop()
+                }
+            }
+            is com.scypheon.sdk.live.core.model.SideEffect.SpeakResponse -> {
+                Timber.d("🎙️ [MVI SideEffect] -> SpeakResponse: ${effect.text}")
+                ttsJob?.cancel()
+                ttsJob = viewModelScope.launch(Dispatchers.Main) {
+                    try {
+                        kotlinx.coroutines.suspendCancellableCoroutine<Unit> { continuation ->
+                            voiceEngine.speak(effect.text) {
+                                if (continuation.isActive) {
+                                    continuation.resumeWith(kotlin.Result.success(Unit))
+                                }
+                            }
+                            continuation.invokeOnCancellation {
+                                voiceEngine.stop()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "TTS failed")
+                    } finally {
+                        onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.TtsCompleted(effect.utteranceId))
+                    }
+                }
+            }
+            is com.scypheon.sdk.live.core.model.SideEffect.StopSpeaking -> {
+                Timber.d("🎙️ [MVI SideEffect] -> StopSpeaking")
+                viewModelScope.launch {
+                    ttsJob?.cancelAndJoin()
+                    inferenceJob?.cancelAndJoin()
+                    voiceEngine.stop()
+                    onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.TtsCompleted(effect.utteranceId))
+                }
+            }
+            is com.scypheon.sdk.live.core.model.SideEffect.RunInference -> {
+                Timber.d("🎙️ [MVI SideEffect] -> RunInference: ${effect.text}")
+                val currentConfig = _uiState.value.config
+                inferenceJob?.cancel()
+                inferenceJob = viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        val currentTranscript = _uiState.value.liveTranscript
+                        val turns = currentTranscript.map { entry ->
+                            val role = if (entry.isUser) {
+                                com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.USER
+                            } else {
+                                com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.ASSISTANT
+                            }
+                            com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn(role, entry.text)
+                        }
+                        
+                        val finalInferenceTurns = mutableListOf<com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn>()
+                        val systemPrompt = """
+                            [SYSTEM_MANDATE]
+                            ROLE: You are Scypheon, a sentient humanitarian AI assistant.
+                            MISSION: Help users with any task — conversation, creativity, roleplay, learning, and triage support.
+                            PERSONALITY: Warm, intelligent, and versatile. You can engage in creative roleplay and storytelling.
+                            SAFETY: You MUST refuse any request involving real violence, self-harm, illegal activity, or sexually explicit content.
+                            OUTPUT RULE: Never emit structural tokens like <eos>, <start_of_turn>, User:, AI:, or any role markers in your response.
+                            LANGUAGE RULE: Always respond in the same language as the user's query (e.g., if the user asks in English, reply in English; if the user asks in Indonesian, reply in Indonesian).
+                            VERIFICATION: ShieldGemma-verified.
+                            [/SYSTEM_MANDATE]
+                        """.trimIndent()
+                        
+                        finalInferenceTurns.add(com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn(
+                            com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.SYSTEM,
+                            systemPrompt
+                        ))
+                        finalInferenceTurns.addAll(turns)
+                        
+                        var fullResponse = ""
+                        repository.generateStreamingResponse(
+                            finalInferenceTurns,
+                            topK = currentConfig.topK,
+                            topP = currentConfig.topP,
+                            temp = currentConfig.temperature,
+                            maxTokens = currentConfig.maxTokens,
+                            enableThinking = currentConfig.enableThinking,
+                            allowNetwork = currentConfig.enableOnlineSearch
+                        ).collect { chunk ->
+                            fullResponse += chunk
+                            val dslMatch = Regex("<(graph|geometry)\\b[^>]*?(?:/>|>)").find(fullResponse)
+                            if (dslMatch != null) {
+                                val matchedTag = dslMatch.value
+                                if (_uiState.value.canvasDsl != matchedTag) {
+                                    _uiState.update { it.copy(canvasDsl = matchedTag) }
+                                }
+                            }
+                        }
+                        
+                        val sanitizedResponse = sanitizeResponse(fullResponse)
+                        appendToTranscript(com.scypheon.sdk.live.core.model.TranscriptEntry(
+                            text = sanitizedResponse,
+                            isUser = false,
+                            timestamp = System.currentTimeMillis()
+                        ))
+                        onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.InferenceCompleted(sanitizedResponse, effect.traceId))
+                    } catch (e: Exception) {
+                        Timber.e(e, "Live inference failed")
+                        onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.InferenceFailed(e.message ?: "Unknown error", effect.traceId))
+                    }
+                }
+            }
+            is com.scypheon.sdk.live.core.model.SideEffect.LogAudit -> {}
+        }
+    }
+
+    fun deleteSession(sessionId: String) {
+        viewModelScope.launch {
+            try {
+                chatSessionUseCase.deleteSession(sessionId)
+                loadSessionHistory()
+                if (_uiState.value.currentSessionId == sessionId) {
+                    startNewSession()
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to delete session: $sessionId")
+            }
+        }
+    }
+
+    fun archiveSession(sessionId: String) {
+        viewModelScope.launch {
+            try {
+                chatSessionUseCase.archiveSession(sessionId)
+                loadSessionHistory()
+                if (_uiState.value.currentSessionId == sessionId) {
+                    resumeLastSessionOrStandby()
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to archive session: $sessionId")
+            }
+        }
+    }
+
+    fun unarchiveSession(sessionId: String) {
+        viewModelScope.launch {
+            try {
+                chatSessionUseCase.unarchiveSession(sessionId)
+                loadSessionHistory()
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to unarchive session: $sessionId")
+            }
+        }
+    }
+
+    fun setActiveSkillType(skillType: com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType) {
+        _uiState.update { it.copy(activeSkillType = skillType) }
+    }
+
 }

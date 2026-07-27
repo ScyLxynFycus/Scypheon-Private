@@ -3,28 +3,34 @@ package com.scypheon.app.workers
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import androidx.work.WorkManager
 import com.scypheon.app.data.repository.ScypheonRepository
-import dagger.hilt.android.AndroidEntryPoint
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import java.util.UUID
-import javax.inject.Inject
 
 /**
  * Enterprise HITL (Human-in-the-Loop) Receiver.
- * Listens for the "APPROVE" action from the VitreusFlowWorker notification.
- * Once approved, it clears the [AWAITING_APPROVAL] flag and allows the task to proceed (logically).
+ * Uses EntryPointAccessors instead of @AndroidEntryPoint to bypass ASM bytecode injection bugs in Hilt/AGP.
  */
-@AndroidEntryPoint
 class PuppetApprovalReceiver : BroadcastReceiver() {
 
-    @Inject
-    lateinit var repository: ScypheonRepository
+    @EntryPoint
+    @InstallIn(SingletonComponent::class)
+    interface PuppetApprovalEntryPoint {
+        fun repository(): ScypheonRepository
+    }
 
     override fun onReceive(context: Context, intent: Intent) {
+        // Safe manual injection bypassing the Hilt_ prefix bytecode generation
+        val appContext = context.applicationContext
+        val entryPoint = EntryPointAccessors.fromApplication(appContext, PuppetApprovalEntryPoint::class.java)
+        val repository = entryPoint.repository()
+
         if (intent.action == "com.scypheon.app.ACTION_APPROVE_PUPPET") {
             val taskId = intent.getStringExtra("task_id")
             Timber.i("🛡 HITL Approval Received for Task: $taskId")

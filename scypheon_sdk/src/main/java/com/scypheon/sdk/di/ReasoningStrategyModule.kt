@@ -1,7 +1,7 @@
 package com.scypheon.sdk.di
 
 import com.scypheon.sdk.core.intelligence.graph.DomainClassifier
-import com.scypheon.sdk.core.intelligence.graph.RegexDomainClassifier
+import com.scypheon.sdk.core.intelligence.graph.LlmDomainClassifier
 import com.scypheon.sdk.core.intelligence.graph.steps.DomainReasoningStrategy
 import com.scypheon.sdk.core.intelligence.graph.steps.ReasoningDomain
 import com.scypheon.sdk.core.intelligence.graph.strategies.EducationReasoningStrategy
@@ -40,5 +40,5 @@ abstract class ReasoningStrategyModule {
     abstract fun bindGeneralStrategy(impl: GeneralReasoningStrategy): DomainReasoningStrategy
 
     @Binds @Singleton
-    abstract fun bindDomainClassifier(impl: RegexDomainClassifier): DomainClassifier
+    abstract fun bindDomainClassifier(impl: LlmDomainClassifier): DomainClassifier
 }

@@ -37,7 +37,8 @@ data class ValidationOutcome(
 class KnowledgeGuardImpl @Inject constructor(
     private val groundingEngine: MedicalGroundingEngine,
     private val piiDetector: com.scypheon.sdk.core.safety.PiiDetector,
-    private val clinicalValidator: ClinicalValidator
+    private val clinicalValidator: ClinicalValidator,
+    private val pharmacopeiaDao: com.scypheon.sdk.core.humanitarian.medical.PharmacopeiaDao
 ) {
     companion object {
         private const val MIN_CONFIDENCE_THRESHOLD = 0.6f
@@ -91,7 +92,7 @@ class KnowledgeGuardImpl @Inject constructor(
             // 4. Domain grounding (INVESTIGATION+ levels)
             if (level.ordinal >= ValidationLevel.INVESTIGATION.ordinal) {
                 val domain = inferDomain(fact)
-                val keyTerm = extractKeyTerm(fact)
+                val keyTerm = extractKeyTerm(fact, domain)
                 val grounding = groundingEngine.verify(keyTerm, domain)
                 
                 if (grounding.confidence < MIN_CONFIDENCE_THRESHOLD) {
@@ -133,10 +134,31 @@ class KnowledgeGuardImpl @Inject constructor(
         }
     }
 
-    private fun extractKeyTerm(fact: String): String {
-        return Regex("\"([^\"]+)\"").find(fact)?.groupValues?.get(1)
-            ?: Regex("\\b[A-Z][a-z]+(?:\\s[A-Z][a-z]+)*\\b").find(fact)?.value
-            ?: fact.take(50)
+    private suspend fun extractKeyTerm(fact: String, domain: String): String {
+        // 1. Try quoted terms first
+        Regex("\"([^\"]+)\"").find(fact)?.groupValues?.get(1)?.let { return it }
+        
+        // 2. Try Title Case multi-word terms
+        Regex("\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b").find(fact)?.value?.let { return it }
+
+        // 3. Domain-specific dictionary lookup for lowercase/complex facts
+        if (domain == "medical") {
+            try {
+                val tokens = fact.lowercase().split(Regex("[^a-z0-9]"))
+                    .filter { it.length > 3 }
+                if (tokens.isNotEmpty()) {
+                    val drugs = pharmacopeiaDao.getDrugsByTokens(tokens)
+                    if (drugs.isNotEmpty()) {
+                        return drugs.first().drugName
+                    }
+                }
+            } catch (e: Exception) {
+                // Fallback to sentence extraction on DAO failure
+            }
+        }
+        
+        // 4. Fallback: extract first 50 chars
+        return fact.take(50)
     }
 
     private fun inferDomain(fact: String): String {

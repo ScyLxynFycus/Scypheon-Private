@@ -1,6 +1,7 @@
 package com.scypheon.sdk.core.utils
 
 import android.content.Context
+import android.net.ConnectivityManager
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
@@ -29,9 +30,20 @@ object ShadowSyncManager {
         }
 
         val destination = File(rootDir, TARGET_FILE)
-        if (destination.exists() && destination.length() > 1024 * 1024) {
-            Timber.d("🛰️ [ShadowSync] Gateway model already synced and valid.")
+        // Minimum valid size for embeddinggemma-300M (~186 MB uncompressed)
+        val minValidSize = 190_000_000L
+        if (destination.exists() && destination.length() >= minValidSize) {
+            Timber.d("🛰️ [ShadowSync] Gateway model already synced and valid (${destination.length()} bytes).")
             return@withContext true
+        } else if (destination.exists()) {
+            Timber.w("🛰️ [ShadowSync] Truncated gateway model detected (${destination.length()} bytes < $minValidSize). Re-downloading...")
+            destination.delete()
+        }
+
+        val connMgr = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        if (connMgr.isActiveNetworkMetered) {
+            Timber.w("🛰️ [ShadowSync] Network is METERED. Aborting automatic download of gateway model (~190MB) to prevent data plan overuse.")
+            return@withContext false
         }
 
         Timber.i("🛰️ [ShadowSync] Triggering stealth gateway sync...")

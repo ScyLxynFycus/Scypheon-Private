@@ -29,7 +29,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalContext
 import com.scypheon.app.ui.MainViewModel
+import com.scypheon.app.ui.NO_MODEL_SELECTED
 import com.scypheon.app.provision.HuggingFaceClient
 import com.scypheon.sdk.core.provision.ModelHubSource
 import com.scypheon.sdk.core.provision.ModelMetadata
@@ -82,7 +84,7 @@ fun ModelHubScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = HubAccent)
                     }
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = HubBg
                 )
             )
@@ -146,14 +148,25 @@ fun ModelHubScreen(
                 key = { it.id }
             ) { model ->
                 val isDownloaded = viewModel.isModelDownloaded(model.fileName)
-                val isDownloading = uiState.downloadingModelId == model.id
+                val isDownloadingActive = uiState.downloadingModelId == model.id
+                val isPaused = (uiState.isDownloadPaused && isDownloadingActive) ||
+                               (!isDownloaded && !isDownloadingActive && viewModel.isModelDownloadingOrPaused(model.fileName))
+                
+                val customProgress = viewModel.getCustomDownloadProgress(model.fileName)
+                val progressPercent = if (isDownloadingActive) uiState.downloadProgress else (customProgress?.percentage ?: 0f)
 
                 RecommendedModelCard(
                     model = model,
                     isDownloaded = isDownloaded,
+<<<<<<< Updated upstream
                     isDownloading = isDownloading,
                     isPaused = uiState.isDownloadPaused && isDownloading,
                     downloadProgress = uiState.downloadProgress,
+=======
+                    isDownloading = isDownloadingActive,
+                    isPaused = isPaused,
+                    downloadProgress = progressPercent,
+>>>>>>> Stashed changes
                     scope = scope,
                     onDownload = { viewModel.downloadModel(model) },
                     onPause = { viewModel.pauseModelDownload(model) },
@@ -263,72 +276,132 @@ fun ModelHubScreen(
 
 @Composable
 private fun ActiveModelCard(modelName: String, engineType: String?, isReady: Boolean) {
+    val context = LocalContext.current
+    var totalGb by remember { mutableStateOf(0.0) }
+    var freeGb by remember { mutableStateOf(0.0) }
+    var usagePercent by remember { mutableStateOf(0f) }
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val stat = android.os.StatFs(android.os.Environment.getDataDirectory().path)
+                val blockSize = stat.blockSizeLong
+                val totalBytes = stat.blockCountLong * blockSize
+                val availableBytes = stat.availableBlocksLong * blockSize
+                val usedBytes = totalBytes - availableBytes
+                totalGb = totalBytes / 1_000_000_000.0
+                freeGb = availableBytes / 1_000_000_000.0
+                usagePercent = if (totalBytes > 0) (usedBytes.toFloat() / totalBytes) else 0f
+            } catch (e: Exception) {
+                // Fallback
+            }
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color(0xFFE5E5EA)),
         colors = CardDefaults.cardColors(containerColor = HubCardBg),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Status indicator
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .background(
-                        if (isReady) HubGreen.copy(alpha = 0.12f) else HubOrange.copy(alpha = 0.12f),
-                        RoundedCornerShape(12.dp)
-                    ),
-                contentAlignment = Alignment.Center
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header: Active Model Info
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(
-                    if (isReady) Icons.Default.CheckCircle else Icons.Default.HourglassEmpty,
-                    contentDescription = null,
-                    tint = if (isReady) HubGreen else HubOrange,
-                    modifier = Modifier.size(22.dp)
+                // Status dot indicator
+                val dotColor = when {
+                    modelName == NO_MODEL_SELECTED || modelName.isBlank() -> Color(0xFF8E8E93)
+                    isReady -> HubGreen
+                    else -> HubOrange
+                }
+                
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(dotColor, CircleShape)
+                )
+                
+                Spacer(Modifier.width(8.dp))
+                
+                Text(
+                    text = when {
+                        modelName == NO_MODEL_SELECTED || modelName.isBlank() -> "NO ACTIVE MODEL"
+                        isReady -> "SYSTEM ACTIVE"
+                        else -> "LOADING NEURAL LINK..."
+                    },
+                    style = TextStyle(
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = dotColor,
+                        letterSpacing = 0.5.sp
+                    )
                 )
             }
-
-            Spacer(Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
+            
+            Spacer(Modifier.height(6.dp))
+            
+            Text(
+                text = if (modelName == NO_MODEL_SELECTED || modelName.isBlank()) "Model Missing" else modelName,
+                style = TextStyle(
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HubTextPrimary
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            
+            if (engineType != null && modelName != NO_MODEL_SELECTED && modelName.isNotBlank()) {
                 Text(
-                    "Active Model",
-                    style = TextStyle(fontSize = 12.sp, color = HubTextSecondary, fontWeight = FontWeight.Medium)
+                    text = "Engine: $engineType Backend",
+                    style = TextStyle(fontSize = 12.sp, color = HubTextSecondary),
+                    modifier = Modifier.padding(top = 1.dp)
                 )
-                Text(
-                    if (modelName == "no models selected") "No model loaded" else modelName,
-                    style = TextStyle(fontSize = 16.sp, color = HubTextPrimary, fontWeight = FontWeight.SemiBold),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (engineType != null) {
+            }
+            
+            Spacer(Modifier.height(14.dp))
+            HorizontalDivider(color = HubDivider, thickness = 1.dp)
+            Spacer(Modifier.height(14.dp))
+            
+            // Storage Section
+            Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Storage,
+                        contentDescription = null,
+                        tint = HubAccent,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        "Engine: $engineType",
-                        style = TextStyle(fontSize = 12.sp, color = HubTextSecondary)
+                        "Storage Status",
+                        style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = HubTextPrimary)
                     )
                 }
-            }
-
-            // Status badge
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = if (isReady) HubGreen.copy(alpha = 0.12f) else HubOrange.copy(alpha = 0.12f)
-            ) {
                 Text(
-                    if (isReady) "Ready" else "Loading",
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    style = TextStyle(
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (isReady) HubGreen else HubOrange
-                    )
+                    "%.1f GB Free of %.0f GB".format(freeGb, totalGb),
+                    style = TextStyle(fontSize = 12.sp, color = HubTextSecondary)
                 )
             }
+            
+            Spacer(Modifier.height(8.dp))
+            
+            LinearProgressIndicator(
+                progress = { usagePercent },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+                color = HubAccent,
+                trackColor = HubBg
+            )
         }
     }
 }
@@ -373,11 +446,11 @@ private fun LocalModelCard(file: java.io.File, isActive: Boolean, onLoad: () -> 
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isActive) HubAccent.copy(alpha = 0.06f) else HubCardBg
+            containerColor = if (isActive) HubAccent.copy(alpha = 0.04f) else HubCardBg
         ),
-        border = if (isActive) BorderStroke(1.dp, HubAccent.copy(alpha = 0.3f)) else null,
+        border = BorderStroke(1.dp, if (isActive) HubAccent.copy(alpha = 0.4f) else Color(0xFFE5E5EA)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
@@ -469,7 +542,8 @@ private fun RecommendedModelCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color(0xFFE5E5EA)),
         colors = CardDefaults.cardColors(containerColor = HubCardBg),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
@@ -479,16 +553,13 @@ private fun RecommendedModelCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Model icon
+                // Quantized Box
                 Box(
                     modifier = Modifier
                         .size(44.dp)
                         .background(
                             Brush.linearGradient(
-                                listOf(
-                                    Color(0xFF667EEA).copy(alpha = 0.12f),
-                                    Color(0xFF764BA2).copy(alpha = 0.12f)
-                                )
+                                listOf(Color(0xFF007AFF).copy(alpha = 0.08f), Color(0xFF5856D6).copy(alpha = 0.08f))
                             ),
                             RoundedCornerShape(12.dp)
                         ),
@@ -497,9 +568,9 @@ private fun RecommendedModelCard(
                     Text(
                         model.quantization.uppercase(),
                         style = TextStyle(
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color(0xFF667EEA)
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF007AFF)
                         )
                     )
                 }
@@ -509,36 +580,40 @@ private fun RecommendedModelCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         model.title,
-                        style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = HubTextPrimary),
+                        style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = HubTextPrimary),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
                             "%.1f GB".format(sizeGb),
-                            style = TextStyle(fontSize = 13.sp, color = HubTextSecondary)
+                            style = TextStyle(fontSize = 12.sp, color = HubTextSecondary)
                         )
-                        Text("·", style = TextStyle(fontSize = 13.sp, color = HubTextSecondary))
+                        Text("·", style = TextStyle(fontSize = 12.sp, color = HubTextSecondary))
                         Text(
                             if (model.engineType == com.scypheon.sdk.core.provision.EngineType.LITE_RT) "LiteRT" else "Llama",
-                            style = TextStyle(fontSize = 13.sp, color = HubTextSecondary)
+                            style = TextStyle(fontSize = 12.sp, color = HubTextSecondary)
                         )
                     }
                 }
 
-                // Best badge
+                // Best Badge
                 if (model.id.contains("e4b") && model.quantization == "int8") {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = Color(0xFFFFF3CD)
+                        color = Color(0xFFFFF3CD),
+                        border = BorderStroke(0.5.dp, Color(0xFFFFC107).copy(alpha = 0.5f))
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
-                            Icon(Icons.Default.Star, null, tint = Color(0xFFF9AB00), modifier = Modifier.size(12.dp))
-                            Text("Best", style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB8860B)))
+                            Icon(Icons.Default.Star, null, tint = Color(0xFFFFB300), modifier = Modifier.size(10.dp))
+                            Text("Best Choice", style = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF856404)))
                         }
                     }
                 }
@@ -554,18 +629,18 @@ private fun RecommendedModelCard(
                 overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(12.dp))
 
-            // Provider + Details row
+            // Provider & RAM Requirements
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Provider
+                // Provider tag
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = HubBg
+                    color = Color(0xFFF2F2F7)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -577,11 +652,11 @@ private fun RecommendedModelCard(
                     }
                 }
 
-                // RAM
+                // RAM tag
                 if (model.ramRequired.isNotBlank()) {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = HubBg
+                        color = Color(0xFFF2F2F7)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -589,16 +664,17 @@ private fun RecommendedModelCard(
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Icon(Icons.Default.Memory, null, tint = HubTextSecondary, modifier = Modifier.size(12.dp))
-                            Text(model.ramRequired, style = TextStyle(fontSize = 11.sp, color = HubTextSecondary))
+                            Text(model.ramRequired, style = TextStyle(fontSize = 11.sp, color = HubTextSecondary, fontWeight = FontWeight.Medium))
                         }
                     }
                 }
             }
 
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(16.dp))
 
             // Action area
             if (isDownloading) {
+<<<<<<< Updated upstream
                 // Download progress
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -654,43 +730,134 @@ private fun RecommendedModelCard(
                 }
             } else if (isDownloaded) {
                 // Downloaded — show Try + Delete
+=======
+                // Downloading progress bar & pause/cancel actions
+>>>>>>> Stashed changes
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        LinearProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(5.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = HubAccent,
+                            trackColor = HubBg
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "Downloading... ${(downloadProgress * 100).toInt()}%",
+                            style = TextStyle(fontSize = 11.sp, color = HubAccent, fontWeight = FontWeight.Bold)
+                        )
+                    }
+
+                    // Pause Button
+                    IconButton(
+                        onClick = onPause,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(Color(0xFFF2F2F7), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Pause, contentDescription = "Pause", tint = HubAccent, modifier = Modifier.size(16.dp))
+                    }
+
+                    // Cancel Button
+                    IconButton(
+                        onClick = { scope.launch { delay(50); onDelete() } },
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(HubRed.copy(alpha = 0.08f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Cancel", tint = HubRed, modifier = Modifier.size(16.dp))
+                    }
+                }
+            } else if (isPaused) {
+                // Paused / Resumable state
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        LinearProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(5.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = HubOrange,
+                            trackColor = HubBg
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "Paused at ${(downloadProgress * 100).toInt()}%",
+                            style = TextStyle(fontSize = 11.sp, color = HubOrange, fontWeight = FontWeight.Bold)
+                        )
+                    }
+
+                    // Resume Button
+                    IconButton(
+                        onClick = onDownload,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(HubOrange.copy(alpha = 0.08f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = "Resume", tint = HubOrange, modifier = Modifier.size(16.dp))
+                    }
+
+                    // Clear / Delete Button
+                    IconButton(
+                        onClick = { scope.launch { delay(50); onDelete() } },
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(HubRed.copy(alpha = 0.08f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Delete", tint = HubRed, modifier = Modifier.size(16.dp))
+                    }
+                }
+            } else if (isDownloaded) {
+                // Downloaded state - show Load Model & Delete
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Button(
                         onClick = { scope.launch { delay(50); onTry() } },
-                        modifier = Modifier.weight(1f).height(40.dp),
+                        modifier = Modifier.weight(1f).height(42.dp),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = HubAccent)
                     ) {
-                        Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Load Model", style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold))
+                        Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Load Model", style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White))
                     }
 
                     OutlinedButton(
                         onClick = { scope.launch { delay(50); onDelete() } },
-                        modifier = Modifier.height(40.dp),
+                        modifier = Modifier.height(42.dp),
                         shape = RoundedCornerShape(10.dp),
                         border = BorderStroke(1.dp, HubRed.copy(alpha = 0.3f)),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = HubRed)
                     ) {
-                        Icon(Icons.Default.Delete, null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp))
                     }
                 }
             } else {
-                // Not downloaded — show Download button
+                // Not downloaded state - show Download outline button
                 OutlinedButton(
                     onClick = { scope.launch { delay(50); onDownload() } },
-                    modifier = Modifier.fillMaxWidth().height(40.dp),
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
                     shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, HubAccent.copy(alpha = 0.4f)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = HubAccent)
                 ) {
-                    Icon(Icons.Default.Download, null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Download, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Download (%.1f GB)".format(sizeGb), style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold))
+                    Text("Download (%.1f GB)".format(sizeGb), style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold))
                 }
             }
         }

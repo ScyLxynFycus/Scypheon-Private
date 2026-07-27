@@ -10,6 +10,7 @@ import javax.inject.Singleton
 /**
  * Concrete implementation of grounding using the central AppDatabase.
  * Bridges pharmacological data (PharmacopeiaDao) and general humanitarian facts (KnowledgeDao).
+ * Enterprise Grade: Verifies full text responses without hallucination mocks.
  */
 @Singleton
 class RoomMedicalGroundingEngine @Inject constructor(
@@ -18,55 +19,70 @@ class RoomMedicalGroundingEngine @Inject constructor(
     private val triageGateway: MedicalTriageGateway
 ) : MedicalGroundingEngine {
 
-    override suspend fun verify(term: String, domain: String): GroundingResult = withContext(Dispatchers.IO) {
+    override suspend fun verify(text: String, domain: String): GroundingResult = withContext(Dispatchers.IO) {
         try {
-            // 1. Route based on domain
+            val lowerText = text.lowercase()
+            
+            // 1. Dynamic Entity Extraction: Check for specific drugs mentioned in the text
+            val tokens = lowerText.split(Regex("\\W+")).filter { it.length > 2 }
+            
             if (domain == "medical") {
-                val exact = pharmacopeiaDao.getByDrugName(term.lowercase())
-                if (exact != null) {
+                val dbHits = pharmacopeiaDao.getDrugsByTokens(tokens)
+                if (dbHits.isNotEmpty()) {
+                    // Safety Gate: Hard check for lethal numerical hallucinations within the text
+                    val numberMatch = Regex("(\\d+)\\s*(mg|g|ml)").find(lowerText)
+                    if (numberMatch != null) {
+                        val value = numberMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+                        val unit = numberMatch.groupValues[2]
+                        
+                        // If LLM hallucinates an absurd dosage in free text, block it mathematically
+                        if ((unit == "mg" && value > 5000) || (unit == "g" && value > 5)) {
+                            return@withContext GroundingResult(
+                                confidence = 0.1f, // Fails the 0.65 threshold
+                                sources = listOf("SAFETY_SYSTEM: Blocked lethal dosage hallucination (>5000mg/5g)."),
+                                domain = domain,
+                                exactMatch = false
+                            )
+                        }
+                    }
+                    
                     return@withContext GroundingResult(
-                        confidence = 1.0f,
-                        sources = listOf("${exact.source}: ${exact.dosage}"),
+                        confidence = 0.95f,
+                        sources = dbHits.map { "${it.drugName}: ${it.dosage}" },
                         domain = domain,
                         exactMatch = true
                     )
                 }
             }
 
-            // 2. Try general knowledge base
-            val kExact = knowledgeDao.getExact(term.lowercase(), domain)
-            if (kExact != null) {
-                return@withContext GroundingResult(1.0f, listOf(kExact), domain, true)
+            // 2. FTS Search for general context
+            val cleanTerm = com.scypheon.sdk.core.humanitarian.medical.FtsSanitizer.sanitize(text).take(150)
+            val kResults = if (cleanTerm.isNotBlank()) {
+                knowledgeDao.search(cleanTerm, limit = 5)
+            } else {
+                emptyList()
             }
-
-            // 3. Fuzzy search in knowledge base
-            val kResults = knowledgeDao.search(term, limit = 5)
+            
             if (kResults.isNotEmpty()) {
-                val avgConfidence = kResults.map { it.confidence }.average().toFloat()
-                val sources = kResults.map { "${it.source}: ${it.content}" }
-                return@withContext GroundingResult(avgConfidence, sources, domain, false)
+                val maxConfidence = kResults.maxOf { it.confidence }
+                val threshold = maxConfidence * 0.8f
+                val topSources = kResults
+                    .filter { it.confidence >= threshold }
+                    .map { "${it.source}: ${it.content}" }
+                    .take(3)
+                return@withContext GroundingResult(maxConfidence, topSources, domain, false)
             }
 
-            // 4. Deterministic safety fallback
-            val fallback = deterministicFallback(term, domain)
-            if (fallback != null) return@withContext fallback
+            // 3. Natural Conversation Passthrough (If not medical and no knowledge hit, assume safe chat)
+            // To prevent blocking general greetings like "Hello"
+            val isMedicalContext = lowerText.contains(Regex("(obat|dosis|mg|sakit|nyeri|paracetamol|medicine|dose|pain)"))
+            if (!isMedicalContext) {
+                return@withContext GroundingResult(0.85f, listOf("SYSTEM: General non-critical conversation."), domain, false)
+            }
 
-            GroundingResult(0.0f, emptyList(), domain, false)
+            GroundingResult(0.3f, emptyList(), domain, false) // Fails medical context without DB hits
         } catch (e: Exception) {
             GroundingResult(0.0f, emptyList(), domain, false)
-        }
-    }
-
-    private fun deterministicFallback(term: String, domain: String): GroundingResult? {
-        val lower = term.lowercase()
-        return when {
-            domain == "medical" && lower.contains("paracetamol") ->
-                GroundingResult(0.95f, listOf("WHO: Standard adult 500-1000mg q4-6h. Max 4g/day."), domain, false)
-            domain == "medical" && lower.contains("warfarin") ->
-                GroundingResult(0.95f, listOf("FDA: High interaction risk. Avoid NSAIDs."), domain, false)
-            domain == "resilience" && lower.contains("evacuation") ->
-                GroundingResult(0.90f, listOf("UN: Follow local emergency protocols. Prioritize vulnerable."), domain, false)
-            else -> null
         }
     }
 }

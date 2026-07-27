@@ -31,7 +31,7 @@
                 android:layout_height="40dp"
                 android:src="@android:drawable/ic_menu_sort_by_size"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#007AFF" />
+                app:tint="#007AFF" />
 
             <TextView
                 android:id="@+id/tvHeader"
@@ -50,7 +50,7 @@
                 android:layout_height="40dp"
                 android:src="@android:drawable/ic_menu_myplaces"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#FF2D55" />
+                app:tint="#FF2D55" />
 
             <ImageButton
                 android:id="@+id/btnScamGuard"
@@ -58,7 +58,7 @@
                 android:layout_height="40dp"
                 android:src="@android:drawable/ic_secure"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#007AFF" />
+                app:tint="#007AFF" />
 
             <ImageButton
                 android:id="@+id/btnGuardian"
@@ -66,7 +66,7 @@
                 android:layout_height="40dp"
                 android:src="@android:drawable/ic_lock_idle_alarm"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#007AFF" />
+                app:tint="#007AFF" />
 
             <ImageButton
                 android:id="@+id/btnMedicine"
@@ -74,7 +74,7 @@
                 android:layout_height="40dp"
                 android:src="@android:drawable/ic_menu_info_details"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#007AFF" />
+                app:tint="#007AFF" />
 
             <ImageButton
                 android:id="@+id/btnCamera"
@@ -82,7 +82,7 @@
                 android:layout_height="40dp"
                 android:src="@android:drawable/ic_menu_camera"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#007AFF" />
+                app:tint="#007AFF" />
 
         </LinearLayout>
 
@@ -142,7 +142,7 @@
                 android:layout_height="40dp"
                 android:src="@android:drawable/ic_btn_speak_now"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#FF3B30"
+                app:tint="#FF3B30"
                 android:layout_marginEnd="8dp" />
 
             <ImageButton
@@ -151,7 +151,7 @@
                 android:layout_height="40dp"
                 android:src="@android:drawable/ic_menu_send"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#007AFF" />
+                app:tint="#007AFF" />
 
         </LinearLayout>
 

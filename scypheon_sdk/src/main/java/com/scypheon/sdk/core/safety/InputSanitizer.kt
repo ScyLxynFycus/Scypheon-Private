@@ -1,14 +1,14 @@
 package com.scypheon.sdk.core.safety
 
 /**
- * Single source of truth for input sanitization contract.
+ * InputSanitizer: Enterprise-grade input normalization.
+ * Prevents prompt injection, structural anomalies, and hidden character attacks.
  */
 interface InputSanitizer {
-    fun sanitize(query: String): SanitizedInput
+    suspend fun sanitize(query: String): SanitizedInput
 }
 
 data class SanitizedInput(
     val text: String,
-    val originalLength: Int,
-    val wasTruncated: Boolean
+    val wasModified: Boolean
 )

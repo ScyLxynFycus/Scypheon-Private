@@ -33,7 +33,7 @@ class FormatDyslexiaTool @Inject constructor(
         
         return try {
             val formatted = accessibilitySkill.formatForDyslexia(text)
-            ToolResult.Success("FORMATTED_TEXT:\n$formatted", System.currentTimeMillis() - start)
+            ToolResult.Success("FORMATTED_TEXT:\n$formatted", latencyMs = System.currentTimeMillis() - start)
         } catch (e: Exception) {
             ToolResult.Error(e.message ?: "Formatting failed", e, System.currentTimeMillis() - start)
         }

@@ -34,11 +34,11 @@ class GeneralQueryTool @Inject constructor() : BaseTool() {
         return when(args["type"]?.toString()) {
             "TIME" -> {
                 val time = Calendar.getInstance().time.toString()
-                ToolResult.Success("CURRENT_TIME: $time", System.currentTimeMillis() - start)
+                ToolResult.Success("CURRENT_TIME: $time", latencyMs = System.currentTimeMillis() - start)
             }
             "GREETING" -> ToolResult.Success(
                 "GREETING: Hello! I am Scypheon, your humanitarian assistant. How can I help today?", 
-                System.currentTimeMillis() - start
+                latencyMs = System.currentTimeMillis() - start
             )
             else -> ToolResult.Error("Unsupported query type", null, System.currentTimeMillis() - start)
         }

@@ -1,47 +1,65 @@
 package com.scypheon.sdk.core.agent.tool
 
+import com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
+import com.scypheon.sdk.core.resilience.CircuitBreakerOpenException
 import com.scypheon.sdk.core.telemetry.BlackBoxVault
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeout
 import timber.log.Timber
+import java.util.concurrent.CopyOnWriteArrayList
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * ToolHookEngine: Lifecycle hook system for agentic tool orchestration.
- * 
- * Ported from the Claude Code hooks architecture (src/utils/hooks.ts).
- * Provides three hook points in the agentic pipeline:
- * 
- * 1. PreToolUse  → Before a tool executes. Can block, modify input, or approve.
- * 2. PostToolUse → After a tool executes. Can inject context, audit results.
- * 3. StopHook    → After LLM finishes responding. Can force re-generation.
  *
- * This replaces the missing hooks gap identified in the v1.4.0-SAR audit.
+ * Ported from the Claude Code hooks architecture.
+ * Provides three hook points in the agentic pipeline:
+ *
+ * 1. **PreToolUse**  — Before a tool executes. Can block, modify input, or approve.
+ * 2. **PostToolUse** — After a tool executes. Can inject context, audit results.
+ * 3. **StopHook**    — After LLM finishes responding. Can force re-generation.
+ *
+ * Enterprise Resilience:
+ * Each hook is protected by a [ResilienceCircuitBreaker]. If a specific hook fails
+ * repeatedly or times out, its circuit opens to prevent it from degrading the system.
+ * - Pre-hooks: Fail-safe (Deny) if circuit is open.
+ * - Post/Stop hooks: Fail-open (Pass) if circuit is open, prioritizing availability.
  */
 @Singleton
 class ToolHookEngine @Inject constructor(
-    private val blackBoxVault: BlackBoxVault
+    private val blackBoxVault: BlackBoxVault,
+    private val circuitBreaker: ResilienceCircuitBreaker
 ) {
-    // ── Hook Registry ───────────────────────────────────────────────────
+    companion object {
+        private const val PRE_TOOL_TIMEOUT_MS = 5000L
+        private const val POST_TOOL_TIMEOUT_MS = 3000L
+        private const val STOP_HOOK_TIMEOUT_MS = 2000L
+    }
 
-    private val preToolUseHooks = mutableListOf<PreToolUseHook>()
-    private val postToolUseHooks = mutableListOf<PostToolUseHook>()
-    private val stopHooks = mutableListOf<StopHook>()
+    // ── Hook Registry (CopyOnWriteArrayList for thread-safe iteration) ──
 
-    fun registerPreToolUse(hook: PreToolUseHook) { preToolUseHooks.add(hook) }
-    fun registerPostToolUse(hook: PostToolUseHook) { postToolUseHooks.add(hook) }
-    fun registerStopHook(hook: StopHook) { stopHooks.add(hook) }
+    private val preToolUseHooks = CopyOnWriteArrayList<PreToolUseHook>()
+    private val postToolUseHooks = CopyOnWriteArrayList<PostToolUseHook>()
+    private val stopHooks = CopyOnWriteArrayList<StopHook>()
+
+    fun registerPreToolUse(hook: PreToolUseHook) { preToolUseHooks.addIfAbsent(hook) }
+    fun registerPostToolUse(hook: PostToolUseHook) { postToolUseHooks.addIfAbsent(hook) }
+    fun registerStopHook(hook: StopHook) { stopHooks.addIfAbsent(hook) }
+
+    fun unregisterPreToolUse(hook: PreToolUseHook) { preToolUseHooks.remove(hook) }
+    fun unregisterPostToolUse(hook: PostToolUseHook) { postToolUseHooks.remove(hook) }
+    fun unregisterStopHook(hook: StopHook) { stopHooks.remove(hook) }
+
+    fun clearAll() {
+        preToolUseHooks.clear()
+        postToolUseHooks.clear()
+        stopHooks.clear()
+        Timber.d("[HOOK] All hooks cleared")
+    }
 
     // ── PreToolUse Execution ────────────────────────────────────────────
 
-    /**
-     * Runs all PreToolUse hooks before a tool call.
-     * Any hook can:
-     * - BLOCK the call (returns Denied)
-     * - MODIFY the input (returns Modified with new args)
-     * - APPROVE the call (returns Approved)
-     * 
-     * If multiple hooks run, the strictest decision wins (Deny > Modify > Allow).
-     */
     suspend fun executePreToolUse(
         toolName: String,
         args: Map<String, Any?>,
@@ -50,51 +68,58 @@ class ToolHookEngine @Inject constructor(
         if (preToolUseHooks.isEmpty()) return PreToolUseResult.Approved(args)
 
         var currentArgs = args
-        
+
         for (hook in preToolUseHooks) {
             if (!hook.matches(toolName)) continue
-            
+
             try {
                 val startMs = System.currentTimeMillis()
-                val result = hook.evaluate(toolName, currentArgs, context)
+                val result = circuitBreaker.execute("hook_pre_${hook.name}") {
+                    withTimeout(PRE_TOOL_TIMEOUT_MS) {
+                        hook.evaluate(toolName, currentArgs, context)
+                    }
+                }
                 val durationMs = System.currentTimeMillis() - startMs
-                
+
                 blackBoxVault.logEvent(
-                    "HOOK_PRE_TOOL", 
+                    "HOOK_PRE_TOOL",
                     "Hook '${hook.name}' on tool '$toolName': ${result.javaClass.simpleName} (${durationMs}ms)"
                 )
-                
+
                 when (result) {
                     is PreToolUseResult.Denied -> {
-                        Timber.w("🛡️ [HOOK] PreToolUse DENIED by '${hook.name}': ${result.reason}")
-                        return result // Immediate block
+                        Timber.w("[HOOK] PreToolUse DENIED by '${hook.name}': ${result.reason}")
+                        return result
                     }
                     is PreToolUseResult.Modified -> {
-                        Timber.i("🔧 [HOOK] PreToolUse MODIFIED input by '${hook.name}'")
+                        Timber.i("[HOOK] PreToolUse MODIFIED input by '${hook.name}'")
                         currentArgs = result.updatedArgs
                     }
                     is PreToolUseResult.Approved -> {
                         // Continue with next hook
                     }
                 }
+            } catch (e: CircuitBreakerOpenException) {
+                Timber.e("[HOOK] PreToolUse hook '${hook.name}' circuit is OPEN. Failing safe -> deny.")
+                return PreToolUseResult.Denied("Security hook degraded. Failing safe.")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Timber.e("[HOOK] PreToolUse hook '${hook.name}' timed out after ${PRE_TOOL_TIMEOUT_MS}ms. Failing safe -> deny.")
+                circuitBreaker.recordFailure("hook_pre_${hook.name}", e)
+                return PreToolUseResult.Denied("Hook '${hook.name}' timed out")
             } catch (e: Exception) {
-                Timber.e(e, "[HOOK] PreToolUse hook '${hook.name}' threw exception. Failing safe → deny.")
+                Timber.e(e, "[HOOK] PreToolUse hook '${hook.name}' threw exception. Failing safe -> deny.")
+                circuitBreaker.recordFailure("hook_pre_${hook.name}", e)
                 return PreToolUseResult.Denied("Hook error: ${e.message}")
             }
         }
-        
+
         return PreToolUseResult.Approved(currentArgs)
     }
 
     // ── PostToolUse Execution ───────────────────────────────────────────
 
-    /**
-     * Runs all PostToolUse hooks after a tool call completes.
-     * Hooks can:
-     * - INJECT additional context into the conversation
-     * - AUDIT the result for safety/compliance
-     * - FLAG the result as requiring re-evaluation
-     */
     suspend fun executePostToolUse(
         toolName: String,
         args: Map<String, Any?>,
@@ -108,24 +133,35 @@ class ToolHookEngine @Inject constructor(
 
         for (hook in postToolUseHooks) {
             if (!hook.matches(toolName)) continue
-            
+
             try {
-                val hookResult = hook.evaluate(toolName, args, result, context)
-                
+                val hookResult = circuitBreaker.execute("hook_post_${hook.name}") {
+                    withTimeout(POST_TOOL_TIMEOUT_MS) {
+                        hook.evaluate(toolName, args, result, context)
+                    }
+                }
+
                 if (hookResult.additionalContext != null) {
                     additionalContexts.add(hookResult.additionalContext)
                 }
                 if (hookResult.flagForReEvaluation) {
                     needsReEvaluation = true
                 }
-                
+
                 blackBoxVault.logEvent(
-                    "HOOK_POST_TOOL", 
+                    "HOOK_POST_TOOL",
                     "Hook '${hook.name}' on tool '$toolName': context=${hookResult.additionalContext != null}, reeval=$needsReEvaluation"
                 )
+            } catch (e: CircuitBreakerOpenException) {
+                Timber.w("[HOOK] PostToolUse hook '${hook.name}' circuit is OPEN. Failing open (skip).")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Timber.e("[HOOK] PostToolUse hook '${hook.name}' timed out. Continuing.")
+                circuitBreaker.recordFailure("hook_post_${hook.name}", e)
             } catch (e: Exception) {
-                Timber.e(e, "[HOOK] PostToolUse hook '${hook.name}' threw exception. Continuing.")
-                // PostToolUse hooks are non-blocking — failures don't prevent results
+                Timber.e(e, "[HOOK] PostToolUse hook '${hook.name}' failed. Continuing.")
+                circuitBreaker.recordFailure("hook_post_${hook.name}", e)
             }
         }
 
@@ -134,15 +170,6 @@ class ToolHookEngine @Inject constructor(
 
     // ── Stop Hooks ──────────────────────────────────────────────────────
 
-    /**
-     * Runs all Stop hooks after the LLM finishes responding (no more tool calls).
-     * Mirrors Claude Code's stopHooks.ts — the final quality gate.
-     * 
-     * Hooks can:
-     * - FORCE CONTINUATION: Inject a blocking error message that forces the LLM to re-generate
-     * - PREVENT COMPLETION: Stop the loop early (e.g., safety violation detected)
-     * - INJECT CONTEXT: Add system-level observations (e.g., clinical warnings)
-     */
     suspend fun executeStopHooks(
         fullResponse: String,
         context: ExecutionContext
@@ -156,30 +183,40 @@ class ToolHookEngine @Inject constructor(
         for (hook in stopHooks) {
             try {
                 val startMs = System.currentTimeMillis()
-                val result = hook.evaluate(fullResponse, context)
+                val result = circuitBreaker.execute("hook_stop_${hook.name}") {
+                    withTimeout(STOP_HOOK_TIMEOUT_MS) {
+                        hook.evaluate(fullResponse, context)
+                    }
+                }
                 val durationMs = System.currentTimeMillis() - startMs
-                
+
                 when (result) {
                     is StopHookDecision.ForceRetry -> {
-                        Timber.w("🔄 [STOP_HOOK] '${hook.name}' forcing retry: ${result.blockingError}")
+                        Timber.w("[STOP_HOOK] '${hook.name}' forcing retry: ${result.blockingError}")
                         blockingErrors.add(result.blockingError)
                     }
                     is StopHookDecision.PreventCompletion -> {
-                        Timber.w("🛑 [STOP_HOOK] '${hook.name}' preventing completion: ${result.reason}")
+                        Timber.w("[STOP_HOOK] '${hook.name}' preventing completion: ${result.reason}")
                         preventCompletion = true
                         stopReason = result.reason
                     }
-                    is StopHookDecision.Pass -> {
-                        // Quality check passed
-                    }
+                    is StopHookDecision.Pass -> {}
                 }
-                
+
                 blackBoxVault.logEvent(
-                    "HOOK_STOP", 
+                    "HOOK_STOP",
                     "Hook '${hook.name}': ${result.javaClass.simpleName} (${durationMs}ms)"
                 )
+            } catch (e: CircuitBreakerOpenException) {
+                Timber.w("[STOP_HOOK] Hook '${hook.name}' circuit is OPEN. Failing open (pass).")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Timber.e("[STOP_HOOK] Hook '${hook.name}' timed out. Failing open -> pass.")
+                circuitBreaker.recordFailure("hook_stop_${hook.name}", e)
             } catch (e: Exception) {
-                Timber.e(e, "[STOP_HOOK] Hook '${hook.name}' threw exception. Failing open → pass.")
+                Timber.e(e, "[STOP_HOOK] Hook '${hook.name}' failed. Failing open -> pass.")
+                circuitBreaker.recordFailure("hook_stop_${hook.name}", e)
             }
         }
 

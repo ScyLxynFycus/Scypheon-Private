@@ -29,8 +29,21 @@ data class ScypheonConfig(
     val enableZeroLatency: Boolean = true,
     val localModels: List<File> = emptyList(),
     val isLocalModelPickerVisible: Boolean = false,
-    val backendDiagnostics: List<ScypheonBackendDiagnostic> = emptyList()
+    val backendDiagnostics: List<ScypheonBackendDiagnostic> = emptyList(),
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val chatBubbleStyle: ChatBubbleStyle = ChatBubbleStyle.GRADIENT_BLUE
 )
+
+enum class ThemeMode {
+    SYSTEM, LIGHT, DARK
+}
+
+enum class ChatBubbleStyle {
+    GRADIENT_BLUE,
+    GRADIENT_WARM,
+    GRADIENT_GREEN,
+    MINIMALIST_SOLID
+}
 
 /**
  * Captures hardware failure events (SIGSEGV/SIGILL) to inform the tiered fallback strategy.

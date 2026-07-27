@@ -9,7 +9,12 @@ import android.os.ParcelFileDescriptor
 object NativeSharedMemory {
     
     init {
-        System.loadLibrary("llama-android")
+        val oldPolicy = android.os.StrictMode.allowThreadDiskReads()
+        try {
+            System.loadLibrary("llama-android")
+        } finally {
+            android.os.StrictMode.setThreadPolicy(oldPolicy)
+        }
     }
 
     /**

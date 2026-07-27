@@ -29,8 +29,15 @@ class ModelManifestVerifier @Inject constructor(private val logger: com.scypheon
         metadata: ModelMetadata? = null
     ): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val isDebug = isDebugOverride ?: com.scypheon.sdk.BuildConfig.DEBUG
-        if (isDebug || signature == null) {
-            // LOCAL/DEMO MODE: Structural SHA-256 check only
+        if (signature == null) {
+            if (isDebug) {
+                return@withContext verifySha256Structural(manifestJson)
+            } else {
+                logger.log(android.util.Log.ERROR, "ModelVerifier", "Ed25519 signature is null in production. Verification aborted.", null)
+                return@withContext false
+            }
+        }
+        if (isDebug) {
             return@withContext verifySha256Structural(manifestJson)
         }
         // PRODUCTION MODE: Ed25519 mandatory
@@ -50,9 +57,35 @@ class ModelManifestVerifier @Inject constructor(private val logger: com.scypheon
     }
 
     private fun verifyEd25519Signature(manifestJson: String, signature: ByteArray): Boolean {
-        // Placeholder for Ed25519 verification logic
-        logger.log(android.util.Log.INFO, "ModelVerifier", "Ed25519 verification active (PROD).", null)
-        return true 
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
+            logger.log(android.util.Log.WARN, "ModelVerifier", "Ed25519 signature verification bypassed: API level is < 31 (${android.os.Build.VERSION.SDK_INT}).", null)
+            return true
+        }
+        return try {
+            val publicKeyPem = """
+                -----BEGIN PUBLIC KEY-----
+                MCowBQYDK2VwAyEA0Z3VS5JJcds3xfn/ygWeGgE3F1Q6x6X0Vv9XZq9F8qU=
+                -----END PUBLIC KEY-----
+            """.trimIndent()
+            val clean = publicKeyPem
+                .replace("-----BEGIN PUBLIC KEY-----", "")
+                .replace("-----END PUBLIC KEY-----", "")
+                .replace("\\s".toRegex(), "")
+            val keyBytes = android.util.Base64.decode(clean, android.util.Base64.DEFAULT)
+            
+            val keyFactory = java.security.KeyFactory.getInstance("Ed25519")
+            val pubKey = keyFactory.generatePublic(java.security.spec.X509EncodedKeySpec(keyBytes))
+            
+            val sig = java.security.Signature.getInstance("Ed25519")
+            sig.initVerify(pubKey)
+            sig.update(manifestJson.toByteArray(Charsets.UTF_8))
+            val verified = sig.verify(signature)
+            logger.log(android.util.Log.INFO, "ModelVerifier", "Ed25519 signature verification result: $verified", null)
+            verified
+        } catch (e: Exception) {
+            logger.log(android.util.Log.ERROR, "ModelVerifier", "Ed25519 verification failed: ${e.message}", null)
+            false
+        }
     }
 
     // Deprecating old verifyIntegrity in favor of manifest-based verification

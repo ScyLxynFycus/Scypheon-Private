@@ -1,6 +1,7 @@
 package com.scypheon.sdk.core.agent.ooda
 
 import com.scypheon.sdk.core.agent.skills.AgentSkillRegistry
+import com.scypheon.sdk.core.agent.tool.ToolRegistry
 import com.scypheon.sdk.core.safety.InputSanitizer
 import com.scypheon.sdk.core.safety.SanitizedInput
 import kotlinx.coroutines.Dispatchers
@@ -34,21 +35,19 @@ data class OrientationConfig(
     val deepReasoningComplexityThreshold: ComplexityThreshold = ComplexityThreshold.HIGH
 )
 
-// Interfaces for Safety Pipeline Layer 0 Integration
-
 /**
  * Step 2: ORIENT
- * Translates the user's query into a specific skill from the SkillRegistry.
- * Hardened with precompiled regex, safe fallbacks, config injection, and L0 sanitizer integration.
+ * Translates the user's query into a specific skill from the AgentSkillRegistry.
+ * [v1.5.2-UNIFIED] Now uses modern SkillDefinition structure.
  */
 @Singleton
 class OrientStep @Inject constructor(
     private val skillRegistry: AgentSkillRegistry,
+    private val toolRegistry: ToolRegistry,
     private val sanitizer: InputSanitizer,
     private val config: OrientationConfig
 ) {
     companion object {
-        // ✅ Precompiled regex patterns (zero allocation per call, critical for edge devices)
         private val MEDICAL_COMPLEX_REGEX = Regex(
             "(interaksi|kenapa|analisis|bagaimana cara mendirikan)",
             RegexOption.IGNORE_CASE
@@ -71,28 +70,20 @@ class OrientStep @Inject constructor(
         observation: Observation,
         environment: DeviceEnvironment
     ): Orientation = withContext(Dispatchers.Default) {
-        Timber.d("🧭 [OODA_ORIENT] Classifying intent and selecting skill.")
+        Timber.d("🧠 [OODA_ORIENT] Orienting mission via Unified Skill Registry.")
 
-        // 1. Sanitize & normalize query (consistent with Safety Pipeline Layer 0)
         val sanitized = sanitizer.sanitize(observation.query)
         val cleanQuery = sanitized.text
 
-        // 2. Fast intent classification (CPU-bound, deterministic)
         val intent = classifyIntentFast(cleanQuery, observation.context)
-
-        // 3. Safe skill resolution with graceful fallback
         val skill = resolveSkillSafely(intent.primaryCapability)
 
-        // 4. Determine if deep reasoning (ORIGA delegation) is required
+        // Requires deep reasoning if complexity is high OR if no fast tools are available for this skill
+        val fastTools = skill.getTools(toolRegistry)
         val requiresDeepReasoning = intent.complexity.ordinal >= config.deepReasoningComplexityThreshold.ordinal ||
-                skill.fastTools.isEmpty()
+                fastTools.isEmpty()
 
-        // 5. Assess hardware constraints
         val constraint = assessEnvironmentConstraint(environment)
-
-        if (requiresDeepReasoning) {
-            Timber.i("🧭 [OODA_ORIENT] Delegating to ORIGA: ${intent.rootGoal} (Complexity: ${intent.complexity})")
-        }
 
         Orientation(
             rootGoal = intent.rootGoal,
@@ -100,7 +91,7 @@ class OrientStep @Inject constructor(
             selectedSkill = skill,
             requiresDeepReasoning = requiresDeepReasoning,
             delegationReason = if (requiresDeepReasoning) {
-                "Complexity=${intent.complexity}, FastTools=${skill.fastTools.size}"
+                "Complexity=${intent.complexity}, FastTools=${fastTools.size}"
             } else null,
             refinedQuery = cleanQuery,
             environmentConstraint = constraint
@@ -125,15 +116,12 @@ class OrientStep @Inject constructor(
     private fun resolveSkillSafely(capability: AgentSkillRegistry.SkillType): AgentSkillRegistry.SkillDefinition {
         return skillRegistry.getSkill(capability)
             ?: skillRegistry.getSkill(AgentSkillRegistry.SkillType.GENERAL)
-            ?: run {
-                Timber.e("🚨 [OODA_ORIENT] CRITICAL: GENERAL skill missing from registry. Falling back to NoOp.")
-                AgentSkillRegistry.SkillDefinition(
-                    type = AgentSkillRegistry.SkillType.GENERAL,
-                    fastTools = emptyList(),
-                    deepTools = emptyList(),
-                    description = "Fallback NoOp skill"
-                )
-            }
+            ?: AgentSkillRegistry.SkillDefinition(
+                type = AgentSkillRegistry.SkillType.GENERAL,
+                displayName = "General",
+                systemMandate = "Help the user.",
+                recommendedToolNames = emptyList()
+            )
     }
 
     private fun assessEnvironmentConstraint(env: DeviceEnvironment): EnvironmentConstraint {

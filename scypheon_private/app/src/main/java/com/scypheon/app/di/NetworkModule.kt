@@ -8,6 +8,11 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 import com.scypheon.app.security.ScypheonIdentityManager
+<<<<<<< Updated upstream
+=======
+
+import com.scypheon.sdk.core.security.SsrfProtectionInterceptor
+>>>>>>> Stashed changes
 
 /**
  * NetworkModule: Provides network-related dependencies for the Scypheon app and SDK tools.
@@ -25,6 +30,7 @@ object NetworkModule {
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(20, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
+            .addInterceptor(SsrfProtectionInterceptor())
             .build()
     }
 

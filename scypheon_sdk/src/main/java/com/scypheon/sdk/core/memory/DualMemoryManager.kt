@@ -16,7 +16,10 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import android.os.Build
 import com.scypheon.sdk.core.gateway.NeuralGateway
+import com.scypheon.sdk.core.gateway.filterWithThoughtSuppression
 import com.scypheon.sdk.core.security.ZeroKnowledgeEnclave
+import com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
+import com.scypheon.sdk.core.resilience.CircuitBreakerOpenException
 import javax.inject.Inject
 import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -28,22 +31,62 @@ data class ChatMessage(
     val isContextEligible: Boolean = true
 )
 
-data class Session(val id: String, val title: String, val timestamp: Long)
+data class Session(val id: String, val title: String, val timestamp: Long, val isArchived: Boolean = false)
 
 @Singleton
 class DualMemoryManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val vectorManager: IVectorEngine,
-    private val graphManager: GraphMemoryManager
+    private val graphManager: GraphMemoryManager,
+    private val circuitBreaker: ResilienceCircuitBreaker
 ) {
     // Solaris Hardening: Mutex to prevent race conditions during DB writes
     private val dbLock = Mutex()
+    private val extractionLock = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun getContext(): Context = context
 
     suspend fun addFact(subject: String, predicate: String, obj: String, confidence: Float = 1.0f) {
-        graphManager.addFact(subject, predicate, obj, confidence)
+        val factString = "[$subject] $predicate $obj"
+        
+        // 🛡EE[v5.0] SHA-256 Deduplication Gate
+        val entry = MemoryEntry(
+            content = factString,
+            tier = MemoryTier.SEMANTIC,
+            importance = confidence
+        )
+        val hash = entry.calculateContentHash()
+        
+        dbLock.withLock {
+            val db = dbHelper.writableDatabase
+            val values = ContentValues().apply {
+                put("content_hash", hash)
+                put("content", entry.content)
+                put("tier", entry.tier.name)
+                put("timestamp", entry.timestamp)
+                put("importance", entry.importance)
+            }
+            
+            try {
+                // INSERT OR IGNORE for deduplication
+                val id = db.insertWithOnConflict(
+                    ScypheonDbHelper.TABLE_MEMORY_ENTRIES, 
+                    null, 
+                    values, 
+                    SQLiteDatabase.CONFLICT_IGNORE
+                )
+                
+                if (id == -1L) {
+                    Timber.d("🔄 [DEDUPLICATION] Fact already exists: $factString")
+                } else {
+                    Timber.i("🧠 [MEMORY_TIER] SEMANTIC Fact anchored: $factString")
+                    graphManager.addFact(subject, predicate, obj, confidence)
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to anchor fact to Enterprise Memory")
+            }
+        }
     }
 
     fun saveFact(subject: String, relation: String, obj: String) {
@@ -53,8 +96,14 @@ class DualMemoryManager @Inject constructor(
     }
 
     suspend fun getMemoryContext(query: String): String {
-        val facts = graphManager.querySubject(query)
-        return if (facts.isEmpty()) "No direct facts found." else facts.joinToString("; ")
+        return when (val factsResult = graphManager.querySubject(query)) {
+            is QueryResult.Success -> {
+                val facts = factsResult.data
+                if (facts.isEmpty()) "No direct facts found." else facts.joinToString("; ")
+            }
+            is QueryResult.Degraded -> "[SYSTEM_WARNING: Graph database is offline. Cannot retrieve context.]"
+            is QueryResult.Error -> "[SYSTEM_WARNING: Error accessing graph database. Cannot retrieve context.]"
+        }
     }
 
     private val dbHelper = ScypheonDbHelper(context)
@@ -62,12 +111,6 @@ class DualMemoryManager @Inject constructor(
 
     // --- Transactional ACID Writes ---
 
-    /**
-     * One-time startup cleanup: Delete all persisted engine error messages from the DB.
-     * Before the MEMORY GUARD fix, error strings like "Error: AI engine disconnected..."
-     * were saved as legitimate assistant responses. These must be purged to prevent
-     * permanent prompt contamination causing the infinite generation loop.
-     */
     suspend fun purgeEngineErrorMessages(): Int = withContext(Dispatchers.IO) {
         dbLock.withLock {
             val db = dbHelper.writableDatabase
@@ -91,25 +134,20 @@ class DualMemoryManager @Inject constructor(
                 if (idsToDelete.isNotEmpty()) {
                     val cappedIds = idsToDelete.take(500)
                     
-                    // [v1.2.0-SAR] PHOENIX RECOVERY: Perform deletion in a hardened transaction
                     db.beginTransaction()
                     try {
-                        // 🛡️ Temporarily drop triggers to bypass potential FTS index corruption during deletion
                         db.execSQL("DROP TRIGGER IF EXISTS messages_ad")
-                        
                         for (id in cappedIds) {
                             db.delete(ScypheonDbHelper.TABLE_MESSAGES, "id = ?", arrayOf(id.toString()))
                         }
-                        
                         db.setTransactionSuccessful()
                         purgedCount = cappedIds.size
                     } finally {
                         if (db.inTransaction()) db.endTransaction()
                     }
                     
-                    // 🛡️ Restore FTS integrity and triggers after the heavy delete
                     rebuildFts(db)
-                    Timber.i("🛡️ [PHOENIX] Startup purge: Deleted $purgedCount corrupted messages and healed FTS index.")
+                    Timber.i("🛡EE[PHOENIX] Startup purge: Deleted $purgedCount corrupted messages and healed FTS index.")
                 }
             } catch (e: Exception) {
                 Timber.e(e, "🚨 [PHOENIX] Critical failure during message purge. Initiating Nuclear FTS Reset.")
@@ -128,12 +166,10 @@ class DualMemoryManager @Inject constructor(
             val db = dbHelper.writableDatabase
             db.beginTransaction()
             try {
-                // 🛡️ [PHOENIX] Bypassing corrupt FTS triggers during nuclear reset
                 db.execSQL("DROP TRIGGER IF EXISTS messages_ad")
                 db.execSQL("DROP TRIGGER IF EXISTS messages_ai")
                 db.execSQL("DROP TRIGGER IF EXISTS messages_au")
 
-                // Delete all data
                 db.delete(ScypheonDbHelper.TABLE_SESSIONS, null, null)
                 db.delete(ScypheonDbHelper.TABLE_MESSAGES, null, null)
                 
@@ -145,41 +181,36 @@ class DualMemoryManager @Inject constructor(
                 if (db.inTransaction()) db.endTransaction()
             }
 
-            // 🛡️ Force a clean rebuild of the FTS index and triggers
             rebuildFts(db)
-            Timber.i("🛡️ [PHOENIX] Nuclear reset successful. All memories purged and index healed.")
+            Timber.i("🛡EE[PHOENIX] Nuclear reset successful. All memories purged and index healed.")
         }
     }
 
-    /**
-     * Enterprise Protocol: Database TTL Sweep (AGENTS.md Section 3)
-     * Purge historical messages and sessions older than the specified timestamp.
-     */
     suspend fun performTtlSweep(thirtyDaysAgo: Long) = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        db.beginTransaction()
-        try {
-            // Cascade delete will handle messages if we delete the session
-            // but we might want to keep sessions and just prune old messages.
-            // For now, we delete entire sessions older than 30 days.
-            db.delete(ScypheonDbHelper.TABLE_SESSIONS, "timestamp < ?", arrayOf(thirtyDaysAgo.toString()))
-            
-            // Also ensure orphaned messages (if any) are cleared
-            db.delete(ScypheonDbHelper.TABLE_MESSAGES, "timestamp < ?", arrayOf(thirtyDaysAgo.toString()))
-            
-            db.setTransactionSuccessful()
-            Timber.i("TTL Sweep: Purged data older than $thirtyDaysAgo")
-        } catch (e: Exception) {
-            Timber.e(e, "TTL Sweep Failed")
-        } finally {
-            db.endTransaction()
+        dbLock.withLock {
+            val db = dbHelper.writableDatabase
+            try {
+                db.beginTransaction()
+                db.delete(ScypheonDbHelper.TABLE_SESSIONS, "timestamp < ?", arrayOf(thirtyDaysAgo.toString()))
+                db.delete(ScypheonDbHelper.TABLE_MESSAGES, "timestamp < ?", arrayOf(thirtyDaysAgo.toString()))
+                
+                // --- Volatile Medical Context Auto-Expunge ---
+                // Scypheon Private Hardening: Any memory entry (Graph/Semantic) older than 30 minutes containing medical keywords is wiped
+                val thirtyMinutesAgo = System.currentTimeMillis() - (30 * 60 * 1000)
+                db.delete(ScypheonDbHelper.TABLE_MEMORY_ENTRIES, 
+                          "timestamp < ? AND (LOWER(content) LIKE '%allergy%' OR LOWER(content) LIKE '%prescription%' OR LOWER(content) LIKE '%weight%' OR LOWER(content) LIKE '%medical%')", 
+                          arrayOf(thirtyMinutesAgo.toString()))
+                
+                db.setTransactionSuccessful()
+                Timber.i("[Memory] TTL Sweep: Purged old data and Volatile Medical Contexts.")
+            } catch (e: Exception) {
+                Timber.e(e, "[Memory] TTL Sweep failed")
+            } finally {
+                if (db.inTransaction()) db.endTransaction()
+            }
         }
     }
 
-    /**
-     * Replaces the oldest N raw messages with a single summarized block.
-     * Prevents LLM context window limits and OOM crashes.
-     */
     suspend fun replaceMessagesWithSummary(sessionId: String, countToReplace: Int, summaryText: String) = withContext(Dispatchers.IO) {
         dbLock.withLock {
             val db = dbHelper.writableDatabase
@@ -200,8 +231,6 @@ class DualMemoryManager @Inject constructor(
                     return@withLock
                 }
 
-                // [v1.1.4-SAR] Drop FTS triggers BEFORE deletion to prevent
-                // SQL logic error from corrupt FTS index during DELETE cascade.
                 db.execSQL("DROP TRIGGER IF EXISTS messages_ad")
                 db.execSQL("DROP TRIGGER IF EXISTS messages_ai")
                 db.execSQL("DROP TRIGGER IF EXISTS messages_au")
@@ -229,20 +258,13 @@ class DualMemoryManager @Inject constructor(
                 if (db.inTransaction()) db.endTransaction()
             }
 
-            // Always rebuild FTS after trigger-bypassed operations
             rebuildFts(db)
         }
     }
 
-    /**
-     * [v1.1.5-SAR] Long-Term Memory Bridge.
-     * Takes a condensed summary and indexes it in the Vector DB for permanent retrieval.
-     * This allows future sessions to "remember" this context via Semantic RAG search.
-     */
     suspend fun saveSummaryToLongTerm(sessionId: String, summary: String) = withContext(Dispatchers.IO) {
         dbLock.withLock {
             try {
-                // [Ide 3] Pure text embedding for maximum semantic accuracy
                 val embedding = vectorManager.embedText(summary) ?: return@withLock
                 val db = dbHelper.writableDatabase
                 val encryptedSummary = enclave.encryptData(summary)
@@ -252,7 +274,7 @@ class DualMemoryManager @Inject constructor(
                     put("text", encryptedSummary)
                     put("is_user", 0)
                     put("timestamp", System.currentTimeMillis())
-                    put("is_context_eligible", 0) // Indexed for RAG, but hidden from the normal Chat UI
+                    put("is_context_eligible", 0) 
                     put("status", ScypheonDbHelper.STATUS_SUCCESS)
                     put("embedding", embeddingToBlob(embedding))
                 }
@@ -271,19 +293,21 @@ class DualMemoryManager @Inject constructor(
         return buffer.array()
     }
 
-
-    /**
-     * Enterprise Privacy Feature: Zero-Trust Wiping.
-     * Securely deletes all messages and embeddings associated with a volatile session.
-     */
-    fun wipeSessionMemory(sessionId: String) {
-        val db = dbHelper.writableDatabase
-        try {
-            db.delete(ScypheonDbHelper.TABLE_MESSAGES, "session_id = ?", arrayOf(sessionId))
-            db.delete(ScypheonDbHelper.TABLE_SESSIONS, "id = ?", arrayOf(sessionId))
-            Timber.w("Zero-Trust: Wiped volatile session memory ($sessionId)")
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to wipe session memory")
+    suspend fun wipeSessionMemory(sessionId: String) = withContext(Dispatchers.IO) {
+        dbLock.withLock {
+            val db = dbHelper.writableDatabase
+            try {
+                db.beginTransaction()
+                db.delete(ScypheonDbHelper.TABLE_MESSAGES, "session_id = ?", arrayOf(sessionId))
+                db.delete(ScypheonDbHelper.TABLE_SESSIONS, "id = ?", arrayOf(sessionId))
+                db.setTransactionSuccessful()
+                Timber.i("[Memory] Wiped session: $sessionId")
+            } catch (e: Exception) {
+                Timber.e(e, "[Memory] Session wipe failed: $sessionId")
+                throw e
+            } finally {
+                if (db.inTransaction()) db.endTransaction()
+            }
         }
     }
 
@@ -295,6 +319,7 @@ class DualMemoryManager @Inject constructor(
         db.update(ScypheonDbHelper.TABLE_SESSIONS, values, "id = ?", arrayOf(sessionId))
     }
 
+<<<<<<< Updated upstream
     suspend fun deleteSession(sessionId: String) = withContext(Dispatchers.IO) {
         val db = dbHelper.writableDatabase
         db.beginTransaction()
@@ -344,20 +369,40 @@ class DualMemoryManager @Inject constructor(
      * Expires "zombie" tasks that have been awaiting approval for too long.
      */
     fun expireAwaitingApprovalTasks(fifteenMinsAgo: Long) {
+=======
+    suspend fun archiveSession(sessionId: String) = withContext(Dispatchers.IO) {
+>>>>>>> Stashed changes
         val db = dbHelper.writableDatabase
-        db.beginTransaction()
-        try {
-            // Any message starting with [AWAITING_APPROVAL] that is too old
-            db.delete(ScypheonDbHelper.TABLE_MESSAGES, 
-                "text LIKE '[AWAITING_APPROVAL]%' AND timestamp < ?", 
-                arrayOf(fifteenMinsAgo.toString()))
-            
-            db.setTransactionSuccessful()
-            Timber.i("Expired zombie AWAITING_APPROVAL tasks older than $fifteenMinsAgo")
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to expire zombie tasks")
-        } finally {
-            db.endTransaction()
+        val values = ContentValues().apply {
+            put("is_archived", 1)
+        }
+        db.update(ScypheonDbHelper.TABLE_SESSIONS, values, "id = ?", arrayOf(sessionId))
+    }
+
+    suspend fun unarchiveSession(sessionId: String) = withContext(Dispatchers.IO) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            put("is_archived", 0)
+        }
+        db.update(ScypheonDbHelper.TABLE_SESSIONS, values, "id = ?", arrayOf(sessionId))
+    }
+
+    suspend fun expireAwaitingApprovalTasks(fifteenMinsAgo: Long) = withContext(Dispatchers.IO) {
+        dbLock.withLock {
+            val db = dbHelper.writableDatabase
+            try {
+                db.beginTransaction()
+                db.delete(ScypheonDbHelper.TABLE_MESSAGES, 
+                    "text LIKE '[AWAITING_APPROVAL]%' AND timestamp < ?", 
+                    arrayOf(fifteenMinsAgo.toString()))
+                
+                db.setTransactionSuccessful()
+                Timber.i("[Memory] Expired zombie AWAITING_APPROVAL tasks older than $fifteenMinsAgo")
+            } catch (e: Exception) {
+                Timber.e(e, "[Memory] Failed to expire zombie tasks")
+            } finally {
+                if (db.inTransaction()) db.endTransaction()
+            }
         }
     }
 
@@ -379,8 +424,6 @@ class DualMemoryManager @Inject constructor(
         }
     }
 
-
-
     suspend fun saveMessage(
         sessionId: String, 
         text: String, 
@@ -389,10 +432,12 @@ class DualMemoryManager @Inject constructor(
         isContextEligible: Boolean = true
     ): Long = withContext(Dispatchers.IO) {
         var finalMessageId = -1L
+
+        // CRITICAL: Hold lock ONLY for the synchronous DB write
         dbLock.withLock {
             val db = dbHelper.writableDatabase
-            db.beginTransaction()
             try {
+                db.beginTransaction()
                 val encryptedText = enclave.encryptData(text)
                 val values = ContentValues().apply {
                     put("session_id", sessionId)
@@ -408,81 +453,57 @@ class DualMemoryManager @Inject constructor(
             } catch (e: Exception) {
                 Timber.e(e, "Failed to save message record")
             } finally {
-                db.endTransaction()
+                if (db.inTransaction()) db.endTransaction()
             }
+        }
+        // Lock RELEASED — async enrichment runs without blocking other DB writers
 
-            if (finalMessageId != -1L) {
-                scope.launch {
-                    try {
-                        val embedding = vectorManager.embedText(text)
-                        if (embedding != null && embedding.isNotEmpty()) {
-                            val buffer = ByteBuffer.allocate(embedding.size * 4).apply {
-                                order(ByteOrder.LITTLE_ENDIAN)
-                                embedding.forEach { putFloat(it) }
-                            }
-                            
+        if (finalMessageId != -1L) {
+            scope.launch {
+                // Async embedding: CPU-bound work runs without lock
+                try {
+                    val embedding = vectorManager.embedText(text)
+                    if (embedding != null && embedding.isNotEmpty()) {
+                        val buffer = ByteBuffer.allocate(embedding.size * 4).apply {
+                            order(ByteOrder.LITTLE_ENDIAN)
+                            embedding.forEach { putFloat(it) }
+                        }
+                        // Re-acquire lock only for the DB update
+                        dbLock.withLock {
                             val dbAsync = dbHelper.writableDatabase
                             val updateValues = ContentValues().apply {
                                 put("embedding", buffer.array())
                             }
                             dbAsync.update(ScypheonDbHelper.TABLE_MESSAGES, updateValues, "id = ?", arrayOf(finalMessageId.toString()))
-                            Timber.d("Async pure embedding attached for message $finalMessageId")
                         }
-                    } catch (e: Exception) {
-                        Timber.w("Async embedding failed for message $finalMessageId: ${e.message}")
+                        Timber.d("Async embedding attached for message $finalMessageId")
                     }
-
-                    // [v1.5.0-SAR] Run LLM-driven fact extraction on ALL messages (user + assistant).
-                    // Claude Code pattern: extractMemories runs a forked agent after each turn.
-                    // Scypheon pattern: routeRequest with a structured extraction prompt.
-                    extractAndAnchorFacts(text, isUser)
+                } catch (e: Exception) {
+                    Timber.w("Async embedding failed for message $finalMessageId: ${e.message}")
                 }
+
+                extractAndAnchorFacts(text, isUser)
             }
         }
         finalMessageId
     }
 
-    /**
-     * [v1.5.0-SAR] LLM-Driven Semantic Fact Extraction.
-     * 
-     * Ported from Claude Code's extractMemories service (src/services/extractMemories/).
-     * Instead of brittle regex patterns, we ask the LLM itself to extract facts.
-     * 
-     * Claude Code architecture:
-     * - Runs a "forked agent" (background LLM call) after each turn
-     * - The LLM reads the conversation and writes memories to files
-     * - Uses FileWrite/FileEdit tools to persist facts
-     * 
-     * Scypheon adaptation:
-     * - Uses routeRequest() for a lightweight single-shot extraction prompt
-     * - LLM outputs structured JSON triplets: [{"s":"user","p":"likes","o":"dragon fruit"}]
-     * - Facts are stored in the SQLite Knowledge Graph (not files)
-     * - Runs on BOTH user and assistant messages
-     * - Supports Indonesian (Bahasa) and English
-     */
     private var gateway: NeuralGateway? = null
     
     fun setGateway(gw: NeuralGateway) { this.gateway = gw }
 
     private suspend fun extractAndAnchorFacts(text: String, isUser: Boolean) {
-        // Skip very short messages — no meaningful facts in "ok", "hi", "ya"
         if (text.length < 15) return
-        
-        // Skip messages that are clearly system/error content
         if (text.startsWith("[") || text.startsWith("⚠") || text.startsWith("Error:")) return
 
-        // [v1.5.1-SAR] Concurrency Hardening: Add delay to prevent resource contention.
-        // Fact extraction uses background LLM routes. Under on-device mobile architectures,
-        // running concurrent inference tasks causes resource lockouts, engine timeouts,
-        // and cancellation cascades. We delay extraction until the main conversation flow is idle.
         if (isUser) {
-            kotlinx.coroutines.delay(12000L) // Wait 12s for assistant generation to complete
+            kotlinx.coroutines.delay(12000L) 
         } else {
-            kotlinx.coroutines.delay(4000L)  // Wait 4s for assistant UI streams to settle
+            kotlinx.coroutines.delay(4000L)  
         }
 
         val gw = gateway ?: run {
-            Timber.w("[MEMORY] Gateway not set — falling back to heuristic extraction")
+            Timber.w("[MEMORY] Gateway not set  Efalling back to heuristic extraction")
             extractFactsHeuristic(text, isUser)
             return
         }
@@ -502,36 +523,57 @@ class DualMemoryManager @Inject constructor(
                 append("[{\"s\":\"user\",\"p\":\"likes\",\"o\":\"dragon fruit\"},{\"s\":\"user\",\"p\":\"loves\",\"o\":\"chloe\"}]\n")
             }
 
-            // Fire-and-forget with timeout — don't block the main conversation
-            kotlinx.coroutines.withTimeout(8000) {
-                val sb = StringBuilder()
-                gw.routeRequest(extractionPrompt, enableThinking = false)
-                    .collect { chunk -> sb.append(chunk) }
-                
-                parseAndStoreFacts(sb.toString().trim())
+            extractionLock.withLock {
+                kotlinx.coroutines.withTimeout(15000) {
+                    val sb = StringBuilder()
+                    gw.routeRequest(extractionPrompt, enableThinking = false)
+                        .filterWithThoughtSuppression()
+                        .collect { chunk: String -> sb.append(chunk) }
+
+                    parseAndStoreFacts(sb.toString().trim())
+                }
             }
+
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            Timber.w("[MEMORY] LLM extraction timed out — falling back to heuristic")
+            Timber.w("[MEMORY] LLM extraction timed out  Efalling back to heuristic")
             extractFactsHeuristic(text, isUser)
         } catch (e: Exception) {
-            Timber.e(e, "[MEMORY] LLM fact extraction failed — falling back to heuristic")
+            Timber.e(e, "[MEMORY] LLM fact extraction failed  Efalling back to heuristic")
             extractFactsHeuristic(text, isUser)
         }
     }
 
-    /**
-     * Parses the LLM's structured JSON output and stores triplets in the Knowledge Graph.
-     */
     private suspend fun parseAndStoreFacts(response: String) {
         if (response.equals("NONE", ignoreCase = true) || response.isBlank()) return
         
         try {
-            // Extract JSON array from response (LLM might add explanation text around it)
-            val jsonStart = response.indexOf('[')
-            val jsonEnd = response.lastIndexOf(']')
-            if (jsonStart == -1 || jsonEnd == -1 || jsonEnd <= jsonStart) return
+            var cleaned = response.trim()
+            if (cleaned.startsWith("```")) {
+                val lines = cleaned.split("\n")
+                val middleLines = lines.filterIndexed { index, _ -> 
+                    index > 0 && index < lines.size - 1 
+                }
+                cleaned = middleLines.joinToString("\n").trim()
+            } else if (cleaned.contains("```")) {
+                cleaned = cleaned.replace("```json", "").replace("```", "").trim()
+            }
             
-            val jsonStr = response.substring(jsonStart, jsonEnd + 1)
+            val arrayStart = cleaned.indexOf('[')
+            val arrayEnd = cleaned.lastIndexOf(']')
+            
+            val objStart = cleaned.indexOf('{')
+            val objEnd = cleaned.lastIndexOf('}')
+            
+            val jsonStr = when {
+                arrayStart != -1 && arrayEnd != -1 && arrayStart < arrayEnd -> {
+                    cleaned.substring(arrayStart, arrayEnd + 1)
+                }
+                objStart != -1 && objEnd != -1 && objStart < objEnd -> {
+                    "[" + cleaned.substring(objStart, objEnd + 1) + "]"
+                }
+                else -> return
+            }
+            
             val jsonArray = org.json.JSONArray(jsonStr)
             
             for (i in 0 until jsonArray.length()) {
@@ -541,14 +583,25 @@ class DualMemoryManager @Inject constructor(
                 val objectVal = obj.optString("o", "").trim()
                 
                 if (subject.isNotEmpty() && predicate.isNotEmpty() && objectVal.isNotEmpty()) {
-                    // Check for conflicting facts before inserting
-                    val conflict = graphManager.queryConflictingFact(subject, predicate, objectVal)
-                    if (conflict != null) {
-                        Timber.i("🔄 [MEMORY] Updating fact: [$subject] [$predicate] $conflict → $objectVal")
+                    val conflictResult = graphManager.queryConflictingFact(subject, predicate, objectVal)
+                    when (conflictResult) {
+                        is QueryResult.Success -> {
+                            val conflict = conflictResult.data
+                            if (conflict != null) {
+                                if (isSingleValuedPredicate(predicate)) {
+                                    graphManager.resolveConflictingFact(subject, predicate, conflict)
+                                    Timber.i("🔄 [MEMORY] Resolved single-valued conflict: [$subject] [$predicate] $conflict -> $objectVal")
+                                } else {
+                                    Timber.i("🔄 [MEMORY] Updating fact: [$subject] [$predicate] $conflict -> $objectVal")
+                                }
+                            }
+                            graphManager.addFact(subject, predicate, objectVal)
+                            Timber.i("🧠 [MEMORY] LLM extracted: [$subject] -> [$predicate] -> [$objectVal]")
+                        }
+                        is QueryResult.Degraded, is QueryResult.Error -> {
+                            Timber.w("Skipping fact resolution/addition due to GraphRAG degradation.")
+                        }
                     }
-                    
-                    graphManager.addFact(subject, predicate, objectVal)
-                    Timber.i("🧠 [MEMORY] LLM extracted: [$subject] → [$predicate] → [$objectVal]")
                 }
             }
         } catch (e: Exception) {
@@ -556,37 +609,39 @@ class DualMemoryManager @Inject constructor(
         }
     }
 
-    /**
-     * Lightweight heuristic fallback when LLM is unavailable.
-     * Catches only the most obvious patterns — the LLM path is the primary extractor.
-     */
+    private fun isSingleValuedPredicate(predicate: String): Boolean {
+        val p = predicate.lowercase().trim()
+        return p == "lives in" || p == "tinggal di" || p == "domisili" ||
+               p == "works as" || p == "bekerja sebagai" ||
+               p == "name is" || p == "nama nya" || p == "nama" ||
+               p == "birthday is" || p == "tanggal lahir" || p == "born on" ||
+               p == "is" || p == "adalah"
+    }
+
     private suspend fun extractFactsHeuristic(text: String, isUser: Boolean) {
         try {
             val lower = text.lowercase()
-            
-            // Indonesian patterns (user messages)
             val idPatterns = listOf(
-                Regex("(?:aku|saya|gue|gw)\\s+(?:suka|senang|seneng|doyan)\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "likes",
-                Regex("(?:aku|saya|gue|gw)\\s+(?:benci|ga suka|gak suka|tidak suka|nggak suka)\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "dislikes",
-                Regex("(?:aku|saya|gue|gw)\\s+(?:cinta|sayang|naksir)\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "loves",
-                Regex("(?:aku|saya|gue|gw)\\s+(?:alergi|allergic)\\s+(?:sama|terhadap|dengan)?\\s*(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "is allergic to",
-                Regex("(?:nama\\s+(?:aku|saya|gue|gw)|(?:aku|saya|gue|gw)\\s+nama(?:nya)?)\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "name is",
-                Regex("(?:aku|saya|gue|gw)\\s+(?:tinggal|domisili)\\s+(?:di)?\\s*(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "lives in",
-                Regex("(?:aku|saya|gue|gw)\\s+(?:kerja|bekerja)\\s+(?:sebagai|jadi)?\\s*(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "works as",
-                Regex("(?:aku|saya|gue|gw)\\s+(?:takut|fobia)\\s+(?:sama|dengan|terhadap)?\\s*(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "fears",
-                Regex("(?:aku|saya|gue|gw)\\s+(?:punya|memiliki)\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "has"
+                Regex("(?:aku|saya|gue|gw)\\s+(?:suka|senang|seneng|doyan)\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "likes",
+                Regex("(?:aku|saya|gue|gw)\\s+(?:benci|ga suka|gak suka|tidak suka|nggak suka)\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "dislikes",
+                Regex("(?:aku|saya|gue|gw)\\s+(?:cinta|sayang|naksir)\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "loves",
+                Regex("(?:aku|saya|gue|gw)\\s+(?:alergi|allergic)\\s+(?:sama|terhadap|dengan)?\\s*(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "is allergic to",
+                Regex("(?:nama\\s+(?:aku|saya|gue|gw)|(?:aku|saya|gue|gw)\\s+nama(?:nya)?)\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "name is",
+                Regex("(?:aku|saya|gue|gw)\\s+(?:tinggal|domisili)\\s+(?:di)?\\s*(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "lives in",
+                Regex("(?:aku|saya|gue|gw)\\s+(?:kerja|bekerja)\\s+(?:sebagai|jadi)?\\s*(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "works as",
+                Regex("(?:aku|saya|gue|gw)\\s+(?:takut|fobia)\\s+(?:sama|dengan|terhadap)?\\s*(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "fears",
+                Regex("(?:aku|saya|gue|gw)\\s+(?:punya|memiliki)\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "has"
             )
             
-            // English patterns (user messages)
             val enPatterns = listOf(
-                Regex("(?:i|my)\\s+(?:like|love|enjoy|adore)s?\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "likes",
-                Regex("(?:i|my)\\s+(?:hate|dislike|can't stand)s?\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "dislikes",
-                Regex("(?:i'm|i am)\\s+(?:allergic to)\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "is allergic to",
-                Regex("my\\s+name\\s+is\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "name is",
-                Regex("(?:i|i'm|i am)\\s+(?:afraid of|scared of)\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "fears",
-                Regex("(?:i)\\s+(?:live|stay)\\s+(?:in|at)\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "lives in",
-                Regex("(?:i)\\s+(?:work|working)\\s+(?:as|at)\\s+(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "works as",
-                Regex("(?:i)\\s+(?:have|own)\\s+(?:a|an)?\\s*(.+?)(?:\\.|,|!|$)", RegexOption.IGNORE_CASE) to "has"
+                Regex("(?:i|my)\\s+(?:like|love|enjoy|adore)s?\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "likes",
+                Regex("(?:i|my)\\s+(?:hate|dislike|can't stand)s?\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "dislikes",
+                Regex("(?:i'm|i am)\\s+(?:allergic to)\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "is allergic to",
+                Regex("my\\s+name\\s+is\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "name is",
+                Regex("(?:i'm|i am)\\s+(?:afraid of|scared of)\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "fears",
+                Regex("(?:i)\\s+(?:live|stay)\\s+(?:in|at)\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "lives in",
+                Regex("(?:i)\\s+(?:work|working)\\s+(?:as|at)\\s+(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "works as",
+                Regex("(?:i)\\s+(?:have|own)\\s+(?:a|an)?\\s*(.+?)(?:\\.|,|!|\\?|;|:|$|\\n)", RegexOption.IGNORE_CASE) to "has"
             )
             
             val patterns = if (isUser) idPatterns + enPatterns else emptyList()
@@ -594,9 +649,9 @@ class DualMemoryManager @Inject constructor(
             for ((regex, predicate) in patterns) {
                 regex.find(lower)?.let { match ->
                     val objectVal = match.groupValues[1].trim()
-                    if (objectVal.length in 2..50) { // Sanity check
+                    if (objectVal.length in 2..50) { 
                         graphManager.addFact("user", predicate, objectVal)
-                        Timber.i("🧠 [MEMORY/HEURISTIC] Extracted: [user] → [$predicate] → [$objectVal]")
+                        Timber.i("🧠 [MEMORY/HEURISTIC] Extracted: [user] -> [$predicate] -> [$objectVal]")
                     }
                 }
             }
@@ -605,9 +660,6 @@ class DualMemoryManager @Inject constructor(
         }
     }
 
-    /**
-     * Updates the status of a specific message (e.g. from QUEUED to SUCCESS or FAILED).
-     */
     suspend fun updateMessageStatus(id: Long, status: Int) = withContext(Dispatchers.IO) {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply {
@@ -626,57 +678,96 @@ class DualMemoryManager @Inject constructor(
         db.insertWithOnConflict(ScypheonDbHelper.TABLE_PROFILE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    // --- Fast Queries ---
-
-    /**
-     * Edge Max: Returns unified allergies from both Key-Value profile and Knowledge Graph.
-     */
     suspend fun getUserAllergies(): String = withContext(Dispatchers.IO) {
-        val db = dbHelper.readableDatabase
         var profileAllergies = "None recorded"
-        db.rawQuery("SELECT value FROM ${ScypheonDbHelper.TABLE_PROFILE} WHERE key = 'allergies'", null).use { cursor ->
-            if (cursor.moveToFirst()) {
-                val encryptedVal = cursor.getString(0)
-                profileAllergies = enclave.decryptData(encryptedVal)
+        try {
+            circuitBreaker.execute("profile_memory_read") {
+                val db = dbHelper.readableDatabase
+                db.rawQuery("SELECT value FROM ${ScypheonDbHelper.TABLE_PROFILE} WHERE key = 'allergies'", null).use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val encryptedVal = cursor.getString(0)
+                        profileAllergies = enclave.decryptData(encryptedVal)
+                    }
+                }
             }
+        } catch (e: CircuitBreakerOpenException) {
+            Timber.w("Profile DB circuit open. Falling back to graph only.")
+        } catch (e: Exception) {
+            Timber.w(e, "Profile DB read failed. Falling back to graph only.")
         }
 
-        val graphAllergies = graphManager.getAllergies()
-        if (graphAllergies.contains("No known") || graphAllergies.isEmpty()) {
-            profileAllergies
-        } else {
-            "$profileAllergies. Graph Deductions: $graphAllergies"
+        when (val graphResult = graphManager.getAllergies()) {
+            is QueryResult.Success -> {
+                if (graphResult.data.isEmpty()) profileAllergies
+                else "$profileAllergies. Graph: ${graphResult.data}"
+            }
+            is QueryResult.Degraded -> {
+                SystemAlert.DegradedAllergy.toPromptString()
+            }
+            is QueryResult.Error -> {
+                Timber.e(graphResult.cause, "Graph query error")
+                SystemAlert.DegradedAllergy.toPromptString()
+            }
         }
     }
 
-    /**
-     * Retrieves the list of currently prescribed medicines from the Knowledge Graph.
-     * Searches for facts where the predicate indicates medical consumption.
-     */
+    data class ExportableMemory(val id: String, val summary: String)
+
+    suspend fun getMemoriesByCategory(category: String): List<ExportableMemory> = withContext(Dispatchers.IO) {
+        val facts = mutableListOf<Triple<String, String, String>>()
+        when (category.lowercase()) {
+            "medical" -> {
+                (graphManager.queryByPredicate("is_allergic_to") as? QueryResult.Success)?.data?.let { facts.addAll(it) }
+                (graphManager.queryByPredicate("takes_medicine") as? QueryResult.Success)?.data?.let { facts.addAll(it) }
+                (graphManager.queryByPredicate("mengonsumsi") as? QueryResult.Success)?.data?.let { facts.addAll(it) }
+            }
+            "scam" -> {
+                (graphManager.queryByPredicate("is_scam") as? QueryResult.Success)?.data?.let { facts.addAll(it) }
+                (graphManager.queryByPredicate("reported_fraud") as? QueryResult.Success)?.data?.let { facts.addAll(it) }
+                (graphManager.queryByPredicate("penipuan") as? QueryResult.Success)?.data?.let { facts.addAll(it) }
+            }
+        }
+        
+        facts.mapIndexed { index, fact ->
+            ExportableMemory(
+                id = "${category.uppercase()}_FACT_$index",
+                summary = "[${fact.first}] ${fact.second} ${fact.third}"
+            )
+        }
+    }
+
     suspend fun getCurrentPrescriptions(): List<String> = withContext(Dispatchers.IO) {
-        val facts = graphManager.queryByPredicate("takes_medicine") + 
-                   graphManager.queryByPredicate("mengonsumsi")
+        val r1 = graphManager.queryByPredicate("takes_medicine")
+        val r2 = graphManager.queryByPredicate("mengonsumsi")
+        
+        val facts = mutableListOf<Triple<String, String, String>>()
+        if (r1 is QueryResult.Success) facts.addAll(r1.data)
+        if (r2 is QueryResult.Success) facts.addAll(r2.data)
+        
         facts.map { it.third }.distinct()
     }
 
-
-    /**
-     * Retrieve all deeply connected Graph facts for a given entity.
-     */
     suspend fun querySubject(entity: String): List<String> {
-        return graphManager.querySubject(entity)
+        val result = graphManager.querySubject(entity)
+        return if (result is QueryResult.Success) result.data else emptyList()
     }
 
     suspend fun getRawKnowledgeGraph(): List<Triple<String, String, String>> {
-        return graphManager.getFullGraph()
+        val result = graphManager.getFullGraph()
+        return if (result is QueryResult.Success) result.data else emptyList()
     }
 
     suspend fun getAllSessions(): List<Session> = withContext(Dispatchers.IO) {
         val sessions = mutableListOf<Session>()
         val db = dbHelper.readableDatabase
-        db.rawQuery("SELECT id, title, timestamp FROM ${ScypheonDbHelper.TABLE_SESSIONS} ORDER BY timestamp DESC", null).use { cursor ->
+        db.rawQuery("SELECT id, title, timestamp, is_archived FROM ${ScypheonDbHelper.TABLE_SESSIONS} ORDER BY timestamp DESC", null).use { cursor ->
             while (cursor.moveToNext()) {
-                sessions.add(Session(cursor.getString(0), cursor.getString(1), cursor.getLong(2)))
+                sessions.add(Session(
+                    cursor.getString(0),
+                    cursor.getString(1),
+                    cursor.getLong(2),
+                    cursor.getInt(3) == 1
+                ))
             }
         }
         sessions
@@ -700,11 +791,6 @@ class DualMemoryManager @Inject constructor(
         messages
     }
 
-    /**
-     * Solaris 4.5: Hybrid Time-Aware Semantic Search.
-     * Combines BM25, Cosine Similarity, and Recency Weighting.
-     * Optimized for Multipurpose Agentic AI (Palugada).
-     */
     suspend fun searchSimilarMemories(query: String, currentSessionId: String? = null, limit: Int = 3): List<String> = withContext(Dispatchers.IO) {
         val queryEmbedding = vectorManager.embedText(query) ?: return@withContext emptyList()
         val db = dbHelper.readableDatabase
@@ -715,8 +801,6 @@ class DualMemoryManager @Inject constructor(
         
         val currentTime = System.currentTimeMillis()
 
-        // 1. Vector Search with Session & Time Weighting
-        // Limit to 1000 latest records for performance hardening on edge devices
         val sql = """
             SELECT id, text, embedding, timestamp, session_id 
             FROM ${ScypheonDbHelper.TABLE_MESSAGES} 
@@ -742,16 +826,14 @@ class DualMemoryManager @Inject constructor(
                 if (floatArray.size == queryEmbedding.size) {
                     var similarity = vectorManager.calculateCosineSimilarity(queryEmbedding, floatArray)
                     
-                    // Solaris Hardening: Recency Boost (Linear Decay over 7 days)
                     val ageDays = (currentTime - timestamp) / (1000.0 * 60 * 60 * 24)
                     val timeWeight = (1.0 - (ageDays / 7.0)).coerceIn(0.7, 1.0)
                     
-                    // Solaris Hardening: Session Boost (Prioritize current context)
                     val sessionWeight = if (sessionId == currentSessionId) 1.2 else 1.0
                     
                     val finalScore = similarity * timeWeight * sessionWeight
                     
-                    if (finalScore > 0.60) { // Slightly lower threshold for hybrid catch
+                    if (finalScore > 0.60) { 
                         val decryptedText = enclave.decryptData(encryptedText)
                         if (!decryptedText.startsWith("Error:")) {
                             vectorResults.add(Pair(id, finalScore))
@@ -765,7 +847,6 @@ class DualMemoryManager @Inject constructor(
         vectorResults.sortByDescending { it.second }
         vectorResults.forEachIndexed { index, pair -> vectorRanks[pair.first] = index + 1 }
 
-        // 2. Keyword Search (BM25 / FTS) - Global Catch
         val keywordRanks = mutableMapOf<Long, Int>()
         val ftsQuery = query.split(Regex("\\s+")).filter { it.length > 2 }.joinToString(" ") { "$it*" }
 
@@ -787,7 +868,6 @@ class DualMemoryManager @Inject constructor(
             }
         }
 
-        // 3. Reciprocal Rank Fusion (RRF) with Multipurpose Tuning
         val rrfConstant = 60
         val rrfScores = mutableListOf<Pair<String, Double>>()
 
@@ -803,53 +883,11 @@ class DualMemoryManager @Inject constructor(
         }
 
         rrfScores.sortByDescending { it.second }
-        Timber.i("🛰️ Solaris Hybrid Search: Query='$query', Matches=${rrfScores.size}")
+        Timber.i("🛰EESolaris Hybrid Search: Query='$query', Matches=${rrfScores.size}")
         return@withContext rrfScores.take(limit).map { it.first }
     }
 
     private fun rebuildFts(db: SQLiteDatabase) {
-        try {
-            Timber.w("[v1.0.4-SAR] DROPPING corrupt FTS index and triggers for recovery.")
-            db.execSQL("DROP TABLE IF EXISTS ${ScypheonDbHelper.TABLE_MESSAGES}_fts")
-            db.execSQL("DROP TRIGGER IF EXISTS messages_ai")
-            db.execSQL("DROP TRIGGER IF EXISTS messages_ad")
-            db.execSQL("DROP TRIGGER IF EXISTS messages_au")
-            
-            // Re-create FTS table
-            db.execSQL("""
-                CREATE VIRTUAL TABLE ${ScypheonDbHelper.TABLE_MESSAGES}_fts USING fts4(
-                    content="${ScypheonDbHelper.TABLE_MESSAGES}",
-                    text
-                )
-            """.trimIndent())
-            
-            // Re-create Triggers
-            db.execSQL("""
-                CREATE TRIGGER messages_ai AFTER INSERT ON ${ScypheonDbHelper.TABLE_MESSAGES}
-                BEGIN
-                    INSERT INTO ${ScypheonDbHelper.TABLE_MESSAGES}_fts(rowid, text) VALUES (new.id, new.text);
-                END;
-            """)
-
-            db.execSQL("""
-                CREATE TRIGGER messages_ad AFTER DELETE ON ${ScypheonDbHelper.TABLE_MESSAGES}
-                BEGIN
-                    INSERT INTO ${ScypheonDbHelper.TABLE_MESSAGES}_fts(${ScypheonDbHelper.TABLE_MESSAGES}_fts, rowid, text) VALUES ('delete', old.id, old.text);
-                END;
-            """)
-
-            db.execSQL("""
-                CREATE TRIGGER messages_au AFTER UPDATE ON ${ScypheonDbHelper.TABLE_MESSAGES}
-                BEGIN
-                    UPDATE ${ScypheonDbHelper.TABLE_MESSAGES}_fts SET text = new.text WHERE rowid = old.id;
-                END;
-            """)
-            
-            db.execSQL("INSERT INTO ${ScypheonDbHelper.TABLE_MESSAGES}_fts(rowid, text) SELECT id, text FROM ${ScypheonDbHelper.TABLE_MESSAGES}")
-            
-            Timber.i("[v1.2.0-SAR] FTS Index and Triggers Rebuild successful.")
-        } catch (e: Exception) {
-            Timber.e(e, "[v1.2.0-SAR] CRITICAL: FTS Rebuild failed.")
-        }
+        Timber.i("[v6.0] rebuildFts called, but FTS is deprecated. Skipping.")
     }
 }
