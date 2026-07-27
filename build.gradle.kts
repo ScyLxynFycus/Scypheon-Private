@@ -8,4 +8,6 @@ plugins {
     id("org.jetbrains.kotlin.kapt") version "2.1.10" apply false
     id("com.google.devtools.ksp") version "2.1.10-1.0.29" apply false
     id("com.google.dagger.hilt.android") version "2.55" apply false
+    id("org.jlleitschuh.gradle.ktlint") version "12.1.2" apply false
+    id("org.cyclonedx.bom") version "1.10.0" apply false
 }
