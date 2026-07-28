@@ -79,6 +79,17 @@ scypheon_private/app/src/main/assets/.shm/
 /BlackBox.kt.github
 /DeepResearchAgent.kt.github
 /ResearchProgressTracker.kt.github
+/Scypheon
+/assets/
+/docs/ARCHITECTURE_FIX_REPORT.md
+/docs/CHANGE_MEMO_2026-06-18.md
+/docs/ROADMAP_AUDIT_50TASKS.md
+/docs/SCYPHEON_VS_CLAUDE_CODE_COMPARISON.md
+/docs/Scypheon Private Public Release/
+/docs/adr/
+/docs/api/
+/scripts/
+/python-3.10.11-embed-amd64.zip
 
 # Exclude root specific script and JSON files
 /*.json
