@@ -18,7 +18,7 @@ import kotlin.coroutines.resume
  */
 @Singleton
 class DocumentSkill @Inject constructor(
-    private val context: Context
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) {
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 

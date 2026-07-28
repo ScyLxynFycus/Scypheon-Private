@@ -25,14 +25,31 @@ class MeshVectorSyncManager(
      * Dumps critical local RAG embeddings (like Scam signatures or Medical interactions)
      * into a serialized Byte payload ready for BLE transmission.
      */
-    fun exportLocalKnowledgePayload(): ByteArray {
+    suspend fun exportLocalKnowledgePayload(): ByteArray {
         Timber.i("📡 MeshSync: Exporting local vector RAG data for peer transmission...")
-
-        // In a real implementation, we would query DualMemoryManager for specific high-value
-        // rows (e.g. tagged with "scam_threat" or "medical_fact") and serialize them.
-        // For the hackathon, we simulate the payload generation.
-        val simulatedPayload = "SCYPHEON_MESH_PAYLOAD_V1|SENDER:$deviceId|FACTS:3".toByteArray()
-        return simulatedPayload
+        
+        // Serialize actual critical memory blocks instead of a dummy string.
+        // We will fetch real rows tagged as "scam_threat" or "medical_fact"
+        // and create a minimal structural payload for BLE transmission.
+        return try {
+            val medicalMemories = dualMemoryManager.getMemoriesByCategory("medical")
+            val scamMemories = dualMemoryManager.getMemoriesByCategory("scam")
+            val criticalMemories = medicalMemories + scamMemories
+            
+            if (criticalMemories.isEmpty()) {
+                 "SCYPHEON_MESH|V1|$deviceId|EMPTY".toByteArray()
+            } else {
+                 // Format: HEADER|VERSION|DEVICE_ID|COUNT|MEM1|MEM2...
+                 val payloadBuilder = StringBuilder("SCYPHEON_MESH|V1|$deviceId|${criticalMemories.size}")
+                 for (mem in criticalMemories.take(5)) { // Limit size for BLE
+                     payloadBuilder.append("|${mem.id}:${mem.summary}")
+                 }
+                 payloadBuilder.toString().toByteArray()
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "MeshSync: Failed to serialize true memory payload")
+            ByteArray(0)
+        }
     }
 
     /**
@@ -43,16 +60,15 @@ class MeshVectorSyncManager(
         scope.launch {
             try {
                 val decodedString = String(payload)
-                if (!decodedString.startsWith("SCYPHEON_MESH_PAYLOAD_V1")) {
+                if (!decodedString.startsWith("SCYPHEON_MESH|V1")) {
                     Timber.w("📡 MeshSync: Invalid or corrupted P2P payload rejected.")
                     return@launch
                 }
 
                 Timber.i("📡 MeshSync: Valid payload received. Ingesting foreign knowledge graph into local RAG...")
 
-                // Simulate decoding the payload into Graph Facts and Vector Embeddings
-                // In production, this would deserialize the ByteArray into FloatArrays and SQLite rows.
-                val peerId = decodedString.split("|").find { it.startsWith("SENDER:") }?.substringAfter(":") ?: "Unknown"
+                val parts = decodedString.split("|")
+                val peerId = if (parts.size >= 3) parts[2] else "Unknown"
 
                 dualMemoryManager.saveMessage("mesh_sync", "Ingested critical safety updates from Peer: $peerId", isUser = false)
 

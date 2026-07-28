@@ -33,7 +33,7 @@ interface Tool {
     /**
      * A clear description for the LLM to understand when and how to use this tool.
      */
-    val description: String
+    val triggerDescription: String; val description: String
 
     /**
      * JSON Schema defining the input parameters.
@@ -62,7 +62,7 @@ interface Tool {
 
     /**
      * Concurrency check: Can multiple instances of this tool run in parallel?
-     * Defaults to the value of isReadOnly() — read-only tools are inherently safe.
+     * Defaults to the value of isReadOnly()  Eread-only tools are inherently safe.
      */
     fun isConcurrencySafe(args: Map<String, Any?>): Boolean = isReadOnly(args)
 
@@ -101,3 +101,4 @@ interface Tool {
         val errors: List<String> = emptyList()
     )
 }
+

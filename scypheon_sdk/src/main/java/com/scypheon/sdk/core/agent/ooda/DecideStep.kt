@@ -1,6 +1,8 @@
 package com.scypheon.sdk.core.agent.ooda
 
 import com.scypheon.sdk.core.agent.skills.AgentSkillRegistry
+import com.scypheon.sdk.core.agent.tool.Tool
+import com.scypheon.sdk.core.agent.tool.ToolRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -14,19 +16,31 @@ interface ToolSchemaValidator {
     fun validate(toolName: String, params: Map<String, String>): ValidationResult
 }
 
-class DefaultToolSchemaValidator @Inject constructor() : ToolSchemaValidator {
+class DefaultToolSchemaValidator @Inject constructor(
+    private val toolRegistry: ToolRegistry
+) : ToolSchemaValidator {
     override fun validate(toolName: String, params: Map<String, String>): ValidationResult {
-        return ValidationResult(true, params)
+        val tool = toolRegistry.resolve(toolName)
+            ?: return ValidationResult(false, params, listOf("Tool '$toolName' not found"))
+        
+        val anyParams = params.mapValues { it.value as Any? }
+        val toolValidation = tool.validate(anyParams)
+        
+        return if (toolValidation.isValid) {
+            ValidationResult(true, params)
+        } else {
+            ValidationResult(false, params, toolValidation.errors.ifEmpty { listOf("Validation failed for $toolName") })
+        }
     }
 }
 
 interface ToolMatcher {
-    data class ToolScore(val tool: AgentSkillRegistry.FastTool, val score: Float)
-    suspend fun scoreTools(query: String, candidates: List<AgentSkillRegistry.FastTool>): List<ToolScore>
+    data class ToolScore(val tool: Tool, val score: Float)
+    suspend fun scoreTools(query: String, candidates: List<Tool>): List<ToolScore>
 }
 
 interface ParameterExtractor {
-    suspend fun extract(query: String, tool: AgentSkillRegistry.FastTool): Map<String, String>
+    suspend fun extract(query: String, tool: Tool): Map<String, String>
 }
 
 // --- Core DecideStep Implementation ---
@@ -69,77 +83,68 @@ data class DecisionConfig(
 
 /**
  * Step 3: DECIDE
- * Selects exactly one FastTool from the chosen skill to execute.
- * Hardened with schema validation, dynamic confidence scoring, and strict medical fallback gates.
+ * Selects exactly one Tool from the chosen skill to execute.
+ * [v1.5.2-UNIFIED] Decoupled from legacy definitions.
  */
 @Singleton
 class DecideStep @Inject constructor(
     private val toolMatcher: ToolMatcher,
     private val parameterExtractor: ParameterExtractor,
     private val schemaValidator: ToolSchemaValidator,
+    private val toolRegistry: ToolRegistry,
     private val config: DecisionConfig
 ) {
     suspend fun execute(
         orientation: Orientation,
         environment: DeviceEnvironment
     ): Decision = withContext(Dispatchers.Default) {
-        Timber.d("🎯 [OODA_DECIDE] Selecting tool for skill: ${orientation.selectedSkill.type}")
+        Timber.d("🧠 [OODA_DECIDE] Selecting tool for skill: ${orientation.selectedSkill.type}")
 
-        // 1. Filter tools by environment constraints
-        val constraintFiltered = filterByConstraints(orientation.selectedSkill.fastTools, environment)
-        
+        val allTools = orientation.selectedSkill.getTools(toolRegistry)
+        val constraintFiltered = filterByConstraints(allTools, environment)
+
         if (constraintFiltered.isEmpty()) {
-            Timber.w("🔋 [OODA_DECIDE] No tools survive environment constraints. Falling back.")
+            Timber.w("🚨 [OODA_DECIDE] No tools survive environment constraints.")
             return@withContext Decision.fallback(
                 query = orientation.refinedQuery,
-                reason = "All tools blocked by ${orientation.environmentConstraint}"
+                reason = "All tools blocked by constraints."
             )
         }
 
-        // 2. Score & rank tools against query
         val scoredTools = toolMatcher.scoreTools(orientation.refinedQuery, constraintFiltered)
         val bestMatch = scoredTools.maxByOrNull { it.score }
 
         if (bestMatch == null || bestMatch.score < config.minMatchThreshold) {
-            Timber.i("🎯 [OODA_DECIDE] Match score too low (${bestMatch?.score}). Falling back to safe chat.")
             return@withContext Decision.fallback(
                 query = orientation.refinedQuery,
                 reason = "Low match confidence: ${bestMatch?.score ?: 0.0f}"
             )
         }
 
-        // 3. Extract parameters using specialized extractor
         val rawParams = parameterExtractor.extract(orientation.refinedQuery, bestMatch.tool)
-        
-        // 4. Validate against tool schema (critical for medical safety)
         val validationResult = schemaValidator.validate(bestMatch.tool.name, rawParams)
+
         if (!validationResult.isValid) {
-            Timber.w("⚠️ [OODA_DECIDE] Schema validation failed: ${validationResult.errors}")
             if (config.enableStrictMedicalFallback && bestMatch.tool.isMedical) {
                 return@withContext Decision.fallback(
                     query = orientation.refinedQuery,
-                    reason = "Medical parameter validation failed: ${validationResult.errors}"
+                    reason = "Medical parameter validation failed."
                 )
             }
         }
 
-        // 5. Calculate dynamic confidence
         val confidence = calculateConfidence(
             matchScore = bestMatch.score,
             validationScore = if (validationResult.isValid) 1.0f else 0.4f,
             isMedical = bestMatch.tool.isMedical
         )
 
-        // 6. Medical safety gate: never execute low-confidence medical tools
         if (bestMatch.tool.isMedical && confidence < config.medicalMinConfidence) {
-            Timber.w("🛑 [OODA_DECIDE] Medical confidence too low ($confidence). Forcing fallback.")
             return@withContext Decision.fallback(
                 query = orientation.refinedQuery,
-                reason = "Medical confidence below threshold ($confidence < ${config.medicalMinConfidence})"
+                reason = "Medical confidence below safety threshold."
             )
         }
-
-        Timber.i("🎯 [OODA_DECIDE] Selected: ${bestMatch.tool.name} | Conf: $confidence | Params: ${validationResult.sanitizedParams}")
 
         Decision(
             toolName = bestMatch.tool.name,
@@ -156,9 +161,9 @@ class DecideStep @Inject constructor(
     }
 
     private fun filterByConstraints(
-        tools: List<AgentSkillRegistry.FastTool>,
+        tools: List<Tool>,
         env: DeviceEnvironment
-    ): List<AgentSkillRegistry.FastTool> {
+    ): List<Tool> {
         return tools.filter { tool ->
             when {
                 env.batteryPercent < 15 && !env.isCharging -> tool.constraintProfile.powerCost <= 2

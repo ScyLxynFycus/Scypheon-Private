@@ -7,6 +7,9 @@ import dagger.hilt.components.SingletonComponent
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
+import com.scypheon.app.security.ScypheonIdentityManager
+
+import com.scypheon.sdk.core.security.SsrfProtectionInterceptor
 
 /**
  * NetworkModule: Provides network-related dependencies for the Scypheon app and SDK tools.
@@ -24,6 +27,14 @@ object NetworkModule {
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(20, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
+            .addInterceptor(SsrfProtectionInterceptor())
             .build()
     }
+
+    @Provides
+    @Singleton
+    fun provideScypheonIdentityManager(): ScypheonIdentityManager {
+        return ScypheonIdentityManager()
+    }
 }
+

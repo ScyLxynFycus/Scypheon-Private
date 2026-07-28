@@ -35,7 +35,7 @@ class MedicalTriageGateway @Inject constructor(
         // 1. PHASE 1: EMERGENCY DETECTION
         val criticalKeywords = listOf("chest pain", "difficulty breathing", "shock", "bleeding", "unconscious", "seizure", "stroke", "poison")
         if (criticalKeywords.any { normalized.contains(it) }) {
-            val protocol = dao.getFirstAidProtocol(normalized)
+            val protocol = getFirstAidProtocol(input)
             if (protocol != null) {
                 return@withContext TriageResult.Emergency(protocol, reason = "Critical symptoms matched.")
             }
@@ -100,7 +100,14 @@ class MedicalTriageGateway @Inject constructor(
     }
 
     suspend fun getFirstAidProtocol(query: String): FirstAidEntity? {
-        return dao.getFirstAidProtocol(query)
+        val cleanQuery = FtsSanitizer.sanitize(query)
+        if (cleanQuery.isBlank()) return null
+        return try {
+            dao.getFirstAidProtocol(cleanQuery)
+        } catch (e: Exception) {
+            Timber.e(e, "SQLite FTS error getting first aid protocol for: $cleanQuery")
+            null
+        }
     }
 }
 

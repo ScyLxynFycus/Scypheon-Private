@@ -11,6 +11,9 @@ import timber.log.Timber
  */
 object AegisPrivacyShield {
 
+    // Callback for UI layer to intercept redaction events
+    var onRedactionEvent: ((String) -> Unit)? = null
+
     // Regex patterns for common sensitive data
     private val PATTERNS = mapOf(
         "EMAIL" to Regex("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"),
@@ -110,6 +113,12 @@ object AegisPrivacyShield {
 
         if (redactionCount > 0) {
             Timber.w("🛡️ AegisPrivacyShield: Redacted $redactionCount sensitive PII elements from input.")
+            // [v3.0.0-SAR] Aegis Active Interceptor: Fire live UI notification via callback
+            try {
+                onRedactionEvent?.invoke("🛡️ [AEGIS VAULT] $redactionCount data privasi terdeteksi dan dienkripsi secara lokal sebelum diproses AI!")
+            } catch (e: Exception) {
+                Timber.e(e, "Aegis UI Intercept Failed")
+            }
         }
 
         return sanitized

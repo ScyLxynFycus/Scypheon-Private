@@ -49,9 +49,9 @@ class OpenFdaTool @Inject constructor(
             if (localEntry != null) {
                 Timber.i("💊 [OFFLINE_FIRST] Data for $drug found in local Pharmacopeia. Skipping OpenFDA.")
                 return ToolResult.Success(
-                    "[LOCAL_DATA] $drug: ${localEntry.dosage}\nIndikasi: ${localEntry.indications}", 
-                    System.currentTimeMillis() - start,
-                    mapOf("source" to "Local Offline Database")
+                    data = "[LOCAL_DATA] $drug: ${localEntry.dosage}\nIndikasi: ${localEntry.indications}", 
+                    latencyMs = System.currentTimeMillis() - start,
+                    metadata = mapOf("source" to "Local Offline Database")
                 )
             }
         } catch (e: Exception) {
@@ -71,7 +71,7 @@ class OpenFdaTool @Inject constructor(
         return try {
             val summary = webProvider.discoverOpenFDA(drug)
             if (summary != null) {
-                ToolResult.Success(summary, System.currentTimeMillis() - start, mapOf("source" to "OpenFDA (Online)"))
+                ToolResult.Success(data = summary, latencyMs = System.currentTimeMillis() - start, metadata = mapOf("source" to "OpenFDA (Online)"))
             } else {
                 ToolResult.Error("No data found on OpenFDA for: $drug", null, System.currentTimeMillis() - start)
             }

@@ -1,4 +1,4 @@
-package com.scypheon.sdk.core.safety.helios
+﻿package com.scypheon.sdk.core.safety.helios
 
 /**
  * XAI-ready violation report for transparent safety decisions.
@@ -26,7 +26,8 @@ enum class ViolationCategory {
     ROLEPLAY_JAILBREAK,
     PROMPT_LEAKAGE,
     ADVERSARIAL_FRAMING,
-    DELIMITER_POISONING
+    DELIMITER_POISONING,
+    ORIGA_DEGRADATION
 }
 
 /**
@@ -35,18 +36,20 @@ enum class ViolationCategory {
 object ViolationMessageGenerator {
     fun generate(report: SafetyViolationReport): String {
         return when (report.category) {
-            ViolationCategory.PII_EXPOSURE -> 
-                "Sensitive data detected and redacted to protect user privacy. [Policy: ${report.policyReference}]"
-            ViolationCategory.MALICIOUS_INJECTION -> 
+            ViolationCategory.PII_EXPOSURE ->
+                "Sensitive data detected and redacted to protect user privacy. [Policy: ${report.policyReference}]"   
+            ViolationCategory.MALICIOUS_INJECTION ->
                 "Input contains patterns associated with prompt injection attempts. [Policy: ${report.policyReference}]"
-            ViolationCategory.UNVERIFIED_MEDICAL_ADVICE -> 
+            ViolationCategory.UNVERIFIED_MEDICAL_ADVICE ->
                 "Medical claim could not be verified against trusted pharmacopeia. Consult a licensed professional. [Policy: ${report.policyReference}]"
-            ViolationCategory.ROLEPLAY_JAILBREAK -> 
+            ViolationCategory.ROLEPLAY_JAILBREAK ->
                 "Input attempts to bypass safety guidelines via roleplay framing. [Policy: ${report.policyReference}]"
-            ViolationCategory.ADVERSARIAL_FRAMING -> 
+            ViolationCategory.ADVERSARIAL_FRAMING ->
                 "Input structure bypasses safety guidelines. [Policy: SECURITY-3.1]"
-            ViolationCategory.DELIMITER_POISONING -> 
+            ViolationCategory.DELIMITER_POISONING ->
                 "Context delimiter abuse detected. [Policy: SECURITY-3.3]"
+            ViolationCategory.ORIGA_DEGRADATION ->
+                "Orchestrator graceful degradation. [Policy: RESILIENCE-1.0]"
             else -> report.description
         }
     }

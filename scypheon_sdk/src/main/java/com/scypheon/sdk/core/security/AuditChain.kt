@@ -14,12 +14,13 @@ import timber.log.Timber
  */
 @Singleton
 class AuditChain @Inject constructor(
-    private val dao: AuditChainDao
+    private val dao: AuditChainDao,
+    private val pqcSigner: PqcAuditSigner
 ) {
     companion object {
         private val nativeInitMutex = Mutex()
         
-        // HARUS Volatile untuk memory visibility pada double-checked locking
+        // MUST be Volatile for memory visibility in double-checked locking
         @Volatile
         private var nativeLoaded = false
 
@@ -29,12 +30,17 @@ class AuditChain @Inject constructor(
                 if (nativeLoaded) return
                 withContext(Dispatchers.IO) {
                     try {
-                        System.loadLibrary("ggml-base")
-                        System.loadLibrary("ggml")
-                        System.loadLibrary("llama")
-                        System.loadLibrary("scypheon-native")
+                        val oldPolicy = android.os.StrictMode.allowThreadDiskReads()
+                        try {
+                            System.loadLibrary("ggml-base")
+                            System.loadLibrary("ggml")
+                            System.loadLibrary("llama")
+                            System.loadLibrary("scypheon_native")
+                        } finally {
+                            android.os.StrictMode.setThreadPolicy(oldPolicy)
+                        }
                         nativeLoaded = true
-                        Timber.i("🛡️ Audit Chain: Native JNI engine locked and loaded.")
+                        Timber.i("🛡️ [AuditChain] Native libraries loaded successfully.")
                     } catch (e: UnsatisfiedLinkError) {
                         Timber.e(e, "💀 FATAL: Audit Chain native library missing. Integrity compromised.")
                     }
@@ -43,14 +49,14 @@ class AuditChain @Inject constructor(
         }
     }
 
-    // Mutex terpisah khusus untuk antrean penulisan database (mencegah fork)
+    // Separate Mutex specifically for database write queue (prevents forking)
     private val chainMutex = Mutex()
 
-    private external fun nativeSignEntry(previousHash: String, entryData: String): String
+    private external fun nativeComputeChainHash(previousHash: String, entryData: String): String
 
     /**
-     * @throws IllegalStateException jika native gagal di-load atau database gagal ditulis.
-     * Menggunakan konsep Fail-Safe: Jika tidak bisa diaudit, operasi harus gagal.
+     * @throws IllegalStateException if native fails to load or database write fails.
+     * Uses Fail-Safe concept: If it cannot be audited, the operation must fail.
      */
     suspend fun logEvent(actionType: String, payload: String) = withContext(Dispatchers.IO) {
         ensureNativeLoaded()
@@ -59,7 +65,7 @@ class AuditChain @Inject constructor(
             throw IllegalStateException("Audit Chain gagal diinisialisasi. Menolak pencatatan untuk menjaga integritas data medis.")
         }
 
-        // Kunci proses read-hash-write agar bersifat Atomic
+        // Lock read-hash-write process to ensure Atomicity
         chainMutex.withLock {
             try {
                 val lastEntry = dao.getLastEntry()
@@ -68,21 +74,40 @@ class AuditChain @Inject constructor(
                 
                 // Format: actionType|timestamp|payload
                 val dataToSign = "$actionType|$timestamp|$payload"
-                val newHash = nativeSignEntry(previousHash, dataToSign)
+                val newHash = nativeComputeChainHash(previousHash, dataToSign)
                 
+                // Map event type
+                val eventTypeEnum = when (actionType) {
+                    "CONSENT_GRANTED", "CONSENT_AUTO_GRANTED" -> AuditableEventType.TOOL_EXECUTION_CRITICAL
+                    "CONSENT_DENIED" -> AuditableEventType.SAFETY_VIOLATION_BLOCK
+                    "CLINICAL_OVERRIDE" -> AuditableEventType.SAFETY_VIOLATION_BLOCK
+                    else -> AuditableEventType.TOOL_EXECUTION_INFO
+                }
+
+                // Sign Event using ML-DSA
+                val event = AuditEvent(
+                    id = newHash,
+                    timestamp = timestamp,
+                    eventType = eventTypeEnum,
+                    payload = payload
+                )
+                val pqcSigBytes = pqcSigner.signEvent(event)
+
                 val entry = AuditEntry(
                     timestamp = timestamp,
                     actionType = actionType,
                     payload = payload,
                     hash = newHash,
-                    previousHash = previousHash
+                    previousHash = previousHash,
+                    pqcSignature = pqcSigBytes,
+                    pqcAlgorithm = pqcSigner.getAlgorithmName()
                 )
                 
                 dao.insert(entry)
-                Timber.d("🔒 Audit Chain: Event [$actionType] verified & locked (Hash: ${newHash.take(8)}...)")
+                Timber.d("🔒 Audit Chain: Event [$actionType] verified, PQC signed & locked (Hash: ${newHash.take(8)}...)")
             } catch (e: Exception) {
                 Timber.e(e, "❌ FATAL Audit Insertion Failure")
-                // Propagasi error ke pemanggil agar transaksi medis bisa di-rollback
+                // Propagate error to caller so medical transaction can be rolled back
                 throw IllegalStateException("Gagal merekam jejak audit: ${e.message}", e)
             }
         }
@@ -95,10 +120,11 @@ class AuditChain @Inject constructor(
             return@withContext false
         }
         
-        // Kunci database selama proses verifikasi agar tidak ada penulisan di tengah jalan
+        // Lock database during verification process to prevent writes mid-way
         chainMutex.withLock {
             val entries = dao.getAllEntries()
             var currentPrevHash = "0".repeat(64)
+            val publicKey = pqcSigner.exportPublicKey()
             
             for (entry in entries) {
                 if (entry.previousHash != currentPrevHash) {
@@ -107,16 +133,37 @@ class AuditChain @Inject constructor(
                 }
                 
                 val dataToSign = "${entry.actionType}|${entry.timestamp}|${entry.payload}"
-                val calculatedHash = nativeSignEntry(currentPrevHash, dataToSign)
+                val calculatedHash = nativeComputeChainHash(currentPrevHash, dataToSign)
                 
                 if (entry.hash != calculatedHash) {
                     Timber.w("🚨 Audit Breach: Hash signature invalid on event ${entry.actionType}")
                     return@withContext false
                 }
+
+                // Verify PQC Signature if present
+                if (entry.pqcSignature != null) {
+                    val eventTypeEnum = when (entry.actionType) {
+                        "CONSENT_GRANTED", "CONSENT_AUTO_GRANTED" -> AuditableEventType.TOOL_EXECUTION_CRITICAL
+                        "CONSENT_DENIED" -> AuditableEventType.SAFETY_VIOLATION_BLOCK
+                        "CLINICAL_OVERRIDE" -> AuditableEventType.SAFETY_VIOLATION_BLOCK
+                        else -> AuditableEventType.TOOL_EXECUTION_INFO
+                    }
+                    val event = AuditEvent(
+                        id = entry.hash,
+                        timestamp = entry.timestamp,
+                        eventType = eventTypeEnum,
+                        payload = entry.payload
+                    )
+                    val pqcValid = pqcSigner.verifyEvent(event, entry.pqcSignature, publicKey)
+                    if (!pqcValid) {
+                        Timber.w("🚨 Audit Breach: PQC ML-DSA signature verification failed on event ${entry.actionType}")
+                        return@withContext false
+                    }
+                }
                 
                 currentPrevHash = entry.hash
             }
-            Timber.i("✅ Audit Chain Validated: ${entries.size} blocks intact.")
+            Timber.i("✅ Audit Chain & PQC Signatures Validated: ${entries.size} blocks intact.")
             true
         }
     }

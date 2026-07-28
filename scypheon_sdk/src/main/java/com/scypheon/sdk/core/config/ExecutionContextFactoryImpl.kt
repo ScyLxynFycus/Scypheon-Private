@@ -19,9 +19,9 @@ class ExecutionContextFactoryImpl @Inject constructor(
         }
         val concurrency = if (constraint == EnvironmentConstraint.NORMAL) 3 else 1
         val powerProfile = when {
-            environment.batteryPercent < 20 -> PowerProfile.LOW
-            environment.batteryPercent < 50 -> PowerProfile.NORMAL
-            else -> PowerProfile.HIGH
+            environment.batteryPercent < 20 -> PowerProfile.POWER_SAVER
+            environment.batteryPercent < 50 -> PowerProfile.BALANCED
+            else -> PowerProfile.HIGH_PERFORMANCE
         }
 
         return ExecutionContext(

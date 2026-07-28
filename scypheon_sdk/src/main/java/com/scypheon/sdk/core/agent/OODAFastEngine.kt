@@ -84,16 +84,14 @@ class OODAFastEngine @Inject constructor(
 
                 // ⏹️ Early exit on fallback decision (skip ActStep)
                 if (decision.isFallback) {
-                    Timber.i("⏹️ [OODA_ENGINE] Fast path fallback triggered | Trace: $traceId")
-                    return@withTimeout OODAResult.FastPath(
-                        FastPathResult(
-                            skillName = orientation.selectedSkill.type.name,
-                            toolName = "fallback_chat",
-                            result = decision.parameters["query"] ?: query,
-                            latencyMs = System.currentTimeMillis() - pipelineStart,
-                            validated = true,
-                            auditTraceId = traceId,
-                            fallbackReason = decision.rationale.fallbackReason
+                    Timber.i("⏹️ [OODA_ENGINE] Fast path fallback triggered. Delegating to ORIGA | Trace: $traceId")
+                    return@withTimeout OODAResult.DelegationRequired(
+                        DelegationPayload(
+                            traceId = traceId,
+                            query = query,
+                            observation = observation,
+                            orientation = orientation,
+                            reason = decision.rationale.fallbackReason ?: "Fast path fallback triggered"
                         )
                     )
                 }

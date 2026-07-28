@@ -9,6 +9,7 @@ import com.scypheon.sdk.core.memory.toTriplets
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
+import dagger.hilt.android.qualifiers.ApplicationContext
 
 /**
  * SensoryHooks (Scypheon Private Version)
@@ -16,7 +17,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class SensoryHooks @Inject constructor(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
     private val audioGuardian: DeafEnvironmentGuardian,
     private val memoryManager: com.scypheon.sdk.core.memory.DualMemoryManager
 ) {

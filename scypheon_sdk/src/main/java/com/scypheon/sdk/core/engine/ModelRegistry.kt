@@ -8,10 +8,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import dagger.hilt.android.qualifiers.ApplicationContext
 
 @Singleton
 class ModelRegistry @Inject constructor(
-    private val context: Context
+    @ApplicationContext private val context: Context
 ) {
     private val cacheFile = File(context.filesDir, "model_inventory.json")
     private val gson = Gson()
@@ -55,15 +56,12 @@ class ModelRegistry @Inject constructor(
         val dir = File(context.filesDir, "models")
         if (dir.exists() && dir.isDirectory) {
             try {
-                java.nio.file.Files.newDirectoryStream(dir.toPath()).use { stream ->
-                    stream.forEach { path ->
-                        val file = path.toFile()
-                        if (file.name.endsWith(".gguf")) {
-                            val parts = file.name.lowercase().split("-", "_", ".")
-                            val quant = parts.find { it.startsWith("q") } ?: "unknown"
-                            val arch = parts.find { it in listOf("gemma", "llama", "phi") } ?: "unknown"
-                            modelList.add(ModelCandidate(file.absolutePath, file.name, file.length() / 1048576, quant, arch))
-                        }
+                dir.listFiles()?.forEach { file ->
+                    if (file.name.endsWith(".gguf")) {
+                        val parts = file.name.lowercase().split("-", "_", ".")
+                        val quant = parts.find { it.startsWith("q") } ?: "unknown"
+                        val arch = parts.find { it in listOf("gemma", "llama", "phi") } ?: "unknown"
+                        modelList.add(ModelCandidate(file.absolutePath, file.name, file.length() / 1048576, quant, arch))
                     }
                 }
             } catch (e: Exception) {

@@ -4,6 +4,7 @@ import com.scypheon.sdk.core.humanitarian.medical.MedicalTriageGateway
 import com.scypheon.sdk.core.humanitarian.medical.TriageResult
 import com.scypheon.sdk.core.humanitarian.medical.DrugInteractionChecker
 import com.scypheon.sdk.core.humanitarian.medical.PharmacopeiaDao
+import com.scypheon.sdk.core.humanitarian.medical.FtsSanitizer
 import com.scypheon.sdk.core.grounding.MedicalGroundingEngine
 import com.scypheon.sdk.core.memory.DualMemoryManager
 import timber.log.Timber
@@ -25,7 +26,16 @@ class MedicalSkill @Inject constructor(
 ) {
 
     suspend fun getDosage(drug: String, ageGroup: String): String {
-        val drugIds = dao.resolveIds(drug)
+        val cleanQuery = FtsSanitizer.sanitize(drug)
+        if (cleanQuery.isBlank()) {
+            return "Drug '$drug' not found in local pharmacopeia. Consult a professional."
+        }
+        val drugIds = try {
+            dao.resolveIds(cleanQuery)
+        } catch (e: Exception) {
+            Timber.e(e, "SQLite FTS error resolving IDs for: $cleanQuery")
+            emptyList()
+        }
         val entity = drugIds.firstOrNull()?.let { dao.getDrugById(it) }
 
         return if (entity != null) {

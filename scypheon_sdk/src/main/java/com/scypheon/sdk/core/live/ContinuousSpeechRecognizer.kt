@@ -181,6 +181,20 @@ class ContinuousSpeechRecognizer @Inject constructor(
     }
 
     /**
+     * Cancel any ongoing speech recognition immediately.
+     */
+    fun cancel() {
+        shouldRestart = false
+        isListening = false
+        try {
+            speechRecognizer?.cancel()
+            Timber.d("🎤 [STT] Cancelled")
+        } catch (e: Exception) {
+            Timber.e(e, "🎤 [STT] Failed to cancel")
+        }
+    }
+
+    /**
      * Release all resources.
      */
     fun release() {

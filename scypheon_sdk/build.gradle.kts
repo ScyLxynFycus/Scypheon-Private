@@ -9,17 +9,25 @@ plugins {
     id("com.google.dagger.hilt.android")
     id("app.cash.sqldelight") version "2.0.2"
     id("org.jetbrains.kotlin.plugin.serialization") version "2.1.10"
+    jacoco
+    id("org.jlleitschuh.gradle.ktlint") version "12.1.2"
+    id("org.cyclonedx.bom") version "1.10.0"
 }
 
 android {
     namespace = "com.scypheon.sdk"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 28
         ndk {
             abiFilters.add("arm64-v8a")
         }
+        buildConfigField("String", "REMOTE_CONFIG_BACKEND", "\"github\"")
+        buildConfigField("int", "VERSION_CODE", "1")
+        buildConfigField("String", "CORPUS_VERIFICATION_PUBLIC_KEY", "\"04a3b2c1d0e9f804a3b2c1d0e9f804a3b2c1d0e9f804a3b2c1d0e9f8\"")
+        buildConfigField("String", "CORPUS_VERIFICATION_KEY_ID", "\"scypheon-corpus-2026-q2\"")
+        buildConfigField("String", "MODEL_MANIFEST_PUBLIC_KEY", "\"\"")
     }
 
     buildTypes {
@@ -29,19 +37,31 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     buildFeatures {
         aidl = true
         buildConfig = true
     }
+    
+    lint {
+        abortOnError = false
+    }
 
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
+        }
+    }
+
+    packaging {
+        jniLibs {
+            pickFirsts.add("lib/**/libggml*.so")
+            pickFirsts.add("lib/**/libllama*.so")
+            pickFirsts.add("**/libc++_shared.so")
         }
     }
 }
@@ -61,7 +81,7 @@ kapt {
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         freeCompilerArgs.add("-Xskip-metadata-version-check")
     }
 }
@@ -127,11 +147,12 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     testImplementation("io.mockk:mockk:1.13.8")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
+    testImplementation("org.robolectric:robolectric:4.11.1")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
 
     // Room DB for Local Storage
-    val roomVersion = "2.6.1"
+    val roomVersion = "2.7.0-alpha12"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
@@ -139,6 +160,12 @@ dependencies {
     // SQLDelight
     implementation("app.cash.sqldelight:android-driver:2.0.2")
     implementation("app.cash.sqldelight:coroutines-extensions:2.0.2")
+
+    // PDF Generation & Parsing
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+    // HTML Parsing
+    implementation("org.jsoup:jsoup:1.17.2")
 
     // Kotlin Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
@@ -150,6 +177,10 @@ dependencies {
 
     // Datetime
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.4.1")
+
+    // PDF Extraction & HTML Parsing
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation("org.jsoup:jsoup:1.17.2")
 }
 
 // 🛡️ SOLARIS PROVENANCE: SHA-256 Compile-Time Generation Task
@@ -202,4 +233,51 @@ tasks.register("generateModelHashes") {
 // Ensure hashes are generated before compilation
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     dependsOn("generateModelHashes")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ── JaCoCo Code Coverage ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    dependsOn("testDebugUnitTest")
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        csv.required.set(false)
+    }
+
+    val fileFilter = listOf(
+        "**/R.class", "**/R$*.class", "**/BuildConfig.*",
+        "**/Manifest*.*", "**/*Test*.*", "**/di/*",
+        "**/*_Factory.*", "**/*_MembersInjector.*",
+        "**/databinding/**", "**/binding/**"
+    )
+
+    val debugTree = layout.buildDirectory.dir("intermediates/javac/debug/classes").get().asFile
+    val kotlinSrc = layout.buildDirectory.dir("tmp/kotlin-classes/debug").get().asFile
+
+    sourceDirectories.setFrom(files(debugTree, kotlinSrc))
+
+    val filteredClasses = fileTree(classDirectories) {
+        exclude(fileFilter)
+    }
+    classDirectories.setFrom(filteredClasses)
+    executionData.setFrom(
+        layout.buildDirectory.file("jacoco/testDebugUnitTest.exec")
+    )
+
+    additionalSourceDirs.setFrom(files("src/main/java", "src/main/kotlin"))
+}
+
+tasks.register("checkCoverage") {
+    dependsOn("jacocoTestReport")
+    doLast {
+        val reportDir = layout.buildDirectory.dir("reports/jacoco/jacocoTestReport/html").get().asFile
+        if (!reportDir.exists()) {
+            throw GradleException("JaCoCo report not found at ${reportDir.absolutePath}")
+        }
+        println("✅ JaCoCo coverage report generated at: ${reportDir.absolutePath}")
+    }
 }

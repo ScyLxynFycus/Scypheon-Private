@@ -55,7 +55,7 @@ class HuggingFaceClientTest {
             sizeBytes = 1_800_000_000L,
             quantization = "Q4_K_M",
             downloadUrl = "https://huggingface.co/test/model/resolve/main/model-Q4_K_M.gguf",
-            engineType = EngineType.GGUF
+            engineType = EngineType.LLAMA_CPP
         )
         assertEquals("1.8 GB", file.displaySize)
     }
@@ -67,7 +67,7 @@ class HuggingFaceClientTest {
             sizeBytes = 500_000_000L,
             quantization = "Q2_K",
             downloadUrl = "https://example.com",
-            engineType = EngineType.GGUF
+            engineType = EngineType.LLAMA_CPP
         )
         assertEquals("500 MB", file.displaySize)
     }
@@ -79,7 +79,7 @@ class HuggingFaceClientTest {
             sizeBytes = 3_500_000_000L,
             quantization = "Q5_K_M",
             downloadUrl = "https://example.com",
-            engineType = EngineType.GGUF
+            engineType = EngineType.LLAMA_CPP
         )
         assertEquals(3.5, file.sizeGb, 0.01)
     }
@@ -91,9 +91,9 @@ class HuggingFaceClientTest {
             sizeBytes = 1_000_000L,
             quantization = "Q4_K_M",
             downloadUrl = "https://example.com",
-            engineType = EngineType.GGUF
+            engineType = EngineType.LLAMA_CPP
         )
-        assertEquals(EngineType.GGUF, file.engineType)
+        assertEquals(EngineType.LLAMA_CPP, file.engineType)
     }
 
     @Test
@@ -103,9 +103,9 @@ class HuggingFaceClientTest {
             sizeBytes = 500_000_000L,
             quantization = "int8",
             downloadUrl = "https://example.com",
-            engineType = EngineType.LITERT
+            engineType = EngineType.LITE_RT
         )
-        assertEquals(EngineType.LITERT, file.engineType)
+        assertEquals(EngineType.LITE_RT, file.engineType)
     }
 
     // ─── HfModelDetail License Tests ───

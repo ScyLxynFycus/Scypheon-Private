@@ -35,7 +35,17 @@ class MedicineAnalyticEngine @Inject constructor(
         """.trimIndent()
 
         // Dynamic Entity Resolution via WHO Pharmacopeia
-        val resolvedIds = dao.resolveIds(rawOcrText)
+        val cleanOcr = FtsSanitizer.sanitize(rawOcrText)
+        val resolvedIds = if (cleanOcr.isNotBlank()) {
+            try {
+                dao.resolveIds(cleanOcr)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to resolve IDs from OCR text using FTS: $cleanOcr")
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
         val detectedDrug = if (resolvedIds.isNotEmpty()) {
             dao.getDrugById(resolvedIds.first())?.genericName
         } else null

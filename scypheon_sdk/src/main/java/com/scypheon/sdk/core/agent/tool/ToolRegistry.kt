@@ -6,6 +6,8 @@ import javax.inject.Singleton
 /**
  * ToolRegistry: Dynamic tool discovery and resolution system.
  * Implements the "Claude Code" pattern for pluggable agentic capabilities.
+ *
+ * [v1.6.0-PROGRESSIVE] Two-Stage Progressive Disclosure.
  */
 @Singleton
 class ToolRegistry @Inject constructor(
@@ -34,27 +36,42 @@ class ToolRegistry @Inject constructor(
     fun getEnabledTools(): List<Tool> = tools.values.filter { it.isEnabled() }
 
     /**
-     * Generates a text representation of all available tools for prompt injection.
+     * Generates a text representation of tools with progressive disclosure.
+     * @param fullSchemaToolNames Set of tools to inject with full JSON schemas.
      */
-    fun generateToolDefinitionsPrompt(): String {
+    fun generateToolDefinitionsPrompt(fullSchemaToolNames: Set<String> = emptySet()): String {
         return buildString {
-            append("You have access to the following tools. Use the XML format <tool_call>{ \"toolName\": \"...\", \"arguments\": { ... } }</tool_call> to invoke them:\n\n")
-            tools.values.forEach { tool ->
-                append("- ${tool.name}: ${tool.description}\n")
-                append("  Schema: ${tool.inputSchema}\n\n")
+            append("You have access to the following tools. Use the XML format <tool_call>{ \"name\": \"...\", \"arguments\": { ... } }</tool_call> to invoke them.\n")
+            append("Note: For efficiency, some tools show only a brief summary. You can invoke any tool listed below; if you call a tool with only a summary, the system will provide the full schema in the next turn.\n\n")
+
+            // Group tools for better LLM context organization
+            val groups = tools.values.groupBy { tool ->
+                when {
+                    tool.isMedical -> "MEDICAL SAFETY"
+                    tool.name.contains("calculate") || tool.name.contains("math") -> "STEM & MATH"
+                    tool.name.contains("web") || tool.name.contains("wiki") || tool.name.contains("discover") -> "RESEARCH"
+                    else -> "UTILITIES"
+                }
             }
+
+            groups.forEach { (groupName, toolList) ->
+                append("### $groupName TOOLS ###\n")
+                toolList.forEach { tool ->
+                    val isFull = fullSchemaToolNames.contains(tool.name)
+                    if (isFull) {
+                        append("- ${tool.name}: ${tool.description}\n")
+                        append("  Schema: ${tool.inputSchema}\n\n")
+                    } else {
+                        append("- ${tool.name}: ${tool.triggerDescription}\n")
+                        append("  [Full Schema Hidden for Context Efficiency]\n\n")
+                    }
+                }
+            }
+
             append("\n--- SCYPHEON AGENTIC RULEBOOK ---\n")
-            append("You are Scypheon Agentic AI — a powerful, highly intelligent, and autonomous agent, NOT a passive chat assistant.\n")
-            append("Your primary mission is to resolve the user's needs fully, independently, and proactively.\n")
-            append("Act with complete confidence and autonomy. If the task requires web searching, external information, or fact-checking, feel free to run web searches/scraping (DuckDuckGo, Wikipedia, etc.) dynamically within a safe scope to discover the absolute ground truth.\n")
-            append("Always respond in the same language as the user's query unless requested otherwise. If the query is in English, you MUST reply in highly professional English.\n\n")
-            append("REQUIRED to use tools if:\n")
-            append("- The user asks for real-time information, news, prices, weather, public figures, or objective facts.\n")
-            append("- You need external data or fact verification (do NOT guess or assume, immediately use search/discover tools).\n")
-            append("- The user asks about medical topics, drug dosages, clinical interactions, or academic subjects (mathematics, formulas, science).\n\n")
-            append("AUTONOMOUS BEHAVIOR GUIDELINES:\n")
-            append("- Invoke tools whenever you believe they are beneficial and speed up the resolution of the user's mission.\n")
-            append("- Whether in OODA (Fast Path) or ORIGA (Deep Reasoning) mode, you are completely free to call tools dynamically as long as you are confident and within a safe scope.\n")
+            append("You are Scypheon Agentic AI — an autonomous, highly intelligent agent.\n")
+            append("Your primary mission is to resolve the user's needs proactively using the tools provided.\n")
+            append("NEVER guess objective facts. ALWAYS use search tools for real-time or verified data.\n")
             append("--- END RULEBOOK ---\n")
         }
     }

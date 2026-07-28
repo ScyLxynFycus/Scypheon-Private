@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <permission
+        android:name="com.scypheon.app.permission.RECEIVE_PUPPET_APPROVAL"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.scypheon.app.permission.RECEIVE_PUPPET_APPROVAL" />
+
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -90,7 +95,8 @@
 
         <receiver
             android:name=".workers.PuppetApprovalReceiver"
-            android:exported="false">
+            android:exported="true"
+            android:permission="com.scypheon.app.permission.RECEIVE_PUPPET_APPROVAL">
             <intent-filter>
                 <action android:name="com.scypheon.app.ACTION_APPROVE_PUPPET" />
             </intent-filter>

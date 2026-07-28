@@ -28,6 +28,12 @@ interface SafetyModule {
     fun bindExplainabilityEngine(impl: DefaultMedicalExplainabilityEngine): MedicalExplainabilityEngine
 
     companion object {
+
+        @Provides
+        @Singleton
+        fun provideSafetyConfig(): SafetyConfig {
+            return SafetyConfig()
+        }
         
         @Provides
         @Singleton
@@ -41,3 +47,4 @@ interface SafetyModule {
         }
     }
 }
+

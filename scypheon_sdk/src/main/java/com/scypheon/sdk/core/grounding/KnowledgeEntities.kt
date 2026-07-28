@@ -20,7 +20,7 @@ data class KnowledgeEntry(
 /**
  * FTS4 Virtual Table for high-performance knowledge search.
  */
-@Fts4(contentEntity = KnowledgeEntry::class)
+@Fts4
 @Entity(tableName = "knowledge_base_fts")
 data class KnowledgeFts(
     val term: String, 
@@ -45,6 +45,25 @@ interface KnowledgeDao {
     """)
     suspend fun search(query: String, limit: Int = 10): List<KnowledgeEntry>
 
+    @Query("""
+        SELECT kb.id, kb.domain, kb.term, kb.content, kb.source, kb.confidence, kb.lastUpdated 
+        FROM knowledge_base_fts fts 
+        JOIN knowledge_base kb ON fts.rowid = kb.id 
+        WHERE knowledge_base_fts MATCH :query AND kb.domain = :domain
+        LIMIT :limit
+    """)
+    suspend fun searchByDomain(query: String, domain: String, limit: Int = 10): List<KnowledgeEntry>
+
     @Query("SELECT content FROM knowledge_base WHERE term = :term AND domain = :domain LIMIT 1")
     suspend fun getExact(term: String, domain: String): String?
+
+    @Query("""
+        SELECT kb.id, kb.domain, kb.term, kb.content, kb.source, kb.confidence, kb.lastUpdated 
+        FROM knowledge_base_fts fts 
+        JOIN knowledge_base kb ON fts.rowid = kb.id 
+        WHERE knowledge_base_fts MATCH :query 
+        AND kb.domain = :domain
+        LIMIT :limit
+    """)
+    suspend fun searchByDomain(query: String, domain: String, limit: Int = 10): List<KnowledgeEntry>
 }

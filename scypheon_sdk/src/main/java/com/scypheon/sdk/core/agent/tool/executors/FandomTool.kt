@@ -31,7 +31,7 @@ class FandomTool @Inject constructor(
         return try {
             val summary = webProvider.discoverFandom(wiki, page)
             if (summary != null) {
-                ToolResult.Success(summary, System.currentTimeMillis() - start)
+                ToolResult.Success(summary, latencyMs = System.currentTimeMillis() - start)
             } else {
                 ToolResult.Error("Fandom page '$page' not found on '$wiki' wiki.", null, System.currentTimeMillis() - start)
             }

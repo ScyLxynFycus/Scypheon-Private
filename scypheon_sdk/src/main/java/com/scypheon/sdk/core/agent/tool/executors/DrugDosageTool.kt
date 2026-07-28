@@ -42,7 +42,7 @@ class DrugDosageTool @Inject constructor(
             val ageGroup = args["age_group"]?.toString() ?: "adult"
             
             val result = medicalSkill.getDosage(drug, ageGroup)
-            ToolResult.Success(result, System.currentTimeMillis() - start)
+            ToolResult.Success(result, latencyMs = System.currentTimeMillis() - start)
         } catch (e: Exception) {
             ToolResult.Error(e.message ?: "Dosage lookup failed", e, System.currentTimeMillis() - start)
         }
