@@ -56,6 +56,30 @@ scypheon_private/app/src/main/assets/.shm/
 /kaggle_submission/
 /legacy/
 
+# Desktop & tooling (separate project, not part of this repo)
+/Scypheon Private Desktop/
+/scypheon_studio/
+/.antigravitycli/
+/.opencode/
+/.vscode/
+/claude-proxy/
+/antigravity-proxy/
+/neural-gateway/
+/odysseus/
+/scypheon-desktop/
+/data/
+/pictures/
+/Logcat/
+/Python310_embed/
+/Claude-code/
+/DeepSeek_V4.pdf
+/diff_chat_utf8.patch
+/translator.md
+/AgenticSkillOrchestrator.kt
+/BlackBox.kt.github
+/DeepResearchAgent.kt.github
+/ResearchProgressTracker.kt.github
+
 # Exclude root specific script and JSON files
 /*.json
 /*.py
