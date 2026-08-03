@@ -4,7 +4,6 @@ import com.scypheon.sdk.core.agent.ooda.*
 import com.scypheon.sdk.core.humanitarian.accessibility.DeafEnvironmentGuardian
 import com.scypheon.sdk.core.intelligence.graph.AutonomousOracleAgent
 import com.scypheon.sdk.core.safety.helios.SafetyPipeline
-import com.scypheon.sdk.core.agent.skills.AgentSkillRegistry
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -26,21 +25,21 @@ class ResilienceOrchestrator @Inject constructor(
      * Starts monitoring environmental threats.
      */
     fun startMonitoring() {
-        Timber.i("🧠 [RESILIENCE] Starting environmental threat monitoring...")
-
+        Timber.i("🛰️ [RESILIENCE] Starting environmental threat monitoring...")
+        
         guardian.setOnAlertTriggeredListener { threatType, message ->
             handleEnvironmentalThreat(threatType, message)
         }
-
+        
         guardian.startListening()
     }
 
     private fun handleEnvironmentalThreat(type: String, message: String) {
         Timber.w("🚨 [RESILIENCE_ALERT] Threat Detected: $type ($message)")
-
+        
         scope.launch {
             val emergencyQuery = "What is the emergency evacuation procedure for a $type threat?"
-
+            
             val dummyEnv = DeviceEnvironment(100, true, ThermalStatus.NORMAL, "WIFI")
             val dummyObs = Observation(
                 sessionId = "system_emergency",
@@ -53,11 +52,11 @@ class ResilienceOrchestrator @Inject constructor(
             )
             val dummyOrient = Orientation(
                 rootGoal = "emergency_response",
-                requiredCapability = AgentSkillRegistry.SkillType.GENERAL,
-                selectedSkill = AgentSkillRegistry.SkillDefinition(
-                    AgentSkillRegistry.SkillType.GENERAL,
-                    "Emergency Response",
-                    "Handle emergency threats.",
+                requiredCapability = com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.GENERAL,
+                selectedSkill = com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillDefinition(
+                    com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.GENERAL, 
+                    "Emergency Response", 
+                    emptyList(), 
                     emptyList()
                 ),
                 requiresDeepReasoning = true,
@@ -73,9 +72,9 @@ class ResilienceOrchestrator @Inject constructor(
                 orientation = dummyOrient,
                 environment = dummyEnv
             )
-
+            
             val response = oracleAgent.buildFinalIntelligencePrompt(emergencyQuery, investigation)
-            Timber.i("🛡️ [RESILIENCE_RESPONSE] Emergency Protocol Generated: $response")
+            Timber.i("📢 [RESILIENCE_RESPONSE] Emergency Protocol Generated: $response")
         }
     }
 

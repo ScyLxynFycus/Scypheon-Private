@@ -5,7 +5,6 @@ import com.scypheon.sdk.core.agent.ooda.Observation
 import com.scypheon.sdk.core.agent.ooda.Orientation
 import com.scypheon.sdk.core.agent.ooda.AuditLogger
 import com.scypheon.sdk.core.intelligence.graph.steps.*
-import com.scypheon.sdk.core.safety.helios.ViolationCategory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -15,12 +14,19 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Orchestrator configuration for ORRIGA pipeline.
+ * Injectable for environment-aware tuning (e.g., disaster mode lowers timeouts).
+ */
 data class OrrigaConfig(
-    val pipelineTimeoutMs: Long = 8000L,
+    val pipelineTimeoutMs: Long = 25000L,
     val enableAuditLogging: Boolean = true,
     val fallbackMessage: String = "[SYSTEM] Deep reasoning unavailable. Safe fallback activated."
 )
 
+/**
+ * Structured context metadata for audit and explainability.
+ */
 data class ContextMetadata(
     val domain: String,
     val timestamp: Long
@@ -28,6 +34,10 @@ data class ContextMetadata(
     fun toFactString(): String = "[METADATA] domain=$domain, collected_at=$timestamp"
 }
 
+/**
+ * ORRIGA: Observe, Reflect, Reason, Investigate, Ground, Answer.
+ * Final Hardened Orchestrator for Scypheon's Deep Path.
+ */
 interface HybridGraphOrrigaEngine {
     fun reason(
         query: String,
@@ -58,46 +68,38 @@ class HybridGraphOrrigaEngineImpl @Inject constructor(
         val startTime = System.currentTimeMillis()
         val stepsCompleted = mutableListOf<String>()
 
-        Timber.i("[ORRIGA_MAIN] Pipeline started | Trace: `$traceId | Query: `${query.take(100)}")
+        Timber.i("[ORRIGA_MAIN] Pipeline started | Trace: $traceId | Query: ${query.take(100)}")
 
         try {
+            // 0. Audit Start
             if (config.enableAuditLogging) {
                 auditLogger.logPipelineStart(traceId, "ORRIGA_DEEP_PATH")
             }
 
-            val timeBudget = TimeBudget(config.pipelineTimeoutMs)
-
             withTimeout(config.pipelineTimeoutMs) {
                 // 1. REFLECT: Semantic Memory Retrieval
-                val reflection = reflectStep.process(observation.sessionId, traceId, timeBudget)
-                if (reflection.isDegraded && config.enableAuditLogging) {
-                    auditLogger.logDegradation(traceId, ViolationCategory.ORIGA_DEGRADATION.name, reflection.failureReason ?: "Unknown")
-                }
+                val reflection = reflectStep.process(observation.sessionId, traceId)
                 stepsCompleted.add("REFLECT")
                 val historicalContext = if (reflection.success) reflection.reflectedContext else emptyList()
 
                 // 2. REASON: Multi-domain Task Decomposition
                 val reasonResult = reasonStep.process(query, traceId)
                 stepsCompleted.add("REASON")
-                val domainString = reasonResult.domains.joinToString("_") { it.name.lowercase() }
+                val domainString = reasonResult.domain.name.lowercase()
 
                 // 3. INVESTIGATE: Knowledge Excavation (Parallel Grounding)
                 val investigation = if (reasonResult.success) {
-                    val invResult = investigateStep.process(
+                    investigateStep.process(
                         entities = reasonResult.entities.map { it.text },
                         traceId = traceId,
-                        domain = domainString,
-                        timeBudget = timeBudget
+                        domain = domainString
                     )
-                    if (invResult.isDegraded && config.enableAuditLogging) {
-                        auditLogger.logDegradation(traceId, ViolationCategory.ORIGA_DEGRADATION.name, invResult.failureReason ?: "Unknown")
-                    }
-                    invResult
                 } else null
                 stepsCompleted.add("INVESTIGATE")
-
+                
                 val investigationFacts = investigation?.facts ?: emptyList()
-
+                
+                // Structured context assembly
                 val rawFacts = buildList {
                     addAll(investigationFacts)
                     addAll(historicalContext)
@@ -112,50 +114,38 @@ class HybridGraphOrrigaEngineImpl @Inject constructor(
                 )
                 stepsCompleted.add("GROUND")
 
-                val verifiedFacts = if (groundingResult.success) groundingResult.validatedFacts else emptyList()      
+                val verifiedFacts = if (groundingResult.success) groundingResult.validatedFacts else emptyList()
 
                 // 5. ANSWER: Response Synthesis (Secure Streaming)
                 val answerConfig = AnswerStreamConfig(traceId = traceId)
-                
-                // Track partial state for answer crash resilience
-                var partialResponse = ""
-                try {
-                    answerStep.process(
-                        query = query,
-                        verifiedFacts = verifiedFacts,
-                        observation = observation,
-                        environment = environment,
-                        config = answerConfig
-                    ).collect { token ->
-                        partialResponse += token
-                        emit(token)
-                    }
-                } catch (e: Exception) {
-                    Timber.e(e, "[ORRIGA_MAIN] ANSWER stream crashed. Recovering with partial state.")
-                    if (config.enableAuditLogging) {
-                        auditLogger.logDegradation(traceId, ViolationCategory.ORIGA_DEGRADATION.name, "ANSWER stream crashed")
-                    }
-                    emit("\n\n[SYSTEM RECOVERY] Partial response generated before interruption.")
-                    // Further retry logic with partial state can be implemented here or handled by the caller.
+                answerStep.process(
+                    query = query,
+                    verifiedFacts = verifiedFacts,
+                    observation = observation,
+                    environment = environment,
+                    config = answerConfig
+                ).collect { token ->
+                    emit(token)
                 }
                 stepsCompleted.add("ANSWER")
             }
 
+            // Audit Success
             if (config.enableAuditLogging) {
-                auditLogger.logPipelineCompletion(traceId, true, null, System.currentTimeMillis() - startTime)        
+                auditLogger.logPipelineCompletion(traceId, true, null, System.currentTimeMillis() - startTime)
             }
 
         } catch (e: CancellationException) {
-            Timber.w("[ORRIGA_MAIN] Pipeline cancelled | Trace: `$traceId")
-            throw e
+            Timber.w("[ORRIGA_MAIN] Pipeline cancelled | Trace: $traceId")
+            throw e // Clean cancellation
         } catch (e: Exception) {
             val failureStep = inferFailedStep(stepsCompleted)
-            Timber.e(e, "[ORRIGA_MAIN] Pipeline failed at step: `$failureStep | Trace: `$traceId")
-
+            Timber.e(e, "[ORRIGA_MAIN] Pipeline failed at step: $failureStep | Trace: $traceId")
+            
             if (config.enableAuditLogging) {
-                auditLogger.logPipelineCompletion(traceId, false, e.message, System.currentTimeMillis() - startTime)  
+                auditLogger.logPipelineCompletion(traceId, false, e.message, System.currentTimeMillis() - startTime)
             }
-
+            
             emit(config.fallbackMessage)
         }
     }.flowOn(Dispatchers.IO)
@@ -165,4 +155,3 @@ class HybridGraphOrrigaEngineImpl @Inject constructor(
         return allSteps.firstOrNull { it !in completed } ?: "UNKNOWN"
     }
 }
-

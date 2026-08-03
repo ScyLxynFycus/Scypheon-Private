@@ -16,5 +16,6 @@
         <item name="windowSplashScreenBackground">#FFFFFF</item>
         <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
         <item name="postSplashScreenTheme">@style/Theme.Scypheon</item>
+        <item name="android:windowBackground">@drawable/img_splash_logo</item>
     </style>
 </resources>

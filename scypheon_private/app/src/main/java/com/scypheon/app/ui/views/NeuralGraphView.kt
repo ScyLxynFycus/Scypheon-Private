@@ -19,23 +19,19 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import kotlin.math.sin
-import kotlin.math.cos
 
 class NeuralGraphView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : View(context, attrs) {
     
-    private fun dpToPx(dp: Float): Float = dp * context.resources.displayMetrics.density
-
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    
     // [v1.5.0-SAR] Premium light theme: refined dark text with subtle shadow for depth
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = dpToPx(11f)
+        textSize = 26f
         color = 0xFF3C3C43.toInt() // iOS secondary label color
         textAlign = Paint.Align.CENTER
         typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        setShadowLayer(2f, 0f, 1f, 0x10000000.toInt()) // Very subtle depth shadow
     }
     
     // --- VIEWPORT MATRIX ENGINE ---
@@ -48,7 +44,7 @@ class NeuralGraphView @JvmOverloads constructor(
 
     private var layoutRef: GraphLayout? = null
     private val spatialIndex = MutableGridSpatialIndex(cellSize = 150f)
-    private var isLifecycleActive = true
+    private var isAnimating = false
     private var isDirty = false
     private var animateParticles = false
     private var tick = 0f
@@ -67,7 +63,10 @@ class NeuralGraphView @JvmOverloads constructor(
         viewportMatrix.invert(inverseMatrix)
         
         isDirty = true
-        postInvalidateOnAnimation()
+        if (!isAnimating) {
+            isAnimating = true
+            postInvalidateOnAnimation()
+        }
     }
 
     fun bindPhysics(flow: StateFlow<GraphLayout>, scope: CoroutineScope) {
@@ -85,17 +84,20 @@ class NeuralGraphView @JvmOverloads constructor(
         spatialIndex.rebuild(layout.nodes)
         isDirty = true
         animateParticles = layout.nodes.size <= 150
-        postInvalidateOnAnimation()
+        if (!isAnimating) {
+            isAnimating = true
+            postInvalidateOnAnimation()
+        }
     }
 
     fun setLifecycle(lifecycle: Lifecycle) {
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
-                isLifecycleActive = true
+                isAnimating = true
                 postInvalidateOnAnimation()
             }
             override fun onStop(owner: LifecycleOwner) {
-                isLifecycleActive = false
+                isAnimating = false
             }
         })
     }
@@ -106,174 +108,56 @@ class NeuralGraphView @JvmOverloads constructor(
         canvas.save()
         canvas.concat(viewportMatrix) // Apply viewport transformation
 
-        if (animateParticles) tick = (tick + 0.0015f) % 1f // Significantly slowed down for a dreamy, fluid, and buttery smooth premium aesthetic
+        if (animateParticles) tick = (tick + 0.01f) % 1f
 
         // [v1.5.0-SAR] Premium light theme rendering
         
-        // 1. Draw Edges — crisp, glowing neural connection lines
+        // 1. Draw Edges — soft blue-gray connections
+        paint.strokeWidth = 1.0f / scale
         layout.edges.forEach { edge ->
-            // Base Edge Line - thick, visible semi-transparent premium blue
-            paint.strokeWidth = dpToPx(1.5f)
-            paint.color = 0x333478F6.toInt() // Vibrant iOS blue at 20% opacity
-            paint.style = Paint.Style.STROKE
+            paint.color = 0x203478F6.toInt() // Soft iOS blue
             canvas.drawLine(edge.fromX, edge.fromY, edge.toX, edge.toY, paint)
             
-            // Draw flowing light pulse particles
             if (animateParticles) {
                 val t = (tick + edge.particleOffset) % 1f
                 val px = edge.fromX + (edge.toX - edge.fromX) * t
                 val py = edge.fromY + (edge.toY - edge.fromY) * t
-                
-                paint.style = Paint.Style.FILL
-                // Inner high-intensity particle core
-                paint.color = 0xCC3478F6.toInt()
-                canvas.drawCircle(px, py, dpToPx(3.2f), paint)
-                
-                // Outer glowing halo
-                paint.color = 0x253478F6.toInt()
-                canvas.drawCircle(px, py, dpToPx(7.5f), paint)
-            }
-            
-            // Draw Predicate Text Label along the edge when zoomed in
-            if (scale >= 0.85f && edge.predicate.isNotEmpty()) {
-                val midX = (edge.fromX + edge.toX) / 2f
-                val midY = (edge.fromY + edge.toY) / 2f
-                
-                val predPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    textSize = dpToPx(8.5f)
-                    color = 0xAA5F6368.toInt() // Slate grey
-                    textAlign = Paint.Align.CENTER
-                    typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.ITALIC)
-                }
-                
-                // Calculate angle of edge for text rotation
-                val dx = edge.toX - edge.fromX
-                val dy = edge.toY - edge.fromY
-                var angle = Math.toDegrees(Math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
-                if (angle > 90 || angle < -90) {
-                    angle += 180f
-                }
-                
-                canvas.save()
-                canvas.translate(midX, midY)
-                canvas.rotate(angle)
-                
-                val text = edge.predicate
-                val textWidth = predPaint.measureText(text)
-                
-                val capPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = 0xE6FFFFFF.toInt() // capsule fill
-                    style = Paint.Style.FILL
-                }
-                val capBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = 0x14000000.toInt() // subtle border
-                    style = Paint.Style.STROKE
-                    strokeWidth = dpToPx(0.8f)
-                }
-                
-                val paddingX = dpToPx(4.5f)
-                val paddingY = dpToPx(1.8f)
-                val rLeft = -textWidth / 2f - paddingX
-                val rTop = predPaint.fontMetrics.ascent - paddingY
-                val rRight = textWidth / 2f + paddingX
-                val rBottom = predPaint.fontMetrics.descent + paddingY
-                
-                canvas.drawRoundRect(rLeft, rTop, rRight, rBottom, dpToPx(4f), dpToPx(4f), capPaint)
-                canvas.drawRoundRect(rLeft, rTop, rRight, rBottom, dpToPx(4f), dpToPx(4f), capBorderPaint)
-                
-                canvas.drawText(text, 0f, - (predPaint.fontMetrics.ascent + predPaint.fontMetrics.descent) / 2f, predPaint)
-                canvas.restore()
+                paint.color = 0x503478F6.toInt() // iOS Blue particles
+                canvas.drawCircle(px, py, 2.0f / scale, paint)
             }
         }
 
-        // 2. Draw Nodes — Apple-like glassmorphic 3D spheres with pulsing halos
+        // 2. Draw Nodes — clean, elevated orbs
         layout.nodes.forEach { node ->
-            val nodeColor = node.colorArgb
-            
-            // Soft colored ambient shadow
-            paint.style = Paint.Style.FILL
-            paint.color = (nodeColor and 0x00FFFFFF) or 0x1A000000
+            // Soft shadow halo
+            paint.color = (node.colorArgb and 0x00FFFFFF) or 0x0A000000
             canvas.drawCircle(node.posX, node.posY, node.radius * 2.2f, paint)
             
-            // Selected node dynamic pulsing ring
-            if (node.isSelected) {
-                paint.style = Paint.Style.STROKE
-                paint.strokeWidth = dpToPx(2.5f)
-                val pulseAlpha = (0.5f + 0.4f * sin(tick * 2f * Math.PI.toFloat())).coerceIn(0f, 1f)
-                val alphaInt = (pulseAlpha * 255).toInt()
-                paint.color = (nodeColor and 0x00FFFFFF) or (alphaInt shl 24)
-                val ringRadius = node.radius * (1.1f + 0.15f * (1f + sin(tick * 2f * Math.PI.toFloat())))
-                canvas.drawCircle(node.posX, node.posY, ringRadius, paint)
-            }
+            // White border ring for depth
+            paint.color = 0x20FFFFFF.toInt()
+            canvas.drawCircle(node.posX, node.posY, node.radius + 1.5f, paint)
             
-            // Core node sphere base
-            paint.style = Paint.Style.FILL
-            paint.color = nodeColor
+            // Core node
+            paint.color = node.colorArgb
             canvas.drawCircle(node.posX, node.posY, node.radius, paint)
             
-            // Subtle 3D inner shadow overlay
-            paint.color = 0x22000000 // 13% black shadow
-            canvas.drawCircle(node.posX + node.radius * 0.1f, node.posY + node.radius * 0.1f, node.radius * 0.9f, paint)
+            // Subtle inner highlight
+            paint.color = 0x18FFFFFF.toInt()
+            canvas.drawCircle(node.posX, node.posY, node.radius * 0.4f, paint)
             
-            // White highlight glint on top-left (3D glass dome effect)
-            paint.color = 0xAAFFFFFF.toInt()
-            canvas.drawCircle(node.posX - node.radius * 0.25f, node.posY - node.radius * 0.25f, node.radius * 0.28f, paint)
-            
-            // Draw clean capsule label
             if (layout.nodes.size <= 80 || node.isSelected) {
-                val text = node.label
-                val textWidth = textPaint.measureText(text)
-                
-                val paddingX = dpToPx(8f)
-                val paddingY = dpToPx(4f)
-                val rectLeft = node.posX - textWidth / 2f - paddingX
-                val rectTop = node.posY + node.radius + dpToPx(12f) + textPaint.fontMetrics.ascent - paddingY
-                val rectRight = node.posX + textWidth / 2f + paddingX
-                val rectBottom = node.posY + node.radius + dpToPx(12f) + textPaint.fontMetrics.descent + paddingY
-                
-                // Capsule white fill with shadow
-                val capPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = 0xF5FFFFFF.toInt() // 96% white
-                    style = Paint.Style.FILL
-                    setShadowLayer(4f, 0f, 2f, 0x1A000000.toInt())
-                }
-                
-                val capBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = if (node.isSelected) nodeColor else 0x1A000000.toInt()
-                    style = Paint.Style.STROKE
-                    strokeWidth = dpToPx(if (node.isSelected) 1.2f else 0.8f)
-                }
-                
-                canvas.drawRoundRect(rectLeft, rectTop, rectRight, rectBottom, dpToPx(8f), dpToPx(8f), capPaint)
-                canvas.drawRoundRect(rectLeft, rectTop, rectRight, rectBottom, dpToPx(8f), dpToPx(8f), capBorderPaint)
-                
-                canvas.drawText(
-                    text,
-                    node.posX,
-                    node.posY + node.radius + dpToPx(12f) - (textPaint.fontMetrics.ascent + textPaint.fontMetrics.descent) / 2f,
-                    textPaint
-                )
+                canvas.drawText(node.label, node.posX, node.posY + node.radius + 20f, textPaint)
             }
         }
 
         canvas.restore()
 
-        if (isLifecycleActive && (animateParticles || isDirty)) {
+        if (animateParticles || isDirty) {
             isDirty = false
             postInvalidateOnAnimation()
+        } else {
+            isAnimating = false
         }
-    }
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        isDirty = true
-        postInvalidateOnAnimation()
-    }
-
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        isDirty = true
-        postInvalidateOnAnimation()
     }
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {

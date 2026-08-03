@@ -47,62 +47,10 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
     llama-android.cpp
     GemmaInference.cpp
     AuditChain.cpp
-    pqc/PqcSignatureWrapper.cpp
-    pqc/PqcKemWrapper.cpp
-)
-
-# ------------------------------------------------------------------
-# [MATH ENGINE] Math Engine Compilation
-# ------------------------------------------------------------------
-add_library(scypheon_math SHARED
-    math/src/NativeMathEngine.cpp
-    math/src/MathNode.cpp
-    math/src/ExpressionParser.cpp
-    math/src/ODESolver.cpp
-)
-target_include_directories(scypheon_math PRIVATE math/include)
-target_link_libraries(scypheon_math android log)
-
-# ------------------------------------------------------------------
-# [PQC] liboqs Compilation (Static Library)
-# ------------------------------------------------------------------
-set(LIBOQS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/liboqs)
-set(LIBOQS_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/liboqs-build)
-
-include(ExternalProject)
-ExternalProject_Add(
-    liboqs_project
-    SOURCE_DIR ${LIBOQS_DIR}
-    BINARY_DIR ${LIBOQS_BUILD_DIR}
-    CMAKE_ARGS
-        -DCMAKE_BUILD_TYPE=Release
-        -DBUILD_SHARED_LIBS=OFF
-        -DOQS_BUILD_ONLY_LIB=ON
-        -DOQS_ENABLE_SIG_ML_DSA_44=ON
-        -DOQS_ENABLE_SIG_ML_DSA_65=ON
-        -DOQS_ENABLE_SIG_ML_DSA_87=OFF
-        -DOQS_ENABLE_KEM_ML_KEM_512=ON
-        -DOQS_ENABLE_KEM_ML_KEM_768=ON
-        -DOQS_ENABLE_KEM_ML_KEM_1024=OFF
-        -DOQS_DIST_BUILD=OFF
-        -DOQS_OPT_TARGET=generic
-        -DOQS_USE_OPENSSL=OFF
-        -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-        -DANDROID_ABI=${ANDROID_ABI}
-        -DANDROID_PLATFORM=${ANDROID_PLATFORM}
-    INSTALL_COMMAND ""
-    BUILD_BYPRODUCTS ${LIBOQS_BUILD_DIR}/lib/liboqs.a
-)
-
-add_dependencies(${CMAKE_PROJECT_NAME} liboqs_project)
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE 
-    ${LIBOQS_BUILD_DIR}/include
-    ${LIBOQS_DIR}/src
 )
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
     llama
-    ${LIBOQS_BUILD_DIR}/lib/liboqs.a
     android
     log
 )

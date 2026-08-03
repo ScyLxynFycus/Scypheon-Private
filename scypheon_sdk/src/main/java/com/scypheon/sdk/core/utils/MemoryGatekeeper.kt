@@ -2,9 +2,6 @@ package com.scypheon.sdk.core.utils
 
 import android.app.ActivityManager
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.os.BatteryManager
 import timber.log.Timber
 
 /**
@@ -13,16 +10,7 @@ import timber.log.Timber
  */
 object MemoryGatekeeper {
 
-    data class FitReport(
-        val score: Int,            // 0 - 100
-        val grade: String,         // "A" (Perfect) to "F" (Will Crash)
-        val recommendation: String, // e.g. "Excellent - GPU Accelerated", "Warning - CPU fallback, high RAM stress"
-        val expectedFps: Double,   // Estimated tokens per second
-        val isRecommended: Boolean
-    )
-
     data class MemoryReport(
-
         val availableMB: Long,
         val projectedLoadMB: Long,
         val isHealthy: Boolean,
@@ -148,114 +136,4 @@ object MemoryGatekeeper {
         
         return canLoad
     }
-
-    fun calculateFitScore(context: Context, modelSizeBytes: Long, isCpuMode: Boolean = false): FitReport {
-        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val memInfo = ActivityManager.MemoryInfo()
-        am.getMemoryInfo(memInfo)
-
-        val totalMB = memInfo.totalMem shr 20
-        val availableMB = memInfo.availMem shr 20
-        val modelSizeMB = modelSizeBytes shr 20
-        val headroomMB = computeHeadroomMB(totalMB)
-
-        var score = 100
-
-        // 1. RAM / Memory Pressure Evaluation
-        val netRamAfterLoad = availableMB - modelSizeMB - (headroomMB / 2) // Allow using half headroom for score calculation
-        if (netRamAfterLoad < 0) {
-            val deficit = -netRamAfterLoad
-            // Severe penalty for going below the LMKD safety floor
-            val penalty = (deficit * 100 / (headroomMB + 1)).toInt().coerceAtMost(70)
-            score -= penalty
-        } else if (netRamAfterLoad > 1024) {
-            score += 5 // Bonus for ample RAM
-        }
-
-        // Hard veto check for absolute RAM floor
-        if (availableMB < modelSizeMB + 128) {
-            score = (score - 60).coerceAtLeast(5)
-        }
-
-        // 2. Hardware Acceleration & Backend Evaluation
-        var accelerationNote = ""
-        val vulkanSupported = VulkanChecker.isVulkanSupported(context)
-        
-        if (!isCpuMode) {
-            if (vulkanSupported) {
-                score += 20 // GPU Bonus
-                accelerationNote = "Vulkan GPU Accelerated"
-            } else if (VulkanChecker.isOpenClSupported()) {
-                score += 10
-                accelerationNote = "OpenCL GPU Accelerated"
-            } else {
-                score -= 5 // Requested GPU but none found
-                accelerationNote = "CPU (GPU not supported)"
-            }
-        } else {
-            score -= 15 // CPU fallback penalty
-            accelerationNote = "CPU Pure Logic"
-        }
-
-        // 3. Thermal Analysis
-        val temp = getBatteryTemperature(context)
-        val thermalPenalty = when {
-            temp >= 50f -> 50 // CRITICAL: High risk of shutdown
-            temp >= 48f -> 30 // SEVERE: Throttling inevitable
-            temp >= 45f -> 15 // WARNING: Slight throttling
-            else -> 0
-        }
-        score -= thermalPenalty
-
-        // Ensure score stays within bounds
-        score = score.coerceIn(0, 100)
-
-        // 4. Grade Mapping
-        val grade = when {
-            score >= 90 -> "A"
-            score >= 75 -> "B"
-            score >= 60 -> "C"
-            score >= 40 -> "D"
-            else -> "F"
-        }
-
-        // 5. Performance Estimation (Tokens Per Second)
-        val totalGB = totalMB / 1024.0
-        val baseFps = when {
-            modelSizeMB < 1500 -> 14.0 // ~1B
-            modelSizeMB < 3500 -> 9.0  // ~3B
-            modelSizeMB < 6500 -> 5.0  // ~7B
-            else -> 2.5                // ~11B+
-        }
-
-        val fpsMultiplier = (if (!isCpuMode && vulkanSupported) 3.0 else if (!isCpuMode) 2.2 else 0.8) * 
-                          (if (totalGB >= 12.0) 1.3 else if (totalGB >= 8.0) 1.1 else 0.7) * 
-                          (if (temp >= 48f) 0.4 else if (temp >= 45f) 0.8 else 1.0)
-        
-        val expectedFps = (baseFps * fpsMultiplier).coerceAtLeast(0.1)
-
-        val isRecommended = grade != "F" && grade != "D"
-
-        val recommendation = when (grade) {
-            "A" -> "Excellent — $accelerationNote. Perfect fit for this hardware."
-            "B" -> "Stable — $accelerationNote. Good performance, stable for long sessions."
-            "C" -> "Warning — High RAM/Thermal stress. Performance may degrade over time."
-            "D" -> "Risky — Close to LMKD threshold. High probability of background app kills."
-            else -> "Veto — CRITICAL memory pressure. System crash or reboot likely."
-        }
-
-        return FitReport(score, grade, recommendation, expectedFps, isRecommended)
-    }
-
-    private fun getBatteryTemperature(context: Context): Float {
-        return try {
-            val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-            val intent = context.registerReceiver(null, filter)
-            val temp = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
-            temp.toFloat() / 10f
-        } catch (e: Exception) {
-            0f
-        }
-    }
 }
-

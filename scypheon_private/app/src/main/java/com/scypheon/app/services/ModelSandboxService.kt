@@ -29,8 +29,6 @@ import com.scypheon.sdk.core.system.AppDatabase
  * [SAFETY & TRUST] Integrates ClinicalValidator for deterministic medical grounding.
  * [ARCHITECTURE] IPC SharedMemory Bridge with Fail-Fast Binder synchronization.
  */
-import com.scypheon.sdk.core.security.PqcKeyExchangeManager
-
 @AndroidEntryPoint
 class ModelSandboxService : Service() {
 
@@ -39,9 +37,6 @@ class ModelSandboxService : Service() {
     interface DatabaseEntryPoint {
         fun getAppDatabase(): AppDatabase
     }
-
-    @Inject
-    lateinit var pqcKeyExchangeManager: PqcKeyExchangeManager
 
     private val llama = LLamaAndroid.instance()
     // Gunakan Dispatchers.Default untuk service layer agar tidak memblokir Main Thread jika terbebani
@@ -56,42 +51,9 @@ class ModelSandboxService : Service() {
     override fun onCreate() {
         super.onCreate()
         Timber.i("🛰️ [SAR] Sandbox process spinning up: PID ${android.os.Process.myPid()}")
-        
-        // [v1.6.0-SAR] SQLCipher JNI Hardening:
-        // In isolated processes like :ai_sandbox, libraries often need explicit 
-        // loading because the default process initialization might be restricted.
-        try {
-            System.loadLibrary("sqlcipher")
-            Timber.i("🛡️ [IPC] SQLCipher JNI Library loaded in Sandbox process.")
-        } catch (e: Throwable) {
-            Timber.e(e, "🚨 [IPC] Failed to load SQLCipher JNI. Encrypted DB will FAIL.")
-        }
     }
 
     private val binder = object : IScypheonSandbox.Stub() {
-        private var localKemPrivateKey: ByteArray? = null
-
-        override fun getKemPublicKey(): ByteArray {
-            Timber.d("🔐 [IPC] Generating ephemeral Kyber keypair...")
-            val keypair = pqcKeyExchangeManager.generateKeypair() ?: throw RemoteException("Failed to generate Kyber keypair")
-            localKemPrivateKey = keypair.secretKey
-            return keypair.publicKey
-        }
-
-        override fun initWithKem(filesDir: String, ciphertext: ByteArray, encryptedDbKey: ByteArray) {
-            Timber.d("🔐 [IPC] Initializing Sandbox with Kyber-encrypted database key...")
-            val sk = localKemPrivateKey ?: throw RemoteException("KEM keypair not initialized")
-            val sharedSecret = pqcKeyExchangeManager.decapsulate(ciphertext, sk) ?: throw RemoteException("Failed to decapsulate KEM secret")
-            val dbKey = pqcKeyExchangeManager.decryptAesGcm(encryptedDbKey, sharedSecret)
-            
-            init(filesDir, dbKey)
-            
-            // Clean up memory
-            dbKey.fill(0)
-            sharedSecret.fill(0)
-            localKemPrivateKey?.fill(0)
-            localKemPrivateKey = null
-        }
         
         override fun init(filesDir: String, dbKey: ByteArray) {
             lastFilesDir = filesDir
@@ -337,15 +299,6 @@ class ModelSandboxService : Service() {
             try { callback.onInitializationResult(llama.isReady()) } catch (e: RemoteException) {}
         }
 
-        override fun cancelInference() {
-            llama.cancelInference()
-            serviceScope.launch {
-                jobMutex.withLock {
-                    activeInferenceJob?.cancel()
-                }
-            }
-        }
-
         override fun ping() { /* Liveness check */ }
 
         override fun saveSession(path: String, callback: ISandboxStatusCallback) {
@@ -394,11 +347,6 @@ class ModelSandboxService : Service() {
                     try {
                         // C++ mengambil alih file descriptor
                         llama.attachShm(shmFd.fd, tensorSize)
-                    } catch (e: Exception) {
-                        // [v1.6.1-SAR] CRITICAL FIX: native_shm_attach failure must NOT kill
-                        // the sandbox process. The main process will detect failure via
-                        // SandboxLlamaEngine.attachTensorMemory() returning false.
-                        Timber.e(e, "🚨 [IPC] attachTensorMemory failed: ${e.message}")
                     } finally {
                         shmFd.close() 
                     }
@@ -424,26 +372,7 @@ class ModelSandboxService : Service() {
             }
         }
         
-        override fun setPerformanceMode(mode: Int) {
-            serviceScope.launch {
-                jobMutex.withLock {
-                    try {
-                        val priority = when (mode) {
-                            1 -> android.os.Process.THREAD_PRIORITY_LOWEST
-                            2 -> android.os.Process.THREAD_PRIORITY_BACKGROUND
-                            3 -> android.os.Process.THREAD_PRIORITY_DEFAULT
-                            4 -> android.os.Process.THREAD_PRIORITY_DISPLAY
-                            5 -> android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY
-                            else -> android.os.Process.THREAD_PRIORITY_DEFAULT
-                        }
-                        android.os.Process.setThreadPriority(priority)
-                        Timber.i("⚙️ [IPC] Sandbox performance mode set to level $mode (Priority: $priority)")
-                    } catch (e: Exception) {
-                        Timber.e(e, "Failed to set performance mode")
-                    }
-                }
-            }
-        }
+        override fun setPerformanceMode(mode: Int) { /* TODO: Thread priority tuning */ }
         
         override fun promoteToForeground() {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -473,29 +402,6 @@ class ModelSandboxService : Service() {
                 jobMutex.withLock {
                     val success = llama.probe(modelPath, backendMode)
                     try { callback.onInitializationResult(success) } catch (e: RemoteException) {}
-                }
-            }
-        }
-
-        override fun processImageTensor(buffer: android.hardware.HardwareBuffer, width: Int, height: Int, callback: IInferenceCallback) {
-            serviceScope.launch {
-                jobMutex.withLock {
-                    try {
-                        Timber.i(" [VISION] Processing Zero-Copy Image Tensor (HardwareBuffer): ${width}x${height}")
-                        val success = llama.processImageTensor(buffer, width, height)
-                        if (success) {
-                            try { callback.onPhaseChanged(2) /* Phase 2: Vision Prefill Complete */ } catch (e: RemoteException) {}
-                        } else {
-                            try { callback.onError(104, "HardwareBuffer vision processing failed") } catch (e: RemoteException) {}
-                        }
-                    } catch (e: Exception) {
-                        Timber.e(e, " [VISION] Image Tensor Processing Pipeline Failed")
-                        try { callback.onError(104, e.message ?: "Vision Hardware Failure") } catch (re: RemoteException) {}
-                    } finally {
-                        // Crucial: The AIDL layer takes ownership of the HardwareBuffer during IPC,
-                        // we should close our reference to avoid native memory leaks if not automatically handled by JNI.
-                        buffer.close()
-                    }
                 }
             }
         }

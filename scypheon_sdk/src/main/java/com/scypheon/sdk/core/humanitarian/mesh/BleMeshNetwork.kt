@@ -27,10 +27,10 @@ class BleMeshNetwork @Inject constructor(
     @ApplicationContext private val context: Context,
     private val meshDao: MeshDao
 ) {
-    private val bluetoothManager by lazy { context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager }
-    private val bluetoothAdapter: BluetoothAdapter? by lazy { bluetoothManager.adapter }
-    private val bleScanner: BluetoothLeScanner? by lazy { bluetoothAdapter?.bluetoothLeScanner }
-    private val bleAdvertiser: BluetoothLeAdvertiser? by lazy { bluetoothAdapter?.bluetoothLeAdvertiser }
+    private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
+    private val bleScanner: BluetoothLeScanner? = bluetoothAdapter?.bluetoothLeScanner
+    private val bleAdvertiser: BluetoothLeAdvertiser? = bluetoothAdapter?.bluetoothLeAdvertiser
 
     private val SERVICE_UUID = ParcelUuid(UUID.fromString("6a4f83b1-1234-4a5e-b8ab-ad01a79e360e"))
     private val MESH_SECRET = "AuraLink_Enterprise_2026"
@@ -40,14 +40,14 @@ class BleMeshNetwork @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // New data class to prevent Memory Leaks on incomplete messages
+    // Data class baru untuk mencegah Memory Leak pada pesan yang tidak lengkap
     private data class AssemblyState(
         val totalChunks: Int,
         val chunks: Array<String?>,
         var lastUpdated: Long = System.currentTimeMillis()
     )
     private val assemblyBuffer = ConcurrentHashMap<String, AssemblyState>()
-    private val CHUNK_TTL_MS = 60_000L // Clear memory if chunk is incomplete after 60 seconds
+    private val CHUNK_TTL_MS = 60_000L // Hapus memori jika chunk tidak lengkap setelah 60 detik
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -65,7 +65,7 @@ class BleMeshNetwork @Inject constructor(
     }
 
     private val MAX_RELAYS = 2
-    private val CHUNK_SIZE = 8 // Drastically reduced to stay within the 31 Bytes BLE Limit
+    private val CHUNK_SIZE = 8 // Diperkecil drastis agar tidak melebihi 31 Bytes BLE Limit
 
     private suspend fun processPacket(senderAddr: String, data: ByteArray) {
         try {
@@ -82,7 +82,7 @@ class BleMeshNetwork @Inject constructor(
             // 1. Deduplication Gate
             if (meshDao.getMessageByPacketId(packetId) != null) return
 
-            // 2. Assembly Gate with manual garbage collection
+            // 2. Assembly Gate dengan pembersihan (Garbage Collection) manual
             cleanUpStaleBuffers()
             val fullPayload = if (totalChunks > 1) {
                 assembleChunks(packetId, chunkIdx, totalChunks, payloadChunk) ?: return
@@ -145,19 +145,19 @@ class BleMeshNetwork @Inject constructor(
     ) {
         if (bleAdvertiser == null) return
 
-        val packetId = existingPacketId ?: UUID.randomUUID().toString().take(4) // Shorten ID
-        val signature = existingSignature ?: CryptoUtils.signPacket(payload, MESH_SECRET).take(4) // Shorten Signature
+        val packetId = existingPacketId ?: UUID.randomUUID().toString().take(4) // Persingkat ID
+        val signature = existingSignature ?: CryptoUtils.signPacket(payload, MESH_SECRET).take(4) // Persingkat Signature
         
         val chunks = payload.chunked(CHUNK_SIZE)
         val total = chunks.size
 
-        // 🛑 CRITICAL FIX: Loop with Hardware Release (Prevents Bluetooth Crash)
+        // 🛑 CRITICAL FIX: Loop dengan Hardware Release (Mencegah Bluetooth Hancur)
         chunks.forEachIndexed { index, chunk ->
             val fullPacket = "$packetId|$signature|$index|$total|$chunk"
-
+            
             val settings = AdvertiseSettings.Builder()
                 .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH) // Maximize range (up to 100m)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH) // Maksimalkan jarak (hingga 100m)
                 .setConnectable(false)
                 .build()
 
@@ -177,21 +177,21 @@ class BleMeshNetwork @Inject constructor(
             }
 
             try {
-                bleAdvertiser?.startAdvertising(settings, data, adCallback)
-                delay(600) // Broadcast signal for 600 milliseconds to be caught by nearby scanners
+                bleAdvertiser.startAdvertising(settings, data, adCallback)
+                delay(600) // Pancarkan sinyal selama 600 milidetik agar tertangkap scanner terdekat
             } finally {
-                // 🛑 MANDATORY: Release Bluetooth hardware slot
-                bleAdvertiser?.stopAdvertising(adCallback)
-                delay(150) // Hardware pause before transmitting the next chunk
+                // 🛑 WAJIB: Bebaskan slot hardware Bluetooth
+                bleAdvertiser.stopAdvertising(adCallback)
+                delay(150) // Beri jeda hardware sebelum menembakkan chunk berikutnya
             }
         }
     }
 
     fun startScanning() {
-        val scanner = bleScanner ?: return
+        if (bleScanner == null) return
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         val filter = ScanFilter.Builder().setServiceUuid(SERVICE_UUID).build()
-        scanner.startScan(listOf(filter), settings, scanCallback)
+        bleScanner.startScan(listOf(filter), settings, scanCallback)
     }
 
     fun stopScanning() {
@@ -200,4 +200,3 @@ class BleMeshNetwork @Inject constructor(
 }
 
 data class SecureMeshMessage(val packetId: String, val senderId: String, val payload: String, val signature: String)
-

@@ -6,15 +6,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 // --- Data Classes ---
-data class SessionContext(val id: String, val userId: String = "anonymous", val allowedDomains: List<com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType>? = null) {
-    private val toolCallCounts = mutableMapOf<String, Int>()
-    
-    fun getToolCallCount(toolName: String): Int = toolCallCounts.getOrDefault(toolName, 0)
-    
-    fun incrementToolCallCount(toolName: String) {
-        toolCallCounts[toolName] = getToolCallCount(toolName) + 1
-    }
-}
+data class SessionContext(val id: String, val userId: String = "anonymous")
 data class DeviceEnvironment(
     val batteryPercent: Int,
     val isCharging: Boolean,

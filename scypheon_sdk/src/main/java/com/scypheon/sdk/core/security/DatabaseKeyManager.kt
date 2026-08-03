@@ -1,41 +1,39 @@
 package com.scypheon.sdk.core.security
 
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
-import android.os.StrictMode
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import java.security.MessageDigest
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.PBEKeySpec
+import android.os.StrictMode
 import javax.inject.Inject
 import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
 
 /**
  * DatabaseKeyManager: Manages the cryptographic keys for SQLCipher database encryption.
- * Production-grade implementation with isolated process hardening and software-backed fallbacks.
+ * [SECURITY] Supports process-aware key handoff for isolated sandboxes with RAM-wiping.
  */
 @Singleton
-class DatabaseKeyManager @Inject constructor(
-    @ApplicationContext private val context: Context
-) {
+class DatabaseKeyManager @Inject constructor(@ApplicationContext private val context: Context) {
+    
     companion object {
-        private const val FALLBACK_KEY_ALIAS = "scypheon_isolated_db_key"
-        private const val PBKDF2_ITERATIONS = 10000
-        private const val KEY_LENGTH_BITS = 256
-
         @Volatile
         private var externalKey: ByteArray? = null
         
         fun setExternalKey(key: ByteArray) {
+            // Salin array agar referensi asli dari IPC tidak memodifikasi internal
             externalKey = key.copyOf()
         }
 
+        /**
+         * HARUS dipanggil segera setelah SQLCipher berhasil diinisialisasi
+         * untuk menghapus kunci dekripsi dari RAM.
+         */
         fun wipeExternalKey() {
             externalKey?.let { array ->
-                for (i in array.indices) { array[i] = 0 }
+                // Timpa dengan 0 (Zero-out) memori sebelum di-Garbage Collect
+                for (i in array.indices) {
+                    array[i] = 0
+                }
             }
             externalKey = null
         }
@@ -43,26 +41,32 @@ class DatabaseKeyManager @Inject constructor(
 
     private val isIsolatedProcess: Boolean by lazy {
         try {
-            val appInfo = context.packageManager.getApplicationInfo(context.packageName, 0)
-            android.os.Process.myUid() != appInfo.uid
-        } catch (e: PackageManager.NameNotFoundException) {
-            false
-        }
-    }
-
-    private val masterKeyAlias by lazy {
-        if (isIsolatedProcess) {
-            android.util.Log.w("DatabaseKeyManager", "Running in isolated process. Bypassing hardware Keystore.")
-            getIsolatedProcessKey()
-        } else {
-            getHardwareBackedKey()
+            val processName = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                android.app.Application.getProcessName()
+            } else {
+                // Fallback for older versions
+                val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                val myPid = android.os.Process.myPid()
+                activityManager.runningAppProcesses?.find { it.pid == myPid }?.processName ?: ""
+            }
+            processName.contains(":") || android.os.Process.isIsolated()
+        } catch (e: Exception) {
+            true
         }
     }
 
     private val masterKey by lazy {
+        if (isIsolatedProcess) {
+            android.util.Log.w("KeyManager", "Running in isolated process. Bypassing hardware Keystore.")
+            return@lazy MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .setUserAuthenticationRequired(false)
+                .build()
+        }
+
         val oldPolicy = StrictMode.allowThreadDiskReads()
         try {
-            MasterKey.Builder(context, masterKeyAlias)
+            MasterKey.Builder(context)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
         } finally {
@@ -72,7 +76,7 @@ class DatabaseKeyManager @Inject constructor(
 
     private val prefs by lazy {
         if (isIsolatedProcess) {
-            return@lazy null // Cannot access EncryptedSharedPreferences in isolated process
+            throw IllegalStateException("Cannot access EncryptedSharedPreferences in isolated process.")
         }
         val oldPolicy = StrictMode.allowThreadDiskReads()
         try {
@@ -84,7 +88,7 @@ class DatabaseKeyManager @Inject constructor(
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         } catch (e: Exception) {
-            android.util.Log.e("DatabaseKeyManager", "EncryptedSharedPreferences failed, clearing and retrying...", e)
+            android.util.Log.e("KeyManager", "EncryptedSharedPreferences failed, clearing and retrying...", e)
             try {
                 context.getSharedPreferences("scypheon_secure_prefs", Context.MODE_PRIVATE).edit().clear().apply()
                 EncryptedSharedPreferences.create(
@@ -95,33 +99,25 @@ class DatabaseKeyManager @Inject constructor(
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )
             } catch (e2: Exception) {
-                android.util.Log.e("DatabaseKeyManager", "FATAL: Could not initialize secure preferences", e2)
-                null
+                android.util.Log.e("KeyManager", "FATAL: Could not initialize secure preferences", e2)
+                throw e2
             }
         } finally {
             StrictMode.setThreadPolicy(oldPolicy)
         }
     }
 
-    /**
-     * Production-grade key management.
-     * Main process: Use hardware-backed KeyStore.
-     * Isolated process: Use PBKDF2-derived key (software-backed).
-     */
-    fun getOrCreateMasterKey(): String = masterKeyAlias
-
     fun getDatabaseKey(): ByteArray {
         externalKey?.let { return it }
         
         if (isIsolatedProcess) {
-            // In isolated process, we expect the key to be injected via IPC (externalKey)
+            // FAIL-FAST: Jangan pernah menggunakan placeholder kosong untuk kriptografi!
             throw IllegalStateException("CRITICAL: Database key not yet injected via IPC into Sandbox Process!")
         }
 
-        val p = prefs ?: throw IllegalStateException("Secure preferences unavailable")
         val oldPolicy = StrictMode.allowThreadDiskReads()
         val keyHex = try {
-            p.getString("db_key", null)
+            prefs.getString("db_key", null)
         } finally {
             StrictMode.setThreadPolicy(oldPolicy)
         }
@@ -136,7 +132,7 @@ class DatabaseKeyManager @Inject constructor(
         
         val oldPolicyWrite = StrictMode.allowThreadDiskReads()
         try {
-            p.edit().putString("db_key", newKeyHex).apply()
+            prefs.edit().putString("db_key", newKeyHex).apply()
         } finally {
             StrictMode.setThreadPolicy(oldPolicyWrite)
         }
@@ -144,74 +140,9 @@ class DatabaseKeyManager @Inject constructor(
         return newKey
     }
 
-    private fun getHardwareBackedKey(): String {
-        return try {
-            val alias = MasterKey.DEFAULT_MASTER_KEY_ALIAS
-            MasterKey.Builder(context, alias)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            alias
-        } catch (e: Exception) {
-            android.util.Log.w("DatabaseKeyManager", "KeyStore unavailable, using fallback", e)
-            getIsolatedProcessKey()
-        }
+    private fun byteArrayToHex(ba: ByteArray): String {
+        return ba.joinToString("") { "%02x".format(it) }
     }
-
-    private fun getIsolatedProcessKey(): String {
-        val deviceFingerprint = Build.FINGERPRINT
-        val appSignature = getAppSignatureHash()
-        val salt = "$deviceFingerprint:$appSignature".toByteArray()
-        
-        val spec = PBEKeySpec(
-            "scypheon_enterprise_2026".toCharArray(),
-            salt,
-            PBKDF2_ITERATIONS,
-            KEY_LENGTH_BITS
-        )
-        
-        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val key = factory.generateSecret(spec)
-        
-        val keyHash = MessageDigest.getInstance("SHA-256")
-            .digest(key.encoded)
-            .joinToString("") { "%02x".format(it) }
-        
-        return "$FALLBACK_KEY_ALIAS:$keyHash"
-    }
-
-    private fun getAppSignatureHash(): String {
-        return try {
-            val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                context.packageManager.getPackageInfo(
-                    context.packageName,
-                    PackageManager.GET_SIGNING_CERTIFICATES
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                context.packageManager.getPackageInfo(
-                    context.packageName,
-                    PackageManager.GET_SIGNATURES
-                )
-            }
-            
-            val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                packageInfo.signingInfo?.apkContentsSigners
-            } else {
-                @Suppress("DEPRECATION")
-                packageInfo.signatures
-            }
-            
-            signatures?.firstOrNull()?.let { sig ->
-                MessageDigest.getInstance("SHA-256")
-                    .digest(sig.toByteArray())
-                    .joinToString("") { "%02x".format(it) }
-            } ?: "no_signature"
-        } catch (e: Exception) {
-            "signature_error"
-        }
-    }
-
-    private fun byteArrayToHex(ba: ByteArray): String = ba.joinToString("") { "%02x".format(it) }
 
     private fun hexToByteArray(s: String): ByteArray {
         val len = s.length

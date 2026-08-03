@@ -3,14 +3,9 @@ package com.scypheon.sdk.core.environment
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.os.BatteryManager
-import android.os.Build
-import android.os.PowerManager
 import javax.inject.Inject
 import javax.inject.Singleton
-import dagger.hilt.android.qualifiers.ApplicationContext
 
 /**
  * SensorMesh: Provides unified environment awareness for all agents.
@@ -18,7 +13,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
  */
 @Singleton
 class SensorMesh @Inject constructor(
-    @ApplicationContext private val context: Context
+    private val context: Context
 ) {
     data class EnvironmentSnap(
         val batteryLevel: Int,
@@ -29,50 +24,23 @@ class SensorMesh @Inject constructor(
     )
 
     fun getEnvironmentSnapshot(): EnvironmentSnap {
-        val batteryIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val level = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-        val batteryLevel = if (level >= 0 && scale > 0) (level * 100 / scale) else 100
-        val status = batteryIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-        val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
-
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivityManager.activeNetwork
-        val caps = connectivityManager.getNetworkCapabilities(network)
-        val networkType = when {
-            caps == null -> "NONE"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
-            else -> "OTHER"
+        val batteryStatus: Intent? = IntentFilter(Intent.ACTION_BATTERY_CHANGED).let { filter ->
+            context.registerReceiver(null, filter)
         }
 
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        val thermalStatus = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            when (powerManager.currentThermalStatus) {
-                PowerManager.THERMAL_STATUS_CRITICAL, PowerManager.THERMAL_STATUS_EMERGENCY -> "CRITICAL"
-                PowerManager.THERMAL_STATUS_SEVERE, PowerManager.THERMAL_STATUS_MODERATE -> "WARM"
-                else -> "NORMAL"
-            }
-        } else {
-            "NORMAL"
-        }
+        val level: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val status: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val isCharging: Boolean = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                                   status == BatteryManager.BATTERY_STATUS_FULL
 
+        // For now, placeholder for sensor-specific logic
         return EnvironmentSnap(
-            batteryLevel = batteryLevel,
+            batteryLevel = level,
             isCharging = isCharging,
-            lightLevel = null,
-            networkType = networkType,
-            thermalStatus = thermalStatus
+            lightLevel = null, 
+            networkType = "WIFI/4G",
+            thermalStatus = "NORMAL"
         )
-    }
-
-    private fun getNetworkType(): String {
-        return getEnvironmentSnapshot().networkType
-    }
-
-    private fun getThermalStatus(): String {
-        return getEnvironmentSnapshot().thermalStatus
     }
 
     fun getContextString(): String {

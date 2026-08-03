@@ -29,15 +29,12 @@ class LiveEnglishTutor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val llmEngine: LiteRtEliteEngine,
     private val memoryManager: com.scypheon.sdk.core.memory.DualMemoryManager,
-    private val sensoryHooks: dagger.Lazy<com.scypheon.sdk.core.gateway.SensoryHooks>,
-    private val router: dagger.Lazy<com.scypheon.sdk.core.agent.SkillIntentRouter>,
-    private val orchestrator: dagger.Lazy<com.scypheon.sdk.core.agent.skills.AgenticSkillOrchestrator>
+    private val sensoryHooks: dagger.Lazy<com.scypheon.sdk.core.gateway.SensoryHooks>
 ) : TextToSpeech.OnInitListener, com.scypheon.sdk.core.humanitarian.ScypheonAgent {
 
     private var tts: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var isInitialized = false
-    @Volatile private var isTtsReady = false
     
     var isListening = false
         private set
@@ -45,10 +42,15 @@ class LiveEnglishTutor @Inject constructor(
     override fun warmUp() {
         if (isInitialized) return
         Timber.i(" [SAR] Warming up LiveEnglishTutor (Initializing TTS/STT)...")
-        isTtsReady = false
         tts = TextToSpeech(context, this)
         setupSpeechRecognizer()
         isInitialized = true
+        
+        // Proactive: Trigger a quiz shortly after warmup if memory exists
+        CoroutineScope(Dispatchers.Main).launch {
+            kotlinx.coroutines.delay(3000)
+            triggerPopQuiz()
+        }
     }
 
     override fun release() {
@@ -65,13 +67,6 @@ class LiveEnglishTutor @Inject constructor(
             val result = tts?.setLanguage(Locale.US)
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                 Timber.e("TTS: US English is not supported or missing data on this device.")
-            } else {
-                isTtsReady = true
-                // Proactive: Trigger quiz after successful initialization
-                CoroutineScope(Dispatchers.Main).launch {
-                    kotlinx.coroutines.delay(1000)
-                    triggerPopQuiz()
-                }
             }
         } else {
             Timber.e("TTS Initialization failed")
@@ -137,13 +132,12 @@ class LiveEnglishTutor @Inject constructor(
     fun startListening() {
         if (isListening) return
         try {
-            val systemLocale = Locale.getDefault().toLanguageTag()
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 // Force offline recognition (Requires downloaded language pack on Android)
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                // Default to Indonesian if system locale is not available
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (systemLocale.isNotBlank()) systemLocale else "id-ID")
+                // Assuming Indonesian students learning English
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "id-ID")
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             }
             speechRecognizer?.startListening(intent)
@@ -187,68 +181,36 @@ class LiveEnglishTutor @Inject constructor(
         isListening = false
     }
 
-    internal var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    internal fun processStudentInput(input: String) {
+    private fun processStudentInput(input: String) {
         val sanitizedInput = input.trim()
         Timber.i("🧹 STT Input: $sanitizedInput")
 
-        scope.launch {
-            val routing = router.get().routeQuick(sanitizedInput, maxLatencyMs = 80)
+        val prompt = """
+            You are a helpful, encouraging offline English Tutor.
+            A student just said: "$sanitizedInput"
+
+            Your tasks:
+            1. If it's in Indonesian, translate it. If it's broken English, correct the grammar gently.
+            2. Explain the meaning clearly.
+            3. Provide 2 simple examples of how to use it in a sentence.
+            4. If there's a difficult word, break down the spelling (e.g., A-P-P-L-E).
             
-            when {
-                routing.skillType == com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.MEDICAL ||
-                routing.skillType == com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.RESILIENCE -> {
-                    // SAFETY ESCALATION: Full orchestrator, even if latency spikes
-                    Timber.w("🚨 [TUTOR] Safety Escalation Triggered for query!")
-                    val report = orchestrator.get().orchestrateMission("tutor_escalation", sanitizedInput)
-                    speakOut(report.text)
-                    return@launch
-                }
-                routing.skillType == com.scypheon.sdk.core.agent.skills.AgentSkillRegistry.SkillType.EDUCATION && routing.confidence > 0.92f -> {
-                    // FAST PATH: Direct to tutor LLM
-                    Timber.i("📖 [TUTOR] Fast-path routing active.")
-                }
-                else -> {
-                    Timber.i("📖 [TUTOR] Standard generation active.")
-                }
-            }
+            EXTRACT KNOWLEDGE:
+            If the student makes a recurring mistake, output [KNOWLEDGE: Student, struggles_with, WORD] so I can remember to review it later.
 
-            val prompt = """
-                You are a helpful, encouraging offline English Tutor.
-                A student just said: "$sanitizedInput"
+            Keep your response concise and conversational, as it will be spoken aloud by a Text-to-Speech engine. Do not use complex markdown formatting.
+        """.trimIndent()
 
-                Your tasks:
-                1. If it's in Indonesian, translate it. If it's broken English, correct the grammar gently.
-                2. Explain the meaning clearly.
-                3. Provide 2 simple examples of how to use it in a sentence.
-                4. If there's a difficult word, break down the spelling (e.g., A-P-P-L-E).
-                
-                EXTRACT KNOWLEDGE:
-                If the student makes a recurring mistake, output [KNOWLEDGE: Student, struggles_with, WORD] so I can remember to review it later.
-
-                Keep your response concise and conversational, as it will be spoken aloud by a Text-to-Speech engine. Do not use complex markdown formatting.
-            """.trimIndent()
-
+        // Generate response using Google MediaPipe Gemma Engine on a background thread to prevent UI freeze
+        scope.launch {
             try {
                 val aiResponse = llmEngine.generateResponse(prompt).reduce { acc, value -> acc + value }
                 Timber.i("Tutor Response: $aiResponse")
 
-                // Extract [KNOWLEDGE: ...] tags and save them programmatically to memory graph
-                val knowledgeRegex = Regex("""\[KNOWLEDGE:\s*([^,\]]+),\s*([^,\]]+),\s*([^,\]]+)\]""", RegexOption.IGNORE_CASE)
-                knowledgeRegex.findAll(aiResponse).forEach { match ->
-                    val subject = match.groupValues[1].trim()
-                    val relation = match.groupValues[2].trim()
-                    val obj = match.groupValues[3].trim()
-                    memoryManager.saveFact(subject, relation, obj)
-                    Timber.d("💡 [Tutor] Extracted knowledge and saved to memory graph: ($subject, $relation, $obj)")
-                }
-
-                // Strip the knowledge tags before passing response to TTS
-                val cleanResponse = aiResponse.replace(knowledgeRegex, "").replace(Regex("""\s+"""), " ").trim()
-
                 // Speak the response aloud
-                speakOut(cleanResponse)
+                speakOut(aiResponse)
             } catch (e: Exception) {
                 Timber.e(e, "Error during offline generation in LiveEnglishTutor")
                 speakOut("Maaf, saya mengalami sedikit kesulitan teknis. Bisa diulang?")
@@ -256,7 +218,7 @@ class LiveEnglishTutor @Inject constructor(
         }
     }
 
-    internal fun speakOut(text: String) {
+    private fun speakOut(text: String) {
         // [v1.0.5-SAR] Hybrid Speech Routing: Prefers Native AI Speech (Gemma 4) if supported
         // Current implementation defaults to system TTS until Multimodal Speech Manifest is verified.
         val useNativeSpeech = false 

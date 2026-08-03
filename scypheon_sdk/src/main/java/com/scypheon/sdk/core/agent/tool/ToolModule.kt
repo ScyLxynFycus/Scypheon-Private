@@ -40,11 +40,6 @@ abstract class ToolModule {
 
     @Binds
     @IntoMap
-    @StringKey("get_first_aid_protocol")
-    abstract fun bindFirstAidProtocol(tool: FirstAidProtocolTool): Tool
-
-    @Binds
-    @IntoMap
     @StringKey("format_dyslexia")
     abstract fun bindFormatDyslexia(tool: FormatDyslexiaTool): Tool
 
@@ -88,68 +83,9 @@ abstract class ToolModule {
     @StringKey("web_crawl_fandom")
     abstract fun bindFandom(tool: FandomTool): Tool
 
+    // [v1.4.0-SAR] Critical: ClinicalDosageTool was missing from DI — core medical feature was dead code
     @Binds
     @IntoMap
     @StringKey("calculate_clinical_dosage")
     abstract fun bindClinicalDosage(tool: ClinicalDosageTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("web_search")
-    abstract fun bindWebSearch(tool: WebSearchTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("web_fetch")
-    abstract fun bindWebFetch(tool: WebFetchTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("file_read")
-    abstract fun bindFileRead(tool: FileReadTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("file_write")
-    abstract fun bindFileWrite(tool: FileWriteTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("file_edit")
-    abstract fun bindFileEdit(tool: FileEditTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("glob_search")
-    abstract fun bindGlobSearch(tool: GlobTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("grep_search")
-    abstract fun bindGrepSearch(tool: GrepTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("get_math_formula")
-    abstract fun bindMathTool(tool: MathCheatSheetTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("trigger_mesh_sos")
-    abstract fun bindMeshSosTool(tool: MeshSosTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("search_science_constants")
-    abstract fun bindScienceTool(tool: ScienceConstantsTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("search_historical_archive")
-    abstract fun bindHistoryTool(tool: HistoricalArchiveTool): Tool
-
-    @Binds
-    @IntoMap
-    @StringKey("execute_safe_command")
-    abstract fun bindSafeCommand(tool: SafeCommandExecutor): Tool
 }

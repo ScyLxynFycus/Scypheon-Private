@@ -1,8 +1,7 @@
 package com.scypheon.sdk.core.utils
 
 import java.security.MessageDigest
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
+import java.util.Base64
 
 object CryptoUtils {
 
@@ -15,25 +14,19 @@ object CryptoUtils {
     }
 
     /**
-     * Generates a short HMAC-SHA256 signature for BLE packets.
-     * Truncated to 8 characters for BLE payload efficiency while providing
-     * cryptographically secure authentication (unlike simple salted hashing).
+     * Generates a short HMAC-like signature for BLE packets.
+     * In a production enterprise app, this would use a real HMAC with a shared/rotated secret.
+     * For the hackathon, we use a salted SHA-256 to demonstrate the integrity layer.
      */
     fun signPacket(payload: String, secret: String): String {
-        val mac = Mac.getInstance("HmacSHA256")
-        val secretKeySpec = SecretKeySpec(secret.toByteArray(), "HmacSHA256")
-        mac.init(secretKeySpec)
-        val hmacBytes = mac.doFinal(payload.toByteArray())
-        return hmacBytes.joinToString("") { "%02x".format(it) }.take(8)
+        val salted = "$payload|$secret"
+        return sha256(salted).take(8) // We only use 8 chars for BLE overhead efficiency
     }
 
     /**
-     * Verifies the packet signature securely.
+     * Verifies the packet signature.
      */
     fun verifyPacket(payload: String, signature: String, secret: String): Boolean {
-        // Use MessageDigest.isEqual for constant-time comparison to prevent timing attacks
-        val expected = signPacket(payload, secret).toByteArray()
-        val actual = signature.toByteArray()
-        return MessageDigest.isEqual(expected, actual)
+        return signPacket(payload, secret) == signature
     }
 }

@@ -27,12 +27,10 @@ object GroundingProvidesModule {
     
     @Provides @Singleton
     fun provideInvestigateStep(
-        groundingEngine: MedicalGroundingEngine,
-        circuitBreaker: com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
-    ): InvestigateStep = InvestigateStep(groundingEngine, circuitBreaker)
+        groundingEngine: MedicalGroundingEngine
+    ): InvestigateStep = InvestigateStep(groundingEngine)
 
     @Provides @Singleton
     fun provideGroundStep(knowledgeGuard: KnowledgeGuardImpl): GroundStep =
         GroundStep(knowledgeGuard)
 }
-

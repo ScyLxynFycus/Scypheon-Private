@@ -1,4 +1,4 @@
-﻿package com.scypheon.sdk.core.intelligence.graph.steps
+package com.scypheon.sdk.core.intelligence.graph.steps
 
 import kotlinx.coroutines.Dispatchers
 import com.scypheon.sdk.core.intelligence.graph.DomainClassifier
@@ -8,15 +8,15 @@ import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 
+/**
+ * Domain-agnostic entity and sub-query extraction result.
+ * Consumed by downstream ORRIGA steps for prompt construction and routing.
+ */
 data class ReasonOutput(
     val query: String,
     val traceId: String,
-    val domains: List<ReasoningDomain>,
-    val domainScores: Map<ReasoningDomain, Float>,
+    val domain: ReasoningDomain,
     val entities: List<ExtractedEntity>,
     val subQueries: List<SubQuery>,
     val latencyMs: Long,
@@ -40,8 +40,11 @@ data class SubQuery(
 
 enum class ReasoningDomain { MEDICAL, EDUCATION, RESILIENCE, HUMANITARIAN, GENERAL }
 enum class EntityType { DRUG, SYMPTOM, PROTOCOL, LOCATION, RESOURCE, CONCEPT, PERSON, ORGANIZATION }
-enum class SubQueryIntent { FACT_RETRIEVAL, INTERACTION_CHECK, PROCEDURE_LOOKUP, RESOURCE_MAPPING, CLARIFICATION }    
+enum class SubQueryIntent { FACT_RETRIEVAL, INTERACTION_CHECK, PROCEDURE_LOOKUP, RESOURCE_MAPPING, CLARIFICATION }
 
+/**
+ * Domain-specific extraction strategy interface.
+ */
 interface DomainReasoningStrategy {
     val supportedDomain: ReasoningDomain
     suspend fun extractEntities(query: String): List<ExtractedEntity>
@@ -55,84 +58,50 @@ class ReasonStep @Inject constructor(
 ) {
     companion object {
         private const val REASONING_TIMEOUT_MS = 2000L
-        private const val DOMAIN_FUSION_THRESHOLD = 0.6f
     }
 
+    /**
+     * Performs domain-aware task decomposition.
+     */
     suspend fun process(query: String, traceId: String): ReasonOutput =
         withContext(Dispatchers.Default) {
             val startTime = System.currentTimeMillis()
-            Timber.i("[ORRIGA_REASON] Starting decomposition | Trace: `$traceId | Query: `${query.take(50)}")
+            Timber.i("[ORRIGA_REASON] Starting decomposition | Trace: $traceId | Query: ${query.take(50)}")
 
             return@withContext try {
                 withTimeout(REASONING_TIMEOUT_MS) {
-                    val domainScores = domainClassifier.classify(query)
-                    val activeDomains = domainScores.filter { it.value >= DOMAIN_FUSION_THRESHOLD }.keys.toList()
-                        .ifEmpty { listOf(domainScores.maxByOrNull { it.value }?.key ?: ReasoningDomain.GENERAL) }
+                    // 1. Classify domain
+                    val domain = domainClassifier.classify(query)
+                    val strategy = strategies[domain] ?: strategies[ReasoningDomain.GENERAL]
+                        ?: throw IllegalStateException("No reasoning strategy available for domain: $domain")
 
-                    val activeStrategies = activeDomains.mapNotNull { strategies[it] }
+                    // 2. Extract entities
+                    val entities = strategy.extractEntities(query)
 
-                    val entities = mutableListOf<ExtractedEntity>()
-                    val subQueries = mutableListOf<SubQuery>()
-
-                    if (activeStrategies.isEmpty()) {
-                        // Fallback
-                        val generalStrategy = strategies[ReasoningDomain.GENERAL]
-                        if (generalStrategy != null) {
-                            entities.addAll(generalStrategy.extractEntities(query))
-                            subQueries.addAll(generalStrategy.generateSubQueries(entities, query))
-                        }
-                    } else {
-                        // Fusion Execution
-                        coroutineScope {
-                            val results = activeStrategies.map { strategy ->
-                                async {
-                                    val strategyEntities = strategy.extractEntities(query)
-                                    val strategySubQueries = strategy.generateSubQueries(strategyEntities, query)
-                                    Pair(strategyEntities, strategySubQueries)
-                                }
-                            }.awaitAll()
-
-                            results.forEach { (strEntities, strSubQueries) ->
-                                entities.addAll(strEntities)
-                                subQueries.addAll(strSubQueries)
-                            }
-                        }
-                    }
-                    
-                    // Priority 0 means absolute highest priority, escalate!
-                    val isTriageEscalation = subQueries.any { it.priority == 0 }
-                    if (isTriageEscalation) {
-                         Timber.e("圷 [ORRIGA_REASON] RED FLAG ESCALATION TRIGGERED! Bypass limits active.")
-                    }
+                    // 3. Generate sub-queries
+                    val subQueries = strategy.generateSubQueries(entities, query)
 
                     val latency = System.currentTimeMillis() - startTime
-                    Timber.i("[ORRIGA_REASON] Decomposition complete in `${latency}ms | Domains: `$activeDomains")
+                    Timber.i("[ORRIGA_REASON] Decomposition complete | Domain: $domain | Entities: ${entities.size}")
 
                     ReasonOutput(
                         query = query,
                         traceId = traceId,
-                        domains = activeDomains,
-                        domainScores = domainScores,
-                        entities = entities.distinctBy { it.text.lowercase() },
+                        domain = domain,
+                        entities = entities,
                         subQueries = subQueries,
                         latencyMs = latency,
                         success = true
                     )
                 }
+            } catch (e: TimeoutCancellationException) {
+                val latency = System.currentTimeMillis() - startTime
+                Timber.w("[ORRIGA_REASON] Decomposition timed out | Trace: $traceId")
+                ReasonOutput(query, traceId, ReasoningDomain.GENERAL, emptyList(), emptyList(), latency, false, "Timeout")
             } catch (e: Exception) {
                 val latency = System.currentTimeMillis() - startTime
-                Timber.e(e, "[ORRIGA_REASON] Decomposition failed | Trace: `$traceId")
-                ReasonOutput(
-                    query = query,
-                    traceId = traceId,
-                    domains = emptyList(),
-                    domainScores = emptyMap(),
-                    entities = emptyList(),
-                    subQueries = emptyList(),
-                    latencyMs = latency,
-                    success = false,
-                    failureReason = e.message
-                )
+                Timber.e(e, "[ORRIGA_REASON] Decomposition failed | Trace: $traceId")
+                ReasonOutput(query, traceId, ReasoningDomain.GENERAL, emptyList(), emptyList(), latency, false, e.message)
             }
         }
 }

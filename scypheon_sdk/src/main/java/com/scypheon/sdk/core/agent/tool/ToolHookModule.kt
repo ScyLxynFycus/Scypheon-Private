@@ -2,7 +2,6 @@ package com.scypheon.sdk.core.agent.tool
 
 import com.scypheon.sdk.core.agent.tool.hooks.ClinicalAuditPostHook
 import com.scypheon.sdk.core.agent.tool.hooks.ClinicalSafetyPreHook
-import com.scypheon.sdk.core.agent.tool.hooks.EducationAuditPostHook
 import com.scypheon.sdk.core.agent.tool.hooks.ResponseQualityStopHook
 import com.scypheon.sdk.core.agent.tool.hooks.SafetyGuardStopHook
 import dagger.Module
@@ -27,19 +26,16 @@ object ToolHookModule {
     fun provideToolHookEngine(
         clinicalPreHook: ClinicalSafetyPreHook,
         clinicalPostHook: ClinicalAuditPostHook,
-        educationPostHook: EducationAuditPostHook,
         qualityStopHook: ResponseQualityStopHook,
         safetyStopHook: SafetyGuardStopHook,
-        blackBoxVault: com.scypheon.sdk.core.telemetry.BlackBoxVault,
-        circuitBreaker: com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
+        blackBoxVault: com.scypheon.sdk.core.telemetry.BlackBoxVault
     ): ToolHookEngine {
-        return ToolHookEngine(blackBoxVault, circuitBreaker).apply {
+        return ToolHookEngine(blackBoxVault).apply {
             // ── PreToolUse Hooks ──
             registerPreToolUse(clinicalPreHook)
             
             // ── PostToolUse Hooks ──
             registerPostToolUse(clinicalPostHook)
-            registerPostToolUse(educationPostHook)
             
             // ── Stop Hooks (order matters — safety first, then quality) ──
             registerStopHook(safetyStopHook)

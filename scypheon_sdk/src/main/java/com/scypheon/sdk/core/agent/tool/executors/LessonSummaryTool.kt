@@ -31,7 +31,7 @@ class LessonSummaryTool @Inject constructor(
         val start = System.currentTimeMillis()
         return try {
             val summary = tutorSkill.getSummary(topic)
-            ToolResult.Success(summary, latencyMs = System.currentTimeMillis() - start)
+            ToolResult.Success(summary, System.currentTimeMillis() - start)
         } catch (e: Exception) {
             ToolResult.Error(e.message ?: "Summary failed", e, System.currentTimeMillis() - start)
         }

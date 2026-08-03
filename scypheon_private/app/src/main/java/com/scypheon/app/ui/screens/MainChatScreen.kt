@@ -10,14 +10,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.automirrored.filled.Segment
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Mic
@@ -30,18 +25,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.geometry.Offset
-import com.scypheon.app.core.ui.util.contrastTextColor
 import com.scypheon.app.ui.screens.ImageAttachmentRow
 import com.scypheon.app.ui.ChatMessageUiState
-import com.scypheon.app.ui.NO_MODEL_SELECTED
 import com.scypheon.sdk.core.memory.DualMemoryManager
 import com.scypheon.sdk.core.memory.Session
 import com.scypheon.sdk.core.memory.ChatMessage
@@ -95,14 +86,11 @@ fun MainChatScreen(
     onToggleFeature: (String) -> Unit,
     onOpenTelemetry: () -> Unit,
     onOpenGraphExplorer: () -> Unit,
-    sessionHistory: List<com.scypheon.sdk.core.memory.Session> = emptyList(),
+    sessionHistory: List<Session> = emptyList(),
     onNewSession: () -> Unit = {},
     onLoadSession: (String) -> Unit = {},
-    onDeleteSession: (String) -> Unit = {},
-    onArchiveSession: (String) -> Unit = {},
-    onUnarchiveSession: (String) -> Unit = {},
     onOpenModelHub: () -> Unit = {},
-    activeModelName: String = NO_MODEL_SELECTED,
+    activeModelName: String = "no models selected",
     activeEngineType: String? = null,
     isLiveModeActive: Boolean = false,
     onToggleLiveMode: () -> Unit = {},
@@ -119,9 +107,6 @@ fun MainChatScreen(
     onShowDiagnostics: () -> Unit = {},
     onHideDiagnostics: () -> Unit = {},
     onDismissError: () -> Unit = {},
-    showNoModelWarningDialog: Boolean = false,
-    onDismissNoModelWarning: () -> Unit = {},
-    onConfirmNoModelWarning: () -> Unit = {},
     systemWarning: String? = null,
     onDismissWarning: () -> Unit = {},
     onConfirmWarning: () -> Unit = {},
@@ -146,23 +131,8 @@ fun MainChatScreen(
     onDismissOom: () -> Unit = {},
     isMemoryInconsistent: Boolean = false,
     onResetMemory: () -> Unit = {},
-    onIgnoreInconsistency: () -> Unit = {},
-    
-    // Dynamic Context Scaling
-    pendingContextScalingTokens: Int? = null,
-    pendingContextScalingReqRamMb: Long = 0L,
-    isRamCriticalForScaling: Boolean = false,
-    onApproveContextScaling: (Int) -> Unit = {},
-    onRejectContextScaling: (Boolean) -> Unit = {}
+    onIgnoreInconsistency: () -> Unit = {}
 ) {
-    val isDark = when (config.themeMode) {
-        com.scypheon.sdk.core.model.ThemeMode.DARK -> true
-        com.scypheon.sdk.core.model.ThemeMode.LIGHT -> false
-        com.scypheon.sdk.core.model.ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
-    }
-    
-    var showArchiveDialog by remember { mutableStateOf(false) }
-
     var inputText by remember { mutableStateOf("") }
     var attachedImageUri by remember { mutableStateOf<Uri?>(null) }
     var expandedMenu by remember { mutableStateOf(false) }
@@ -212,7 +182,7 @@ fun MainChatScreen(
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = if (isDark) Color(0xFF1C1C1E) else Color(0xFFF8F9FA),
+                drawerContainerColor = Color(0xFFF8F9FA),
                 modifier = Modifier.width(300.dp)
             ) {
                 Spacer(Modifier.height(12.dp))
@@ -237,22 +207,17 @@ fun MainChatScreen(
                 Text(
                     text = "Conversation History",
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (isDark) Color(0xFF9E9E9E) else Color(0xFF5F6368),
+                    color = Color(0xFF5F6368),
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
 
-                val activeSessions = remember(sessionHistory) { sessionHistory.filter { !it.isArchived } }
-
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(activeSessions, key = { it.id }) { session ->
-                        var showMenu by remember { mutableStateOf(false) }
-                        
+                LazyColumn {
+                    items(sessionHistory) { session ->
                         NavigationDrawerItem(
                             label = { 
                                 Text(
                                     text = session.title, 
-                                    maxLines = 1,
-                                    modifier = Modifier.weight(1f, fill = false)
+                                    maxLines = 1
                                 ) 
                             },
                             selected = false,
@@ -264,57 +229,13 @@ fun MainChatScreen(
                                 }
                             },
                             icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                            badge = {
-                                Box {
-                                    IconButton(onClick = { showMenu = true }, modifier = Modifier.size(24.dp)) {
-                                        Icon(Icons.Default.MoreVert, contentDescription = "Options", modifier = Modifier.size(16.dp))
-                                    }
-                                    DropdownMenu(
-                                        expanded = showMenu,
-                                        onDismissRequest = { showMenu = false },
-                                        modifier = Modifier
-                                            .background(if (isDark) Color(0xFF2C2C2E) else Color.White)
-                                            .border(0.5.dp, (if (isDark) Color(0xFF404040) else Color(0xFFE0E0E0)), RoundedCornerShape(8.dp)),
-                                        properties = androidx.compose.ui.window.PopupProperties(focusable = true)
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text("Delete", color = Color(0xFFD32F2F), style = MaterialTheme.typography.bodyMedium) },
-                                            onClick = {
-                                                showMenu = false
-                                                onDeleteSession(session.id)
-                                            },
-                                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFD32F2F), modifier = Modifier.size(18.dp)) }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("Archive", color = if (isDark) Color.White else Color(0xFF1F1F1F), style = MaterialTheme.typography.bodyMedium) },
-                                            onClick = {
-                                                showMenu = false
-                                                onArchiveSession(session.id)
-                                            },
-                                            leadingIcon = { Icon(Icons.Default.Archive, contentDescription = "Archive", tint = if (isDark) Color.LightGray else Color.Gray, modifier = Modifier.size(18.dp)) }
-                                        )
-                                    }
-                                }
-                            },
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
                         )
                     }
                 }
                 
+                Spacer(Modifier.weight(1f))
                 HorizontalDivider()
-                NavigationDrawerItem(
-                    label = { Text("Archived Chats") },
-                    selected = false,
-                    onClick = {
-                        scope.launch {
-                            delay(50)
-                            drawerState.close()
-                            showArchiveDialog = true
-                        }
-                    },
-                    icon = { Icon(Icons.Default.Archive, contentDescription = null) },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-                )
                 NavigationDrawerItem(
                     label = { Text("Model Hub") },
                     selected = false,
@@ -326,20 +247,19 @@ fun MainChatScreen(
                         }
                     },
                     icon = { Icon(Icons.Default.CloudDownload, contentDescription = null) },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                    modifier = Modifier.padding(16.dp)
                 )
-                Spacer(Modifier.height(12.dp))
             }
         }
     ) {
-        val bgColors = remember(isDark) {
-            if (isDark) listOf(Color(0xFF0F0F10), Color(0xFF151517))
-            else listOf(Color(0xFFFCFDFF), Color(0xFFF0F4FA))
-        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(bgColors))
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color(0xFFFCFDFF), Color(0xFFF0F4FA))
+                    )
+                )
         ) {
             Scaffold(
                 containerColor = Color.Transparent,
@@ -365,8 +285,7 @@ fun MainChatScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .statusBarsPadding()
-                            .padding(top = 12.dp, bottom = 8.dp)
+                            .padding(top = 28.dp, bottom = 8.dp)
                     ) {
                         Row(
                             modifier = Modifier
@@ -375,28 +294,24 @@ fun MainChatScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val primaryContentColor = if (isDark) Color.White else Color(0xFF1F1F1F)
                             IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                Icon(Icons.AutoMirrored.Filled.Segment, contentDescription = "Menu", tint = primaryContentColor, modifier = Modifier.size(28.dp))
+                                Icon(Icons.Default.Segment, contentDescription = "Menu", tint = Color(0xFF1F1F1F), modifier = Modifier.size(28.dp))
                             }
 
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy((-4).dp)
-                            ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
                                     text = "Scypheon Private",
                                     style = TextStyle(
                                         fontSize = 18.sp,
                                         fontWeight = FontWeight.Black,
                                         letterSpacing = 0.5.sp,
-                                        color = primaryContentColor
+                                        color = Color(0xFF1F1F1F)
                                     )
                                 )
                                 Surface(
                                     onClick = onShowLocalModelPicker,
                                     shape = CircleShape,
-                                    color = if (isDark) Color(0xFF2C2C2E) else Color.Black
+                                    color = Color.Black
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -404,146 +319,59 @@ fun MainChatScreen(
                                     ) {
                                         Spacer(Modifier.width(6.dp))
                                         Text(
-                                            text = if (activeModelName == NO_MODEL_SELECTED || activeModelName.contains("(STANDBY)", ignoreCase = true)) "STANDBY" else activeModelName.uppercase(),
+                                            text = if (activeModelName == "no models selected" || activeModelName.contains("(STANDBY)", ignoreCase = true)) "STANDBY" else activeModelName.uppercase(),
                                             style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White, letterSpacing = 0.5.sp)
                                         )
                                     }
                                 }
                             }
 
-                            Box {
-                                val rotationAngle by animateFloatAsState(
-                                    targetValue = if (expandedMenu) 90f else 0f,
-                                    animationSpec = spring(
-                                        dampingRatio = 0.7f,
-                                        stiffness = Spring.StiffnessMediumLow
-                                    ),
-                                    label = "TuneRotation"
-                                )
-                                IconButton(onClick = { expandedMenu = true }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Tune,
-                                        contentDescription = "Settings",
-                                        tint = primaryContentColor,
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .graphicsLayer { rotationZ = rotationAngle }
-                                    )
-                                }
-
-                                val transitionState = remember { androidx.compose.animation.core.MutableTransitionState(false) }.apply {
-                                    targetState = expandedMenu
-                                }
-                                if (transitionState.currentState || transitionState.targetState) {
-                                    androidx.compose.ui.window.Popup(
-                                        alignment = Alignment.TopEnd,
-                                        offset = androidx.compose.ui.unit.IntOffset(-16, 56),
-                                        onDismissRequest = { expandedMenu = false },
-                                        properties = androidx.compose.ui.window.PopupProperties(focusable = true)
-                                    ) {
-                                        androidx.compose.animation.AnimatedVisibility(
-                                            visibleState = transitionState,
-                                            enter = scaleIn(
-                                                animationSpec = spring(
-                                                    dampingRatio = 0.8f,
-                                                    stiffness = Spring.StiffnessMediumLow
-                                                ),
-                                                initialScale = 0.85f
-                                            ) + fadeIn(animationSpec = tween(durationMillis = 200)),
-                                            exit = scaleOut(
-                                                animationSpec = spring(
-                                                    dampingRatio = 0.85f,
-                                                    stiffness = Spring.StiffnessMedium
-                                                ),
-                                                targetScale = 0.85f
-                                            ) + fadeOut(animationSpec = tween(durationMillis = 150))
-                                        ) {
-                                            Surface(
-                                                modifier = Modifier
-                                                    .width(220.dp)
-                                                    .shadow(16.dp, RoundedCornerShape(22.dp))
-                                                    .border(
-                                                        width = 1.dp,
-                                                        color = if (isDark) Color(0xFF2C2C2E) else Color(0xFFE5E7EB),
-                                                        shape = RoundedCornerShape(22.dp)
-                                                    ),
-                                                shape = RoundedCornerShape(22.dp),
-                                                color = if (isDark) Color(0xF418181A) else Color(0xF4FCFDFF)
-                                            ) {
-                                                Column(
-                                                    modifier = Modifier.padding(10.dp)
-                                                ) {
-                                                    CustomPopupItem(
-                                                        text = "GraphRAG Oracle",
-                                                        icon = Icons.Default.AutoGraph,
-                                                        iconColor = Color(0xFF007AFF),
-                                                        isDark = isDark,
-                                                        onClick = {
-                                                            expandedMenu = false
-                                                            onOpenGraphExplorer()
-                                                        }
-                                                    )
-                                                    
-                                                    Spacer(Modifier.height(2.dp))
-                                                    
-                                                    CustomPopupItem(
-                                                        text = "Aegis Vault",
-                                                        icon = Icons.Default.VpnKey,
-                                                        iconColor = Color(0xFF7B1FA2),
-                                                        isDark = isDark,
-                                                        onClick = {
-                                                            expandedMenu = false
-                                                            onOpenTelemetry()
-                                                        }
-                                                    )
-                                                    
-                                                    Spacer(Modifier.height(4.dp))
-                                                    HorizontalDivider(color = if (isDark) Color(0xFF2C2C2E) else Color(0xFFE5E7EB), thickness = 1.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                                                    Spacer(Modifier.height(4.dp))
-                                                    
-                                                    CustomPopupItem(
-                                                        text = "Scypheon Settings",
-                                                        icon = Icons.Default.SettingsInputComponent,
-                                                        iconColor = Color(0xFFFF5722),
-                                                        isDark = isDark,
-                                                        onClick = {
-                                                            expandedMenu = false
-                                                            onToggleConfig(true)
-                                                        }
-                                                    )
-                                                    
-                                                    Spacer(Modifier.height(2.dp))
-                                                    
-                                                    CustomPopupItem(
-                                                        text = "Neural Link Status",
-                                                        icon = Icons.Default.ShieldMoon,
-                                                        iconColor = Color(0xFF00E676),
-                                                        isDark = isDark,
-                                                        onClick = {
-                                                            expandedMenu = false
-                                                            onShowDiagnostics()
-                                                        }
-                                                    )
-                                                    
-                                                    Spacer(Modifier.height(4.dp))
-                                                    HorizontalDivider(color = if (isDark) Color(0xFF2C2C2E) else Color(0xFFE5E7EB), thickness = 1.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                                                    Spacer(Modifier.height(4.dp))
-                                                    
-                                                    CustomPopupItem(
-                                                        text = "Update Identifier",
-                                                        icon = Icons.Default.Badge,
-                                                        iconColor = Color(0xFF5F6368),
-                                                        isDark = isDark,
-                                                        onClick = {
-                                                            expandedMenu = false
-                                                            newNameInput = userName
-                                                            showNamePrompt = true
-                                                        }
-                                                    )
-                                                }
-                                            }
+                            IconButton(onClick = { expandedMenu = true }) {
+                                Icon(Icons.Default.Tune, contentDescription = "Settings", tint = Color(0xFF1F1F1F), modifier = Modifier.size(24.dp))
+                                DropdownMenu(expanded = expandedMenu, onDismissRequest = { expandedMenu = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text("GraphRAG Oracle", fontWeight = FontWeight.Bold) },
+                                        leadingIcon = { Icon(Icons.Default.AutoGraph, contentDescription = null, tint = Color(0xFF007AFF), modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            onOpenGraphExplorer()
+                                            expandedMenu = false
                                         }
-                                    }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Aegis Vault", fontWeight = FontWeight.Bold) },
+                                        leadingIcon = { Icon(Icons.Default.VpnKey, contentDescription = null, tint = Color(0xFF7B1FA2), modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            onOpenTelemetry()
+                                            expandedMenu = false
+                                        }
+                                    )
+                                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                                    DropdownMenuItem(
+                                        text = { Text("Scypheon Settings", fontWeight = FontWeight.Bold) },
+                                        leadingIcon = { Icon(Icons.Default.SettingsInputComponent, contentDescription = null, tint = Color(0xFFFF5722), modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            onToggleConfig(true)
+                                            expandedMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Neural Link Status", fontWeight = FontWeight.Bold) },
+                                        leadingIcon = { Icon(Icons.Default.ShieldMoon, contentDescription = null, tint = Color(0xFF00E676), modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            onShowDiagnostics()
+                                            expandedMenu = false
+                                        }
+                                    )
+                                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                                    DropdownMenuItem(
+                                        text = { Text("Update Identifier", fontWeight = FontWeight.Medium) },
+                                        leadingIcon = { Icon(Icons.Default.Badge, contentDescription = null, tint = Color(0xFF5F6368), modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            newNameInput = userName
+                                            showNamePrompt = true
+                                            expandedMenu = false
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -589,7 +417,7 @@ fun MainChatScreen(
                 }
             },
         bottomBar = {
-            if (activeModelName != NO_MODEL_SELECTED) {
+            if (activeModelName != "no models selected") {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -597,140 +425,25 @@ fun MainChatScreen(
                             .navigationBarsPadding(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        if (pendingContextScalingTokens != null) {
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 12.dp)
-                                    .border(1.dp, if (isRamCriticalForScaling) Color.Red.copy(alpha = 0.5f) else Color(0xFFE2E8F0), RoundedCornerShape(16.dp)),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = if (isRamCriticalForScaling) Color(0xFFFFF0F0) else Color(0xFFF8FAFC))
-                            ) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = if (isRamCriticalForScaling) Icons.Default.Warning else Icons.Default.Memory,
-                                            contentDescription = null,
-                                            tint = if (isRamCriticalForScaling) Color.Red else Color(0xFF0A56D1),
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(
-                                            text = if (isRamCriticalForScaling) "Critical RAM Warning" else "Context Limit Exceeded",
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 16.sp,
-                                            color = if (isRamCriticalForScaling) Color.Red else Color(0xFF1F2937)
-                                        )
-                                    }
-                                    Spacer(Modifier.height(8.dp))
-                                    Text(
-                                        text = if (isRamCriticalForScaling) {
-                                            "Your prompt is too large. Expanding the context window requires ~${pendingContextScalingReqRamMb}MB of RAM, which your device currently does not have. Proceeding will likely crash the OS."
-                                        } else {
-                                            "Your prompt exceeds the current context window limit. Expanding to $pendingContextScalingTokens tokens requires ~${pendingContextScalingReqRamMb}MB of RAM. Proceed?"
-                                        },
-                                        fontSize = 14.sp,
-                                        color = Color(0xFF4B5563)
-                                    )
-                                    Spacer(Modifier.height(12.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.End,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        TextButton(onClick = { onRejectContextScaling(true) }) {
-                                            Text("Truncate", color = Color(0xFF6B7280))
-                                        }
-                                        Spacer(Modifier.width(8.dp))
-                                        if (isRamCriticalForScaling) {
-                                            Button(
-                                                onClick = { onRejectContextScaling(false) },
-                                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
-                                            ) {
-                                                Text("Abort")
-                                            }
-                                        } else {
-                                            Button(
-                                                onClick = { onApproveContextScaling(pendingContextScalingTokens) },
-                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A56D1))
-                                            ) {
-                                                Text("Expand & Proceed")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
                         Surface(
                             shape = RoundedCornerShape(32.dp),
-                            color = if (isDark) Color(0xFF1E1E22) else Color.White,
-                            border = BorderStroke(0.5.dp, if (isDark) Color.White.copy(alpha = 0.12f) else Color(0xFF0A56D1).copy(alpha = 0.08f)),
+                            color = Color.White,
+                            border = BorderStroke(0.5.dp, Color(0xFF0A56D1).copy(alpha = 0.08f)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 64.dp),
                             shadowElevation = 4.dp
                         ) {
-                            Column {
-                                if (attachedImageUri != null) {
-                                    val context = androidx.compose.ui.platform.LocalContext.current
-                                    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-                                    
-                                    val mimeType = remember(attachedImageUri) {
-                                        attachedImageUri?.let { context.contentResolver.getType(it) } ?: ""
-                                    }
-                                    
-                                    Box(
-                                        modifier = Modifier
-                                            .padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 0.dp)
-                                            .size(72.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .border(0.5.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                            .background(Color(0xFFF1F3F4))
-                                            .pointerInput(Unit) {
-                                                detectTapGestures(
-                                                    onLongPress = {
-                                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                        attachedImageUri = null
-                                                    }
-                                                )
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (mimeType.startsWith("image/")) {
-                                            androidx.compose.foundation.Image(
-                                                painter = coil.compose.rememberAsyncImagePainter(attachedImageUri),
-                                                contentDescription = "Attached Image Preview",
-                                                modifier = Modifier.fillMaxSize(),
-                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                                            )
-                                        } else {
-                                            val icon = when {
-                                                mimeType.startsWith("video/") -> androidx.compose.material.icons.Icons.Default.OndemandVideo
-                                                mimeType.startsWith("audio/") -> androidx.compose.material.icons.Icons.Default.Audiotrack
-                                                mimeType == "application/pdf" -> androidx.compose.material.icons.Icons.Default.PictureAsPdf
-                                                mimeType.startsWith("text/") -> androidx.compose.material.icons.Icons.Default.Description
-                                                else -> androidx.compose.material.icons.Icons.AutoMirrored.Filled.InsertDriveFile
-                                            }
-                                            Icon(
-                                                imageVector = icon,
-                                                contentDescription = "Attached File",
-                                                tint = Color(0xFF0A56D1),
-                                                modifier = Modifier.size(32.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 IconButton(onClick = { 
                                     scope.launch { delay(50); showAttachmentMenu = true } 
                                 }) {
-                                    Icon(Icons.Default.Add, contentDescription = "Attachments", tint = if (isDark) Color.White else Color(0xFF1F1F1F), modifier = Modifier.size(24.dp))
+                                    Icon(Icons.Default.Add, contentDescription = "Attachments", tint = Color(0xFF1F1F1F), modifier = Modifier.size(24.dp))
                                 }
 
                                 Box(
@@ -742,13 +455,13 @@ fun MainChatScreen(
                                     if (inputText.isEmpty()) {
                                         Text(
                                             text = "Ask Scypheon Private...",
-                                            style = TextStyle(color = if (isDark) Color(0xFF9E9E9E) else Color(0xFF5F6368), fontSize = 16.sp)
+                                            style = TextStyle(color = Color(0xFF5F6368), fontSize = 16.sp)
                                         )
                                     }
                                     BasicTextField(
                                         value = inputText,
                                         onValueChange = { inputText = it },
-                                        textStyle = TextStyle(color = if (isDark) Color.White else Color(0xFF1F1F1F), fontSize = 16.sp),
+                                        textStyle = TextStyle(color = Color(0xFF1F1F1F), fontSize = 16.sp),
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .onPreviewKeyEvent { keyEvent ->
@@ -800,7 +513,7 @@ fun MainChatScreen(
                                             }
                                             speechLauncher.launch(intent)
                                         }) {
-                                            Icon(Icons.Outlined.Mic, contentDescription = "Mic", tint = if (isDark) Color.White else Color(0xFF1F1F1F))
+                                            Icon(Icons.Outlined.Mic, contentDescription = "Mic", tint = Color(0xFF1F1F1F))
                                         }
 
                                         IconButton(onClick = { 
@@ -809,7 +522,7 @@ fun MainChatScreen(
                                             Icon(
                                                 Icons.Default.GraphicEq, 
                                                 contentDescription = "Live Voice", 
-                                                tint = if (isLiveModeActive) Color(0xFF007AFF) else (if (isDark) Color.White else Color(0xFF1F1F1F)),
+                                                tint = if (isLiveModeActive) Color(0xFF007AFF) else Color(0xFF1F1F1F),
                                                 modifier = Modifier.size(26.dp)
                                             )
                                         }
@@ -826,18 +539,17 @@ fun MainChatScreen(
                                                     }
                                                 }
                                             },
-                                            colors = IconButtonDefaults.iconButtonColors(containerColor = if (isDark) Color.White else Color.Black)
+                                            colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black)
                                         ) {
-                                            Icon(Icons.Default.ArrowUpward, contentDescription = "Send", tint = if (isDark) Color.Black else Color.White, modifier = Modifier.size(20.dp))
+                                            Icon(Icons.Default.ArrowUpward, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(20.dp))
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                    
-                    // General AI Disclaimer Footer
-                    Spacer(Modifier.height(8.dp))
+                        
+                        // General AI Disclaimer Footer
+                        Spacer(Modifier.height(8.dp))
                         Text(
                             text = "Scypheon generated content may be inaccurate. Verify important details.",
                             style = TextStyle(color = Color.Gray.copy(alpha = 0.7f), fontSize = 10.sp),
@@ -899,7 +611,7 @@ fun MainChatScreen(
                             
                             if (currentProgress != null) {
                                 LinearProgressIndicator(
-                                    progress = { currentProgress },
+                                    progress = currentProgress,
                                     modifier = Modifier.fillMaxWidth().height(4.dp),
                                     color = Color(0xFF007AFF),
                                     trackColor = Color(0xFFD1E4FF)
@@ -984,7 +696,7 @@ fun MainChatScreen(
                             }
                         }
                     }
-                } else if (activeModelName == NO_MODEL_SELECTED) {
+                } else if (activeModelName == "no models selected") {
                     BridgeConnectionHub(
                         userName = userName,
                         health = systemHealth,
@@ -1018,15 +730,14 @@ fun MainChatScreen(
                         }
                     }
                 } else {
-                    val reversedMessages = remember(messages) { messages.reversed() }
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                         reverseLayout = true
                     ) {
-                        items(reversedMessages, key = { it.id }) { msg ->
-                            ScypheonChatBubble(msg, config = config, onRetryMessage = onRetryMessage, enableThinking = config.enableThinking)
+                        items(messages.reversed()) { msg ->
+                            ScypheonChatBubble(msg, onRetryMessage = onRetryMessage, enableThinking = config.enableThinking)
                         }
                     }
                 }
@@ -1062,74 +773,17 @@ fun MainChatScreen(
                 if (systemWarning != null) {
                     AlertDialog(
                         onDismissRequest = onDismissWarning,
-                        title = { 
-                            androidx.compose.foundation.layout.Row(
-                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = androidx.compose.material.icons.Icons.Default.Warning,
-                                    contentDescription = "Warning",
-                                    tint = Color(0xFFD97706) // Darker, more readable amber
-                                )
-                                androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.width(8.dp))
-                                Text("System Warning", fontWeight = FontWeight.Bold, color = Color(0xFFD97706))
-                            }
-                        },
+                        title = { Text("笞・・System Warning", fontWeight = FontWeight.Bold, color = Color(0xFFFFB300)) },
                         text = { Text(systemWarning) },
                         confirmButton = {
                             Button(
                                 onClick = onConfirmWarning,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFD97706),
-                                    contentColor = Color.White
-                                )
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB300))
                             ) { Text("Force Load") }
                         },
                         dismissButton = {
                             TextButton(onClick = onDismissWarning) { Text("Cancel") }
                         }
-                    )
-                }
-
-                if (showNoModelWarningDialog) {
-                    AlertDialog(
-                        onDismissRequest = onDismissNoModelWarning,
-                        icon = {
-                            Icon(
-                                Icons.Default.CloudDownload,
-                                contentDescription = null,
-                                tint = Color(0xFF0A56D1),
-                                modifier = Modifier.size(36.dp)
-                            )
-                        },
-                        title = {
-                            Text(
-                                "Model Download Required",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                        },
-                        text = {
-                            Text(
-                                "To interact with the AI assistant or start Live Mode, you must first download an AI model. Would you like to open the Model Hub to get started?",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        },
-                        confirmButton = {
-                            Button(
-                                onClick = onConfirmNoModelWarning,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A56D1))
-                            ) {
-                                Text("Go to Model Hub", fontWeight = FontWeight.SemiBold)
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = onDismissNoModelWarning) {
-                                Text("Cancel", color = Color.Gray)
-                            }
-                        },
-                        shape = RoundedCornerShape(20.dp)
                     )
                 }
                 
@@ -1147,13 +801,8 @@ fun MainChatScreen(
                     )
                 }
                 
-                AnimatedVisibility(
-                    visible = isConfigVisible,
-                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    com.scypheon.app.ui.screens.SettingsScreen(
+                if (isConfigVisible) {
+                    ConfigurationsDialog(
                         config = config,
                         onUpdate = onUpdateConfig,
                         onDismiss = { onToggleConfig(false) },
@@ -1369,19 +1018,14 @@ fun MainChatScreen(
                 ModalBottomSheet(
                     onDismissRequest = { showAttachmentMenu = false },
                     sheetState = sheetState,
-                    containerColor = if (isDark) Color(0xFF1C1C1E) else Color(0xFFF2F2F7),
-                    dragHandle = null,
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+                    containerColor = Color.White,
+                    shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
                 ) {
                     AttachmentMenuSheet(
-                        isDark = isDark,
                         onOptionSelected = { option ->
                             showAttachmentMenu = false
                             when (option) {
                                 "Gallery" -> { imageLauncher.launch("image/*") }
-                                "Camera" -> { imageLauncher.launch("image/*") }
-                                "File" -> { imageLauncher.launch("*/*") }
-                                "Cloud" -> { imageLauncher.launch("*/*") }
                             }
                         }
                     )
@@ -1451,7 +1095,7 @@ fun MainChatScreen(
                             }
                         } else {
                             LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
-                                items(localModels, key = { it.absolutePath }) { file ->
+                                items(localModels) { file ->
                                     val isActive = activeModelName.removeSuffix(" (STANDBY)") == file.name
                                     Surface(
                                         onClick = { onSelectLocalModel(file) },
@@ -1513,18 +1157,6 @@ fun MainChatScreen(
                     }
                 }
             }
-        }
-        
-        if (showArchiveDialog) {
-            val archivedSessions = remember(sessionHistory) { sessionHistory.filter { it.isArchived } }
-            ArchivedChatsDialog(
-                archivedSessions = archivedSessions,
-                onDismiss = { showArchiveDialog = false },
-                onUnarchive = onUnarchiveSession,
-                onDelete = onDeleteSession,
-                onLoadSession = onLoadSession,
-                isDark = isDark
-            )
         }
     }
 }
@@ -1847,654 +1479,168 @@ fun HealthDiagnosticRow(label: String, path: String, isOk: Boolean, isShared: Bo
 }
 
 @Composable
-fun AnnotatedString.appendCursor(color: Color, alpha: Float): AnnotatedString {
-    val cursorColor = if (color == Color.Unspecified) Color(0xFF1F1F1F) else color
-    return buildAnnotatedString {
-        append(this@appendCursor)
-        withStyle(
-            SpanStyle(
-                color = cursorColor.copy(alpha = alpha),
-                fontWeight = FontWeight.Black,
-                fontSize = 20.sp
-            )
-        ) {
-            append("·")
-        }
-    }
-}
-
-@Composable
 fun MarkdownText(
     text: String,
     modifier: Modifier = Modifier,
     color: Color = Color.Unspecified,
     fontSize: androidx.compose.ui.unit.TextUnit = 16.sp,
     lineHeight: androidx.compose.ui.unit.TextUnit = 22.sp,
-    enableThinking: Boolean = true,
-    isDark: Boolean = false,
-    showCursor: Boolean = false,
-    revealTimes: List<Long>? = null,
-    tickerTime: Long = 0L,
-    isStreaming: Boolean = false
+    enableThinking: Boolean = true
 ) {
-    var thoughtContent: String? = null
-    var contentWithoutThought = text
-    var isThinkingDone = false
+    val thoughtRegex = remember { Regex("<thought>(.*?)(?:</thought>|$)", RegexOption.DOT_MATCHES_ALL) }
+    val thoughtMatch = remember(text) { thoughtRegex.find(text) }
     
-    if (enableThinking) {
-        val startIdx = text.indexOf("<thought>")
-        if (startIdx != -1) {
-            val endIdx = text.indexOf("</thought>")
-            if (endIdx != -1) {
-                thoughtContent = text.substring(startIdx + 9, endIdx).trim()
-                contentWithoutThought = text.removeRange(startIdx, endIdx + 10).trim()
-                isThinkingDone = true
-            } else {
-                thoughtContent = text.substring(startIdx + 9).trim()
-                contentWithoutThought = text.substring(0, startIdx).trim()
-                isThinkingDone = false
-            }
+    val contentWithoutThought = remember(text, thoughtMatch) {
+        if (thoughtMatch != null) {
+            // Remove the match completely if it exists
+            text.replace(thoughtMatch.value, "").trim()
+        } else {
+            text
         }
-    }
-
-    var isExpanded by remember(isThinkingDone) { mutableStateOf(!isThinkingDone) }
-
-    val infiniteTransition = rememberInfiniteTransition(label = "MarkdownCursor")
-    val cursorAlpha by if (showCursor) {
-        infiniteTransition.animateFloat(
-            initialValue = 0.2f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(600, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "CursorAlpha"
-        )
-    } else {
-        remember { mutableStateOf(1f) }
     }
 
     Column(modifier = modifier) {
-        if (thoughtContent != null && thoughtContent.isNotEmpty()) {
-            val isThinkingActive = !isThinkingDone
-            val surfaceColor = if (isDark) {
-                if (isThinkingActive) Color(0xFF1E2A3A) else Color(0xFF2C2C2C)
-            } else {
-                if (isThinkingActive) Color(0xFFF0F4FA) else Color(0xFFF8F9FA)
-            }
-            val borderColor = if (isDark) {
-                if (isThinkingActive) Color(0xFF2A3F5C) else Color(0xFF404040)
-            } else {
-                if (isThinkingActive) Color(0xFFD6E4F8) else Color(0xFFE0E0E0)
-            }
-            val primaryTextColor = if (isDark) Color(0xFF8AB4F8) else Color(0xFF0A56D1)
-            
-            Surface(
-                color = surfaceColor,
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, borderColor),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 12.dp)
-                    .clickable { isExpanded = !isExpanded }
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(
-                            imageVector = com.scypheon.app.ui.components.ScypheonIcons.ScypheonReasoningIcon,
-                            contentDescription = "Reasoning Icon",
-                            modifier = Modifier.size(16.dp),
-                            tint = primaryTextColor
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = if (isThinkingActive) "Thinking..." else "Reasoning Process",
-                            style = TextStyle(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = primaryTextColor,
-                                letterSpacing = 0.5.sp
-                            ),
-                            modifier = Modifier.weight(1f)
-                        )
-                        val rotation by androidx.compose.animation.core.animateFloatAsState(targetValue = if (isExpanded) 180f else 0f)
-                        Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Toggle",
-                            tint = Color.Gray,
-                            modifier = Modifier.graphicsLayer(rotationZ = rotation).size(20.dp)
-                        )
-                    }
-                    
-                    androidx.compose.animation.AnimatedVisibility(visible = isExpanded) {
-                        Column(modifier = Modifier.padding(top = 10.dp)) {
-                            androidx.compose.material3.Divider(color = if (isDark) Color(0xFF404040) else Color(0xFFE0E0E0), thickness = 0.5.dp, modifier = Modifier.padding(bottom = 8.dp))
+        if (thoughtMatch != null && enableThinking) {
+            val thoughtContent = remember(thoughtMatch) { thoughtMatch.groupValues[1].trim() }
+            if (thoughtContent.isNotEmpty()) {
+                Surface(
+                    color = Color(0xFFF8F9FA),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFFE0E0E0)),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.AutoAwesome, 
+                                contentDescription = null, 
+                                modifier = Modifier.size(14.dp), 
+                                tint = Color(0xFF0A56D1)
+                            )
+                            Spacer(Modifier.width(6.dp))
                             Text(
-                                text = thoughtContent,
+                                "Reasoning Process",
                                 style = TextStyle(
-                                    fontSize = 13.sp,
-                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                                    color = Color(0xFF5F6368),
-                                    lineHeight = 20.sp
+                                    fontSize = 12.sp, 
+                                    fontWeight = FontWeight.Bold, 
+                                    color = Color(0xFF0A56D1),
+                                    letterSpacing = 0.5.sp
                                 )
                             )
                         }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = thoughtContent,
+                            style = TextStyle(
+                                fontSize = 14.sp,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                color = Color(0xFF5F6368),
+                                lineHeight = 20.sp
+                            )
+                        )
                     }
                 }
             }
         }
 
-        val blocks = remember(contentWithoutThought) { parseMarkdown(contentWithoutThought) }
-        val lastTextBlockIndex = blocks.indexOfLast { 
-            it is MarkdownBlock.Paragraph || it is MarkdownBlock.ListItem || it is MarkdownBlock.OrderedListItem || it is MarkdownBlock.Header 
-        }
-
-        var currentOffset = 0
-
-        blocks.forEachIndexed { index, block ->
-            val blockText = when (block) {
-                is MarkdownBlock.Header -> block.text
-                is MarkdownBlock.ListItem -> block.text
-                is MarkdownBlock.OrderedListItem -> block.text
-                is MarkdownBlock.Paragraph -> block.text
-                is MarkdownBlock.Table -> ""
-            }
-            
-            val absoluteStartIdx = if (blockText.isNotEmpty()) {
-                val found = contentWithoutThought.indexOf(blockText, currentOffset)
-                if (found != -1) {
-                    currentOffset = found + blockText.length
-                    found
-                } else {
-                    currentOffset
-                }
-            } else {
-                currentOffset
-            }
-
-            val showCursorInThisBlock = showCursor && index == lastTextBlockIndex
-
-            when (block) {
-                is MarkdownBlock.Header -> {
-                    val scale = when (block.level) {
-                        1 -> 1.5f
-                        2 -> 1.35f
-                        3 -> 1.2f
-                        4 -> 1.1f
-                        5 -> 1.0f
-                        else -> 0.9f
-                    }
-                    val weight = if (block.level <= 5) FontWeight.Bold else FontWeight.SemiBold
-                    val topPadding = if (block.level == 1) 12.dp else 8.dp
-                    
-                    val baseAnnotated = parseInlineMarkdown(
-                        text = block.text,
-                        absoluteStartIdx = absoluteStartIdx,
-                        isStreaming = isStreaming,
-                        revealTimes = revealTimes,
-                        currentTime = tickerTime,
-                        settleDuration = 200L,
-                        isDark = isDark
-                    )
-                    val finalAnnotated = if (showCursorInThisBlock) {
-                        baseAnnotated.appendCursor(color = color, alpha = cursorAlpha)
-                    } else {
-                        baseAnnotated
-                    }
-
+        val lines = remember(contentWithoutThought) { contentWithoutThought.split("\n") }
+        lines.forEach { line ->
+            when {
+                line.startsWith("### ") -> {
                     Text(
-                        text = finalAnnotated,
-                        style = TextStyle(
-                            fontSize = fontSize * scale,
-                            fontWeight = weight,
-                            color = color,
-                            lineHeight = lineHeight * scale
-                        ),
-                        modifier = Modifier.padding(top = topPadding, bottom = 4.dp)
+                        text = parseInlineMarkdown(line.substring(4)),
+                        style = TextStyle(fontSize = fontSize * 1.2f, fontWeight = FontWeight.Bold, color = color),
+                        modifier = Modifier.padding(vertical = 4.dp)
                     )
                 }
-                is MarkdownBlock.ListItem -> {
-                    Row(modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)) {
-                        Text("• ", color = color, fontSize = fontSize)
-                        val baseAnnotated = parseInlineMarkdown(
-                            text = block.text,
-                            absoluteStartIdx = absoluteStartIdx,
-                            isStreaming = isStreaming,
-                            revealTimes = revealTimes,
-                            currentTime = tickerTime,
-                            settleDuration = 200L,
-                            isDark = isDark
-                        )
-                        val finalAnnotated = if (showCursorInThisBlock) {
-                            baseAnnotated.appendCursor(color = color, alpha = cursorAlpha)
-                        } else {
-                            baseAnnotated
-                        }
+                line.startsWith("- ") || line.startsWith("* ") -> {
+                    Row(modifier = Modifier.padding(start = 8.dp, bottom = 2.dp)) {
+                        Text("窶｢ ", color = color, fontSize = fontSize)
                         Text(
-                            text = finalAnnotated,
+                            text = parseInlineMarkdown(line.substring(2)),
                             color = color,
                             fontSize = fontSize,
                             lineHeight = lineHeight
                         )
                     }
                 }
-                is MarkdownBlock.OrderedListItem -> {
-                    Row(modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)) {
-                        Text("${block.number}. ", color = color, fontSize = fontSize)
-                        val baseAnnotated = parseInlineMarkdown(
-                            text = block.text,
-                            absoluteStartIdx = absoluteStartIdx,
-                            isStreaming = isStreaming,
-                            revealTimes = revealTimes,
-                            currentTime = tickerTime,
-                            settleDuration = 200L,
-                            isDark = isDark
-                        )
-                        val finalAnnotated = if (showCursorInThisBlock) {
-                            baseAnnotated.appendCursor(color = color, alpha = cursorAlpha)
-                        } else {
-                            baseAnnotated
-                        }
+                line.startsWith("|") && line.contains("-") -> {
+                    // Simple table detection - use Monospace
+                    val scrollState = rememberScrollState()
+                    Box(modifier = Modifier.horizontalScroll(scrollState).background(Color(0xFFF8F9FA), RoundedCornerShape(4.dp)).padding(8.dp)) {
                         Text(
-                            text = finalAnnotated,
-                            color = color,
-                            fontSize = fontSize,
-                            lineHeight = lineHeight
+                            text = line,
+                            style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = fontSize * 0.9f, color = color)
                         )
                     }
                 }
-                is MarkdownBlock.Table -> {
-                    val numCols = maxOf(block.headers?.size ?: 0, block.rows.maxOfOrNull { it.size } ?: 0)
-                    if (numCols > 0) {
-                        val colWidths = remember(block.headers, block.rows) {
-                            val widths = IntArray(numCols) { 0 }
-                            if (block.headers != null) {
-                                for (j in 0 until numCols) {
-                                    if (j < block.headers.size) {
-                                        widths[j] = maxOf(widths[j], block.headers[j].length)
-                                    }
-                                }
-                            }
-                            for (row in block.rows) {
-                                for (j in 0 until numCols) {
-                                    if (j < row.size) {
-                                        widths[j] = maxOf(widths[j], row[j].length)
-                                    }
-                                }
-                            }
-                            widths
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val scrollState = rememberScrollState()
-                        Column(
-                            modifier = Modifier
-                                .horizontalScroll(scrollState)
-                                .background(
-                                    if (isDark) Color(0xFF1E1E1E) else Color(0xFFF8F9FA),
-                                    RoundedCornerShape(8.dp)
-                                )
-                                .border(
-                                    1.dp,
-                                    if (isDark) Color(0xFF333333) else Color(0xFFE0E0E0),
-                                    RoundedCornerShape(8.dp)
-                                )
-                                .padding(8.dp)
-                        ) {
-                            // Headers
-                            if (block.headers != null) {
-                                Row(
-                                    modifier = Modifier
-                                        .background(if (isDark) Color(0xFF2D2D2D) else Color(0xFFECEFF1))
-                                        .padding(vertical = 8.dp)
-                                ) {
-                                    for (colIndex in 0 until numCols) {
-                                        val headerText = if (colIndex < block.headers.size) block.headers[colIndex] else ""
-                                        val cellWidth = (colWidths[colIndex] * 8 + 32).coerceIn(80, 250).dp
-                                        Box(
-                                            modifier = Modifier
-                                                .width(cellWidth)
-                                                .padding(horizontal = 8.dp)
-                                        ) {
-                                            Text(
-                                                text = parseInlineMarkdown(headerText),
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = fontSize * 0.9f,
-                                                color = if (isDark) Color.White else Color(0xFF1F1F1F)
-                                            )
-                                        }
-                                    }
-                                }
-                                androidx.compose.material3.Divider(
-                                    color = if (isDark) Color(0xFF444444) else Color(0xFFCCCCCC),
-                                    thickness = 1.dp,
-                                    modifier = Modifier.padding(vertical = 4.dp)
-                                )
-                            }
-                            
-                            // Rows
-                            block.rows.forEachIndexed { rowIndex, row ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(
-                                            if (rowIndex % 2 == 1) {
-                                                if (isDark) Color(0xFF252525) else Color(0xFFF1F3F4)
-                                            } else {
-                                                Color.Transparent
-                                            }
-                                        )
-                                        .padding(vertical = 6.dp)
-                                ) {
-                                    for (colIndex in 0 until numCols) {
-                                        val cellText = if (colIndex < row.size) row[colIndex] else ""
-                                        val cellWidth = (colWidths[colIndex] * 8 + 32).coerceIn(80, 250).dp
-                                        Box(
-                                            modifier = Modifier
-                                                .width(cellWidth)
-                                                .padding(horizontal = 8.dp)
-                                        ) {
-                                            Text(
-                                                text = parseInlineMarkdown(cellText),
-                                                fontSize = fontSize * 0.9f,
-                                                color = color
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                }
-                is MarkdownBlock.Paragraph -> {
-                    if (block.text.isNotEmpty()) {
-                        val baseAnnotated = parseInlineMarkdown(
-                            text = block.text,
-                            absoluteStartIdx = absoluteStartIdx,
-                            isStreaming = isStreaming,
-                            revealTimes = revealTimes,
-                            currentTime = tickerTime,
-                            settleDuration = 200L,
-                            isDark = isDark
-                        )
-                        val finalAnnotated = if (showCursorInThisBlock) {
-                            baseAnnotated.appendCursor(color = color, alpha = cursorAlpha)
-                        } else {
-                            baseAnnotated
-                        }
+                line.contains("|") -> {
+                    // Possible table data
+                    val scrollState = rememberScrollState()
+                    Box(modifier = Modifier.horizontalScroll(scrollState).background(Color(0xFFF8F9FA)).padding(horizontal = 8.dp, vertical = 2.dp)) {
                         Text(
-                            text = finalAnnotated,
-                            color = color,
-                            fontSize = fontSize,
-                            lineHeight = lineHeight,
-                            modifier = Modifier.padding(bottom = 4.dp)
+                            text = line,
+                            style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = fontSize * 0.9f, color = color)
                         )
-                    } else {
-                        if (showCursorInThisBlock) {
-                            Text(
-                                text = buildAnnotatedString {
-                                    val cursorColor = if (color == Color.Unspecified) Color(0xFF1F1F1F) else color
-                                    withStyle(SpanStyle(color = cursorColor.copy(alpha = cursorAlpha), fontWeight = FontWeight.Black, fontSize = 20.sp)) {
-                                        append("·")
-                                    }
-                                },
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            )
-                        } else {
-                            Spacer(modifier = Modifier.height(8.dp))
-                        }
                     }
+                }
+                else -> {
+                    Text(
+                        text = parseInlineMarkdown(line),
+                        color = color,
+                        fontSize = fontSize,
+                        lineHeight = lineHeight
+                    )
                 }
             }
         }
     }
 }
 
-sealed interface MarkdownBlock {
-    data class Header(val level: Int, val text: String) : MarkdownBlock
-    data class ListItem(val text: String) : MarkdownBlock
-    data class OrderedListItem(val number: String, val text: String) : MarkdownBlock
-    data class Table(val headers: List<String>?, val rows: List<List<String>>) : MarkdownBlock
-    data class Paragraph(val text: String) : MarkdownBlock
-}
-
-fun parseMarkdown(content: String): List<MarkdownBlock> {
-    val lines = content.split("\n")
-    val blocks = mutableListOf<MarkdownBlock>()
-    val currentTableRows = mutableListOf<String>()
-
-    fun isSeparatorRow(line: String): Boolean {
-        val cleaned = line.replace("|", "").replace("-", "").replace(":", "").trim()
-        return cleaned.isEmpty() && line.contains("-")
-    }
-
-    fun parseTableRow(line: String): List<String> {
-        val parts = line.split("|")
-        val startIdx = if (line.startsWith("|")) 1 else 0
-        val endIdx = if (line.endsWith("|")) parts.size - 1 else parts.size
-        val result = mutableListOf<String>()
-        for (i in startIdx until endIdx) {
-            result.add(parts[i].trim())
-        }
-        return result
-    }
-
-    fun flushTable() {
-        if (currentTableRows.isNotEmpty()) {
-            if (currentTableRows.size >= 2 && isSeparatorRow(currentTableRows[1])) {
-                val headers = parseTableRow(currentTableRows[0])
-                val dataRows = mutableListOf<List<String>>()
-                for (i in 2 until currentTableRows.size) {
-                    if (!isSeparatorRow(currentTableRows[i])) {
-                        dataRows.add(parseTableRow(currentTableRows[i]))
-                    }
-                }
-                blocks.add(MarkdownBlock.Table(headers, dataRows))
-            } else {
-                // Not a complete table yet (no separator row), render as regular paragraphs
-                for (rowLine in currentTableRows) {
-                    blocks.add(MarkdownBlock.Paragraph(rowLine))
-                }
-            }
-            currentTableRows.clear()
-        }
-    }
-
-    val orderedListRegex = Regex("^(\\d+)\\.\\s+(.*)")
-
-    var i = 0
-    while (i < lines.size) {
-        val line = lines[i]
-        val trimmed = line.trim()
-
-        if (trimmed.contains("|")) {
-            currentTableRows.add(line)
-            i++
-            continue
-        } else {
-            flushTable()
-        }
-
-        when {
-            trimmed.startsWith("#") -> {
-                val hashCount = trimmed.takeWhile { it == '#' }.length
-                if (hashCount in 1..6 && trimmed.length > hashCount && trimmed[hashCount] == ' ') {
-                    val headerText = trimmed.substring(hashCount + 1).trim()
-                    blocks.add(MarkdownBlock.Header(hashCount, headerText))
-                } else {
-                    blocks.add(MarkdownBlock.Paragraph(line))
-                }
-            }
-            trimmed.startsWith("- ") || trimmed.startsWith("* ") -> {
-                blocks.add(MarkdownBlock.ListItem(trimmed.substring(2)))
-            }
-            else -> {
-                val match = orderedListRegex.matchEntire(trimmed)
-                if (match != null) {
-                    val num = match.groupValues[1]
-                    val itemText = match.groupValues[2]
-                    blocks.add(MarkdownBlock.OrderedListItem(num, itemText))
-                } else {
-                    blocks.add(MarkdownBlock.Paragraph(line))
-                }
-            }
-        }
-        i++
-    }
-    flushTable()
-    return blocks
-}
-
-fun parseInlineMarkdown(
-    text: String,
-    absoluteStartIdx: Int = 0,
-    isStreaming: Boolean = false,
-    revealTimes: List<Long>? = null,
-    currentTime: Long = 0L,
-    settleDuration: Long = 200L,
-    isDark: Boolean = false
-): AnnotatedString {
-    fun AnnotatedString.Builder.appendWithScramble(
-        subText: String,
-        subTextStartInBlock: Int,
-        baseStyle: SpanStyle? = null
-    ) {
-        if (!isStreaming || revealTimes == null) {
-            if (baseStyle != null) {
-                withStyle(baseStyle) {
-                    append(subText)
-                }
-            } else {
-                append(subText)
-            }
-            return
-        }
-
-        val scramblePool = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#@$&%?"
-        
-        for (i in subText.indices) {
-            val originalChar = subText[i]
-            val absIdx = absoluteStartIdx + subTextStartInBlock + i
-            
-            if (originalChar.isWhitespace() || originalChar == '\n' || originalChar == '\r' ||
-                originalChar == '*' || originalChar == '`' || originalChar == '_' || originalChar == '#' ||
-                originalChar == '|' || originalChar == '-' || originalChar == '[' || originalChar == ']' ||
-                originalChar == '(' || originalChar == ')'
-            ) {
-                if (baseStyle != null) {
-                    withStyle(baseStyle) {
-                        append(originalChar.toString())
-                    }
-                } else {
-                    append(originalChar.toString())
-                }
-                continue
-            }
-            
-            val revealTime = revealTimes.getOrNull(absIdx) ?: 0L
-            val age = currentTime - revealTime
-            
-            if (revealTime > 0 && age < settleDuration) {
-                val seed = (absIdx * 31 + currentTime / 40).toInt()
-                val randomCharIndex = (seed.coerceAtLeast(0)) % scramblePool.length
-                val scrambleChar = scramblePool[randomCharIndex]
-                
-                val scrambleColor = if (isDark) Color(0xFF00E5FF) else Color(0xFF7C4DFF)
-                val scrambleStyle = baseStyle?.copy(
-                    color = scrambleColor,
-                    fontWeight = FontWeight.Bold
-                ) ?: SpanStyle(
-                    color = scrambleColor,
-                    fontWeight = FontWeight.Bold
-                )
-                
-                withStyle(scrambleStyle) {
-                    append(scrambleChar.toString())
-                }
-            } else {
-                if (baseStyle != null) {
-                    withStyle(baseStyle) {
-                        append(originalChar.toString())
-                    }
-                } else {
-                    append(originalChar.toString())
-                }
-            }
-        }
-    }
-
-    val regex = Regex("(\\*\\*.*?\\*\\*|\\*\\*.*$)|(\\*(?!\\*).*?\\*(?!\\*)|\\*(?!\\*).*$)|(`.*?`|`.*$)")
+fun parseInlineMarkdown(text: String): AnnotatedString {
+    val regex = Regex("(\\*\\*.+?\\*\\*)|(\\*.+?\\*)|(`.+?`)")
     return buildAnnotatedString {
         var cursor = 0
+        // Bold: **text**
+        // Italic: *text*
+        // Code: `text`
+        
         val matches = regex.findAll(text)
         
         matches.forEach { match ->
+            // Add previous plain text
             if (cursor <= match.range.first) {
-                val plainText = text.substring(cursor, match.range.first)
-                appendWithScramble(
-                    subText = plainText,
-                    subTextStartInBlock = cursor
-                )
+                append(text.substring(cursor, match.range.first))
             }
             
             val matchValue = match.value
             when {
-                matchValue.startsWith("**") -> {
-                    val innerText = if (matchValue.endsWith("**") && matchValue.length >= 4) {
-                        matchValue.substring(2, matchValue.length - 2)
-                    } else {
-                        matchValue.substring(2)
+                matchValue.startsWith("**") && matchValue.length > 4 -> {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append(matchValue.substring(2, matchValue.length - 2))
                     }
-                    appendWithScramble(
-                        subText = innerText,
-                        subTextStartInBlock = match.range.first + 2,
-                        baseStyle = SpanStyle(fontWeight = FontWeight.Bold)
-                    )
                 }
-                matchValue.startsWith("*") -> {
-                    val innerText = if (matchValue.endsWith("*") && matchValue.length >= 2) {
-                        matchValue.substring(1, matchValue.length - 1)
-                    } else {
-                        matchValue.substring(1)
+                matchValue.startsWith("**") -> append(matchValue) // Fallback for incomplete bold
+                
+                matchValue.startsWith("*") && matchValue.length >= 2 -> {
+                    withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) {
+                        append(matchValue.substring(1, matchValue.length - 1))
                     }
-                    appendWithScramble(
-                        subText = innerText,
-                        subTextStartInBlock = match.range.first + 1,
-                        baseStyle = SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
-                    )
                 }
-                matchValue.startsWith("`") -> {
-                    val innerText = if (matchValue.endsWith("`") && matchValue.length >= 2) {
-                        matchValue.substring(1, matchValue.length - 1)
-                    } else {
-                        matchValue.substring(1)
+                matchValue.startsWith("*") -> append(matchValue)
+                
+                matchValue.startsWith("`") && matchValue.length >= 2 -> {
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = Color.LightGray.copy(alpha = 0.3f))) {
+                        append(matchValue.substring(1, matchValue.length - 1))
                     }
-                    appendWithScramble(
-                        subText = innerText,
-                        subTextStartInBlock = match.range.first + 1,
-                        baseStyle = SpanStyle(fontFamily = FontFamily.Monospace, background = Color.LightGray.copy(alpha = 0.3f))
-                    )
                 }
-                else -> {
-                    appendWithScramble(
-                        subText = matchValue,
-                        subTextStartInBlock = match.range.first
-                    )
-                }
+                else -> append(matchValue)
             }
             cursor = match.range.last + 1
         }
         
         if (cursor < text.length) {
-            val trailingText = text.substring(cursor)
-            appendWithScramble(
-                subText = trailingText,
-                subTextStartInBlock = cursor
-            )
+            append(text.substring(cursor))
         }
     }
 }
@@ -2519,178 +1665,84 @@ fun formatForExternalApp(text: String): String {
 @Composable
 fun ScypheonChatBubble(
     msg: ChatMessageUiState,
-    config: com.scypheon.sdk.core.model.ScypheonConfig,
     onRetryMessage: (String, Uri?) -> Unit = { _, _ -> },
     enableThinking: Boolean = true
 ) {
     val context = LocalContext.current
-    
-    val isDark = when (config.themeMode) {
-        com.scypheon.sdk.core.model.ThemeMode.DARK -> true
-        com.scypheon.sdk.core.model.ThemeMode.LIGHT -> false
-        com.scypheon.sdk.core.model.ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
-    }
-    
-    val userBubbleColors = remember(config.chatBubbleStyle, isDark) {
-        when (config.chatBubbleStyle) {
-            com.scypheon.sdk.core.model.ChatBubbleStyle.GRADIENT_BLUE -> listOf(Color(0xFF007AFF), Color(0xFF5856D6))
-            com.scypheon.sdk.core.model.ChatBubbleStyle.GRADIENT_WARM -> listOf(Color(0xFFFF512F), Color(0xFFDD2476))
-            com.scypheon.sdk.core.model.ChatBubbleStyle.GRADIENT_GREEN -> listOf(Color(0xFF11998E), Color(0xFF38EF7D))
-            com.scypheon.sdk.core.model.ChatBubbleStyle.MINIMALIST_SOLID -> listOf(if (isDark) Color(0xFF2C2C2E) else Color(0xFFE9E9EB))
-        }
-    }
-    
-    val userBubbleBrush = remember(userBubbleColors) {
-        if (userBubbleColors.size == 1) SolidColor(userBubbleColors.first())
-        else Brush.linearGradient(userBubbleColors)
-    }
-    
-    val userTextColor = remember(config.chatBubbleStyle, isDark) {
-        when (config.chatBubbleStyle) {
-            com.scypheon.sdk.core.model.ChatBubbleStyle.GRADIENT_BLUE -> Color.White
-            com.scypheon.sdk.core.model.ChatBubbleStyle.GRADIENT_WARM -> Color.White
-            com.scypheon.sdk.core.model.ChatBubbleStyle.GRADIENT_GREEN -> Color.White
-            com.scypheon.sdk.core.model.ChatBubbleStyle.MINIMALIST_SOLID -> if (isDark) Color.White else Color(0xFF1C1C1E)
-        }
-    }
-    
-    val aiBubbleColor = if (isDark) Color(0xFF1E1E1E) else Color.White
-    val aiTextColor = remember(aiBubbleColor) { aiBubbleColor.contrastTextColor() }
     val isError = msg.text.startsWith("Error:")
     val alignment = if (msg.isUser) Alignment.CenterEnd else Alignment.CenterStart
-    
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        visible = true
-    }
-    val scale by animateFloatAsState(
-        targetValue = if (visible) 1f else 0.94f,
-        animationSpec = spring(
-            dampingRatio = 0.85f,
-            stiffness = Spring.StiffnessMediumLow
-        ),
-        label = "BubbleScale"
-    )
-    val alpha by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 200),
-        label = "BubbleAlpha"
-    )
-    val slideY by animateDpAsState(
-        targetValue = if (visible) 0.dp else 10.dp,
-        animationSpec = spring(
-            dampingRatio = 0.85f,
-            stiffness = Spring.StiffnessMediumLow
-        ),
-        label = "BubbleSlide"
-    )
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                this.alpha = alpha
-                translationY = slideY.toPx()
-            },
+            .padding(vertical = 6.dp),
         contentAlignment = alignment
     ) {
         if (msg.isUser) {
-            Box(
+            val userBubbleBrush = remember {
+                Brush.linearGradient(
+                    colors = listOf(Color(0xFF007AFF), Color(0xFF5856D6)),
+                    start = Offset(0f, 0f),
+                    end = Offset(1000f, 1000f)
+                )
+            }
+            Surface(
+                shape = RoundedCornerShape(24.dp, 24.dp, 4.dp, 24.dp),
+                color = Color.Transparent,
                 modifier = Modifier
-                    .padding(start = 64.dp, end = 16.dp)
-                    .shadow(elevation = 6.dp, shape = RoundedCornerShape(20.dp))
-                    .background(userBubbleBrush, shape = RoundedCornerShape(20.dp))
-                    .clip(RoundedCornerShape(20.dp))
-            ) {
-                Column {
-                    if (msg.imageUri != null) {
-                        var showFullImage by remember { mutableStateOf(false) }
-                        
-                        if (showFullImage) {
-                            androidx.compose.ui.window.Dialog(
-                                onDismissRequest = { showFullImage = false },
-                                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(Color.Black.copy(alpha = 0.9f))
-                                        .clickable { showFullImage = false },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    coil.compose.AsyncImage(
-                                        model = msg.imageUri,
-                                        contentDescription = "Full Image",
-                                        modifier = Modifier.fillMaxSize().padding(16.dp),
-                                        contentScale = androidx.compose.ui.layout.ContentScale.Fit
-                                    )
-                                }
-                            }
-                        }
-
-                        coil.compose.AsyncImage(
-                            model = msg.imageUri,
-                            contentDescription = "Attached Image",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(1f) // "ngotak"
-                                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                                .clickable { showFullImage = true },
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                            alignment = Alignment.TopCenter // "tengah paling atas"
-                        )
-                    }
-                    MarkdownText(
-                        text = msg.text.replace("[Image Attached] ", ""),
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-                        color = userTextColor,
-                        fontSize = 16.sp,
-                        lineHeight = 22.sp,
-                        isDark = isDark
+                    .padding(start = 64.dp)
+                    .background(
+                        userBubbleBrush,
+                        shape = RoundedCornerShape(24.dp, 24.dp, 4.dp, 24.dp)
                     )
-                }
+                    .graphicsLayer {
+                        shadowElevation = 8f
+                        shape = RoundedCornerShape(24.dp, 24.dp, 4.dp, 24.dp)
+                        clip = true
+                    }
+            ) {
+                MarkdownText(
+                    text = msg.text,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    lineHeight = 22.sp
+                )
             }
         } else {
-            Column(horizontalAlignment = Alignment.Start, modifier = Modifier.padding(start = 16.dp, end = 48.dp)) {
-                // Aesthetic top label for AI
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
-                ) {
-                    Icon(
-                        imageVector = com.scypheon.app.ui.components.ScypheonIcons.ScypheonAiIcon,
-                        contentDescription = "AI",
-                        tint = if (isDark) Color(0xFF8AB4F8) else Color(0xFF0A56D1),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Scypheon AI",
-                        style = TextStyle(
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isDark) Color(0xFFB0B0B0) else Color(0xFF5F6368),
-                            letterSpacing = 0.5.sp
-                        )
-                    )
-                }
-                
-                if (msg.isLoading && msg.text == "Processing...") {
-                    // [v1.5.0-SAR] Premium prefill animation — bouncing dots instead of spinner
-                    ThinkingDotsIndicator(isDark = isDark)
-                } else {
-                    // Unified Bubble for Streaming and Thinking
+            Column(horizontalAlignment = Alignment.Start) {
+                Row(modifier = Modifier.fillMaxWidth()) {
                     Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = aiBubbleColor,
-                        border = BorderStroke(0.5.dp, Color(0xFF0A56D1).copy(alpha = 0.08f)),
+                        shape = CircleShape,
+                        color = Color.White,
                         shadowElevation = 4.dp,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.size(28.dp)
                     ) {
-                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Outlined.AutoAwesome,
+                                contentDescription = "AI",
+                                tint = Color(0xFF0A56D1),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.width(12.dp))
+                    
+                    if (msg.isLoading && msg.text == "Processing...") {
+                        // [v1.5.0-SAR] Premium prefill animation — bouncing dots instead of spinner
+                        ThinkingDotsIndicator()
+                    } else {
+                        Column {
+                            // Unified Bubble for Streaming and Thinking
+                            Surface(
+                                shape = RoundedCornerShape(4.dp, 24.dp, 24.dp, 24.dp),
+                                color = Color.White,
+                                border = BorderStroke(0.5.dp, Color(0xFF0A56D1).copy(alpha = 0.08f)),
+                                shadowElevation = 4.dp,
+                                modifier = Modifier.padding(end = 48.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                                     if (msg.status == com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_SYSTEM) {
                                         Surface(
                                             color = Color(0xFFE8F0FE),
@@ -2717,129 +1769,25 @@ fun ScypheonChatBubble(
                                         }
                                     }
 
-                                    // [v1.6.0-SAR] REASONING BLOCK RENDERING (Enterprise Shield)
-                                    // If thinkingText is present, we show it in a dedicated collapsible surface
-                                    // to separate the "thought process" from the final "answer".
-                                    if (enableThinking && !msg.thinkingText.isNullOrBlank()) {
-                                        var isExpanded by remember { mutableStateOf(msg.isLoading) }
-                                        val isThinkingActive = msg.isLoading && msg.text == "Thinking..."
-                                        
-                                        // Elegant breathing gradient animation for reasoning state
-                                        val infiniteTransition = rememberInfiniteTransition(label = "ReasoningPulse")
-                                        val breathingAlpha by infiniteTransition.animateFloat(
-                                            initialValue = 0.5f,
-                                            targetValue = 1f,
-                                            animationSpec = infiniteRepeatable(
-                                                animation = tween(1500, easing = FastOutSlowInEasing),
-                                                repeatMode = RepeatMode.Reverse
-                                            ),
-                                            label = "BreathingAlpha"
-                                        )
-
-                                        val surfaceColor = if (isDark) {
-                                            if (isThinkingActive) Color(0xFF1E2A3A).copy(alpha = breathingAlpha) else Color(0xFF2C2C2C)
-                                        } else {
-                                            if (isThinkingActive) Color(0xFFE8F0FE).copy(alpha = breathingAlpha) else Color(0xFFF8F9FA)
-                                        }
-                                        val borderColor = if (isDark) {
-                                            if (isThinkingActive) Color(0xFF2A3F5C).copy(alpha = breathingAlpha) else Color(0xFF404040)
-                                        } else {
-                                            if (isThinkingActive) Color(0xFFD6E4F8).copy(alpha = breathingAlpha) else Color(0xFFE0E0E0)
-                                        }
-                                        val primaryTextColor = if (isDark) Color(0xFF8AB4F8) else Color(0xFF0A56D1)
-
-                                        Surface(
-                                            color = surfaceColor,
-                                            shape = RoundedCornerShape(12.dp),
-                                            border = BorderStroke(1.dp, borderColor),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(bottom = if (isThinkingActive) 0.dp else 12.dp)
-                                                .clickable { isExpanded = !isExpanded }
-                                        ) {
-                                            Column(modifier = Modifier.padding(12.dp)) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                ) {
-                                                    Icon(
-                                                        imageVector = com.scypheon.app.ui.components.ScypheonIcons.ScypheonReasoningIcon,
-                                                        contentDescription = "Reasoning",
-                                                        modifier = Modifier.size(16.dp).graphicsLayer(alpha = if(isThinkingActive) breathingAlpha else 1f),
-                                                        tint = primaryTextColor
-                                                    )
-                                                    Spacer(Modifier.width(8.dp))
-                                                    Text(
-                                                        text = if (isThinkingActive) "Reasoning..." else "Reasoning Process",
-                                                        style = TextStyle(
-                                                            fontSize = 13.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            color = primaryTextColor.copy(alpha = if(isThinkingActive) breathingAlpha else 1f),
-                                                            letterSpacing = 0.5.sp
-                                                        ),
-                                                        modifier = Modifier.weight(1f)
-                                                    )
-                                                    val rotation by androidx.compose.animation.core.animateFloatAsState(targetValue = if (isExpanded) 180f else 0f)
-                                                    Icon(
-                                                        imageVector = androidx.compose.material.icons.Icons.Default.KeyboardArrowDown,
-                                                        contentDescription = "Toggle",
-                                                        tint = Color.Gray,
-                                                        modifier = Modifier.graphicsLayer(rotationZ = rotation).size(20.dp)
-                                                    )
-                                                }
-
-                                                androidx.compose.animation.AnimatedVisibility(
-                                                    visible = isExpanded,
-                                                    enter = expandVertically(
-                                                        animationSpec = spring(
-                                                            dampingRatio = 0.8f,
-                                                            stiffness = Spring.StiffnessMediumLow
-                                                        )
-                                                    ) + fadeIn(),
-                                                    exit = shrinkVertically(
-                                                        animationSpec = spring(
-                                                            dampingRatio = 0.85f,
-                                                            stiffness = Spring.StiffnessMedium
-                                                        )
-                                                    ) + fadeOut()
-                                                ) {
-                                                    Column {
-                                                        Spacer(Modifier.height(8.dp))
-                                                        Text(
-                                                            text = msg.thinkingText ?: "",
-                                                            style = TextStyle(
-                                                                fontSize = 14.sp,
-                                                                color = if (isDark) Color(0xFFB0B0B0) else Color(0xFF5F6368),
-                                                                lineHeight = 20.sp
-                                                            )
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
                                     // [v1.5.0-SAR] Typewriter Buffer for streaming — smooth character reveal
-                                    if (msg.isLoading && msg.text != "Thinking...") {
+                                    if (msg.isLoading) {
                                         TypewriterBuffer(
                                             targetText = msg.text,
                                             isStreaming = true,
-                                            color = if (msg.status == com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED) Color(0xFFD32F2F) else aiTextColor,
+                                            color = Color(0xFF1F1F1F),
                                             fontSize = 16.sp,
                                             lineHeight = 22.sp,
-                                            enableThinking = enableThinking,
-                                            isDark = isDark
+                                            enableThinking = enableThinking
                                         )
-                                    } else if (msg.text != "Thinking...") {
+                                    } else {
                                         Row(verticalAlignment = Alignment.Bottom) {
                                             MarkdownText(
                                                 text = msg.text,
-                                                color = if (msg.status == com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED) Color(0xFFD32F2F) else aiTextColor,
+                                                color = if (msg.status == com.scypheon.sdk.core.memory.ScypheonDbHelper.STATUS_FAILED) Color(0xFFD32F2F) else Color(0xFF1F1F1F),
                                                 fontSize = 16.sp,
                                                 lineHeight = 22.sp,
                                                 modifier = Modifier.weight(1f, fill = false),
-                                                enableThinking = enableThinking,
-                                                isDark = isDark
+                                                enableThinking = enableThinking
                                             )
                                         }
                                     }
@@ -2900,35 +1848,6 @@ fun ScypheonChatBubble(
                                         }
                                     }
                                     
-                                    if (msg.disclaimerType != null) {
-                                        Spacer(Modifier.height(8.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = if (isDark) Color(0xFF3E2723) else Color(0xFFFFF3E0),
-                                            border = BorderStroke(1.dp, if (isDark) Color(0xFF5D4037) else Color(0xFFFFCDD2)),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Row(modifier = Modifier.padding(12.dp)) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Warning,
-                                                    contentDescription = "Disclaimer",
-                                                    tint = if (isDark) Color(0xFFFF8A65) else Color(0xFFD32F2F),
-                                                    modifier = Modifier.size(16.dp).padding(top = 2.dp)
-                                                )
-                                                Spacer(Modifier.width(8.dp))
-                                                val disclaimerText = when (msg.disclaimerType) {
-                                                    "MEDICAL" -> "This is a high-risk medical/clinical query. The AI response is not verified by grounded resources, may hallucinate, and should not replace professional medical advice."
-                                                    "EDUCATION" -> "Critical domain without grounded resource verification. AI may hallucinate and is limited by its training knowledge cutoff."
-                                                    else -> "Domain requires verification."
-                                                }
-                                                Text(
-                                                    text = disclaimerText,
-                                                    style = TextStyle(fontSize = 11.sp, color = if (isDark) Color(0xFFFFCCBC) else Color(0xFFB71C1C), lineHeight = 16.sp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                    
                                     if (msg.hardwareStatus != null) {
                                         Spacer(Modifier.height(8.dp))
                                         Surface(
@@ -2954,201 +1873,408 @@ fun ScypheonChatBubble(
                         }
                     }
                 }
+            }
         }
     }
-
-@Composable
-fun ArchivedChatsDialog(
-    archivedSessions: List<com.scypheon.sdk.core.memory.Session>,
-    onDismiss: () -> Unit,
-    onUnarchive: (String) -> Unit,
-    onDelete: (String) -> Unit,
-    onLoadSession: (String) -> Unit,
-    isDark: Boolean
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "Archived Chats",
-                fontWeight = FontWeight.Bold,
-                color = if (isDark) Color.White else Color(0xFF1F1F1F)
-            )
-        },
-        text = {
-            if (archivedSessions.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No archived conversations.",
-                        color = Color.Gray,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 300.dp)
-                ) {
-                    items(archivedSessions, key = { it.id }) { session ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onLoadSession(session.id)
-                                    onDismiss()
-                                }
-                                .padding(vertical = 8.dp, horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.ChatBubbleOutline,
-                                contentDescription = null,
-                                tint = if (isDark) Color.LightGray else Color.Gray,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            Text(
-                                text = session.title,
-                                maxLines = 1,
-                                modifier = Modifier.weight(1f),
-                                color = if (isDark) Color.White else Color(0xFF1F1F1F),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            IconButton(
-                                onClick = { onUnarchive(session.id) },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Unarchive,
-                                    contentDescription = "Unarchive",
-                                    tint = if (isDark) Color(0xFF8AB4F8) else Color(0xFF0A56D1),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            IconButton(
-                                onClick = { onDelete(session.id) },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Delete",
-                                    tint = Color(0xFFD32F2F),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
-            }
-        },
-        containerColor = if (isDark) Color(0xFF1C1C1E) else Color.White,
-        shape = RoundedCornerShape(24.dp)
-    )
 }
-@Composable
-fun AttachmentMenuSheet(isDark: Boolean, onOptionSelected: (String) -> Unit) {
-    val bgColor = if (isDark) Color(0xFF1C1C1E) else Color(0xFFF2F2F7)
-    val surfaceColor = if (isDark) Color(0xFF2C2C2E) else Color.White
-    val dividerColor = if (isDark) Color(0xFF3A3A3C) else Color(0xFFE5E5EA)
 
+@Composable
+fun AttachmentMenuSheet(onOptionSelected: (String) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(bgColor)
-            .padding(top = 12.dp, bottom = 48.dp, start = 24.dp, end = 24.dp),
+            .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Custom drag handle for iOS look
-        Box(
-            modifier = Modifier
-                .width(36.dp)
-                .height(5.dp)
-                .clip(RoundedCornerShape(2.5.dp))
-                .background(if (isDark) Color(0xFF5F5F63) else Color(0xFFD1D1D6))
+        Text(
+            "Quick Attachments", 
+            fontWeight = FontWeight.Bold, 
+            fontSize = 18.sp, 
+            color = Color(0xFF1F1F1F),
+            modifier = Modifier.padding(bottom = 24.dp)
         )
-        
-        Spacer(Modifier.height(24.dp))
 
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = surfaceColor,
-            modifier = Modifier.fillMaxWidth()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            Column {
-                AttachmentOptionRow("Camera", Icons.Default.PhotoCamera, Color(0xFF007AFF), isDark) { onOptionSelected("Camera") }
-                HorizontalDivider(color = dividerColor, modifier = Modifier.padding(start = 64.dp))
-                AttachmentOptionRow("Photo Gallery", Icons.Default.Collections, Color(0xFF34C759), isDark) { onOptionSelected("Gallery") }
-                HorizontalDivider(color = dividerColor, modifier = Modifier.padding(start = 64.dp))
-                AttachmentOptionRow("Document", Icons.Default.Description, Color(0xFFFF9500), isDark) { onOptionSelected("File") }
-                HorizontalDivider(color = dividerColor, modifier = Modifier.padding(start = 64.dp))
-                AttachmentOptionRow("Cloud Drive", Icons.Default.CloudQueue, Color(0xFF5856D6), isDark) { onOptionSelected("Cloud") }
+            AttachmentOption("Camera", Icons.Default.PhotoCamera, Color(0xFF4285F4), onOptionSelected)
+            AttachmentOption("Gallery", Icons.Default.Collections, Color(0xFFEA4335), onOptionSelected)
+            AttachmentOption("File", Icons.Default.AttachFile, Color(0xFFFBBC05), onOptionSelected)
+            AttachmentOption("Cloud", Icons.Default.CloudQueue, Color(0xFF34A853), onOptionSelected)
+        }
+        
+        Spacer(Modifier.height(32.dp))
+    }
+}
+
+@Composable
+fun AttachmentOption(label: String, icon: ImageVector, color: Color, onClick: (String) -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            onClick = { onClick(label) },
+            shape = CircleShape,
+            color = color.copy(alpha = 0.1f),
+            modifier = Modifier.size(64.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(28.dp))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(label, fontSize = 13.sp, color = Color(0xFF5F6368), fontWeight = FontWeight.Medium)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ConfigurationsDialog(
+    config: ScypheonConfig,
+    onDismiss: () -> Unit,
+    onUpdate: (ScypheonConfig) -> Unit,
+    onResetHardware: () -> Unit
+) {
+    // 孱・・BUFFERED STATE: Changes only apply on SAVE
+    var tempMaxTokens by remember { mutableIntStateOf(config.maxTokens) }
+    var tempCtxWindow by remember { mutableIntStateOf(config.contextWindow) }
+    var tempTopK by remember { mutableIntStateOf(config.topK) }
+    var tempTopP by remember { mutableFloatStateOf(config.topP) }
+    var tempTemp by remember { mutableFloatStateOf(config.temperature) }
+    var tempBackend by remember { mutableIntStateOf(config.selectedBackendMode) }
+    var tempThinking by remember { mutableStateOf(config.enableThinking) }
+    var tempOnlineSearch by remember { mutableStateOf(config.enableOnlineSearch) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(onClick = onDismiss) {
+                    Text("CANCEL", color = Color.Gray, fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = {
+                        onUpdate(config.copy(
+                            maxTokens = tempMaxTokens,
+                            contextWindow = tempCtxWindow,
+                            topK = tempTopK,
+                            topP = tempTopP,
+                            temperature = tempTemp,
+                            selectedBackendMode = tempBackend,
+                            enableThinking = tempThinking,
+                            enableOnlineSearch = tempOnlineSearch
+                        ))
+                        onDismiss()
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A56D1))
+                ) {
+                    Text("SAVE", fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        title = { 
+            Text("Configurations", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black) 
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // [v1.4.0-SAR] Discrete Power-of-Two Sliders
+                // We use index-based sliding to ensure the UI only ever shows valid architectural values.
+                val maxTokenSteps = listOf(128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768)
+                val ctxSteps = listOf(512, 1024, 2048, 4096, 8192, 16384, 32768)
+
+                PremiumConfigRow(
+                    label = "Max tokens",
+                    currentValue = maxTokenSteps.indexOf(tempMaxTokens).coerceAtLeast(0).toFloat(),
+                    valueRange = 0f..(maxTokenSteps.size - 1).toFloat(),
+                    onValueChange = { index -> 
+                        tempMaxTokens = maxTokenSteps[index.toInt()]
+                    },
+                    displayValue = tempMaxTokens.toString(),
+                    isInteger = true,
+                    steps = maxTokenSteps.size - 2
+                )
+
+                PremiumConfigRow(
+                    label = "Context Window",
+                    currentValue = ctxSteps.indexOf(tempCtxWindow).coerceAtLeast(0).toFloat(),
+                    valueRange = 0f..(ctxSteps.size - 1).toFloat(),
+                    onValueChange = { index -> 
+                        tempCtxWindow = ctxSteps[index.toInt()]
+                    },
+                    displayValue = tempCtxWindow.toString(),
+                    isInteger = true,
+                    steps = ctxSteps.size - 2
+                )
+
+                PremiumConfigRow(
+                    label = "TopK",
+                    currentValue = tempTopK.toFloat(),
+                    valueRange = 1f..100f,
+                    onValueChange = { tempTopK = it.toInt() },
+                    displayValue = tempTopK.toString(),
+                    isInteger = true
+                )
+
+                PremiumConfigRow(
+                    label = "TopP",
+                    currentValue = tempTopP,
+                    valueRange = 0f..1f,
+                    onValueChange = { tempTopP = it },
+                    displayValue = String.format("%.2f", tempTopP)
+                )
+
+                PremiumConfigRow(
+                    label = "Temperature",
+                    currentValue = tempTemp,
+                    valueRange = 0f..2f,
+                    onValueChange = { tempTemp = it },
+                    displayValue = String.format("%.2f", tempTemp)
+                )
+
+                HorizontalDivider(modifier = Modifier.alpha(0.5f))
+
+                // ACCELERATOR SECTION
+                Column {
+                    Text("Accelerator", style = MaterialTheme.typography.labelLarge, color = Color.Gray)
+                    Spacer(Modifier.height(12.dp))
+                    ExclusiveAcceleratorSelector(
+                        selectedMode = tempBackend,
+                        onModeSelected = { tempBackend = it }
+                    )
+                }
+
+                // AI REASONING SWITCH
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Enable AI Reasoning", fontWeight = FontWeight.Bold)
+                        Text("Display <thought> process blocks", fontSize = 12.sp, color = Color.Gray)
+                    }
+                    Switch(
+                        checked = tempThinking,
+                        onCheckedChange = { tempThinking = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF0A56D1))
+                    )
+                }
+
+                // [SAR] ONLINE SEARCH SWITCH
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Online Discovery", fontWeight = FontWeight.Bold)
+                        Text("Allow tools to access internet (Wiki/FDA)", fontSize = 12.sp, color = Color.Gray)
+                    }
+                    Switch(
+                        checked = tempOnlineSearch,
+                        onCheckedChange = { tempOnlineSearch = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF0A56D1))
+                    )
+                }
+
+                if (config.backendDiagnostics.isNotEmpty()) {
+                    HardwareDiagnosticsPanel(config.backendDiagnostics, onResetHardware)
+                }
+            }
+        },
+        shape = RoundedCornerShape(28.dp),
+        containerColor = Color.White
+    )
+}
+
+@Composable
+fun PremiumConfigRow(
+    label: String,
+    currentValue: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    displayValue: String,
+    isInteger: Boolean = false,
+    steps: Int = 0
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = if (isInteger) valueRange.start.toInt().toString() else String.format("%.1f", valueRange.start),
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+            
+            Slider(
+                value = currentValue,
+                onValueChange = onValueChange,
+                valueRange = valueRange,
+                steps = steps,
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color(0xFF0A56D1),
+                    activeTrackColor = Color(0xFF0A56D1),
+                    inactiveTrackColor = Color(0xFF0A56D1).copy(alpha = 0.2f)
+                )
+            )
+
+            OutlinedTextField(
+                value = displayValue,
+                onValueChange = { input ->
+                    val clean = input.replace(",", ".")
+                    clean.toFloatOrNull()?.let { 
+                        if (it in valueRange) onValueChange(it)
+                    }
+                },
+                modifier = Modifier.width(80.dp),
+                textStyle = MaterialTheme.typography.bodySmall.copy(
+                    textAlign = TextAlign.Center, 
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF0A56D1)
+                ),
+                shape = RoundedCornerShape(8.dp),
+                singleLine = true
+            )
+        }
+    }
+}
+
+@Composable
+fun ExclusiveAcceleratorSelector(
+    selectedMode: Int,
+    onModeSelected: (Int) -> Unit
+) {
+    val modes = listOf("AUTO", "CPU", "OPENCL", "VULKAN")
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF5F5F5), RoundedCornerShape(12.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        modes.forEachIndexed { index, name ->
+            val isSelected = selectedMode == index
+            Surface(
+                onClick = { onModeSelected(index) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                color = if (isSelected) Color.White else Color.Transparent,
+                shadowElevation = if (isSelected) 2.dp else 0.dp
+            ) {
+                Box(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Color(0xFF0A56D1),
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium,
+                            color = if (isSelected) Color(0xFF0A56D1) else Color.Gray
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun AttachmentOptionRow(label: String, icon: ImageVector, iconBgColor: Color, isDark: Boolean, onClick: () -> Unit) {
-    val textColor = if (isDark) Color.White else Color.Black
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
+fun HardwareDiagnosticsPanel(
+    diagnostics: List<ScypheonBackendDiagnostic>,
+    onReset: () -> Unit
+) {
+    Surface(
+        color = Color(0xFFFFEBEE),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(iconBgColor),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(20.dp))
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = Color(0xFFD32F2F), modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Hardware Blocked", fontWeight = FontWeight.Bold, color = Color(0xFFD32F2F), fontSize = 12.sp)
+            }
+            diagnostics.forEach { diag ->
+                Text(
+                    "${diag.backend} failure detected at ${diag.timestamp}. Fallback active.",
+                    fontSize = 11.sp,
+                    color = Color(0xFFD32F2F),
+                    lineHeight = 14.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            TextButton(
+                onClick = onReset,
+                modifier = Modifier.align(Alignment.End),
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                Text("RESET HARDWARE BLACKLIST", color = Color(0xFFD32F2F), fontSize = 10.sp, fontWeight = FontWeight.Black)
+            }
         }
-        Spacer(Modifier.width(16.dp))
-        Text(
-            text = label, 
-            fontSize = 17.sp,
-            color = textColor,
-            fontWeight = FontWeight.Medium
-        )
     }
 }
 
 @Composable
-fun BlinkingCursor(color: Color = Color(0xFF1F1F1F)) {
-    val infiniteTransition = rememberInfiniteTransition(label = "DotCursor")
+fun BlinkingCursor() {
+    val infiniteTransition = rememberInfiniteTransition(label = "ButterflyCursor")
     
+    // [v1.4.0-SAR] Butterfly Smooth: Bounce + Glow + Alpha
     val alpha by infiniteTransition.animateFloat(
-        initialValue = 0.2f,
+        initialValue = 0.3f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(600, easing = LinearEasing),
+            animation = tween(800, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "Alpha"
     )
+    
+    val bounceY by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = -3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "Bounce"
+    )
 
-    Text(
-        text = "·",
-        color = color,
-        fontSize = 22.sp, // Slightly larger for an elegant middle dot
-        fontWeight = FontWeight.Black,
+    Box(
         modifier = Modifier
-            .padding(start = 2.dp)
-            .graphicsLayer { this.alpha = alpha }
+            .padding(start = 6.dp, bottom = 2.dp)
+            .offset(y = bounceY.dp)
+            .size(width = 10.dp, height = 10.dp)
+            .graphicsLayer {
+                this.alpha = alpha
+            }
+            .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(Color(0xFF1F1F1F), Color(0xFF1F1F1F).copy(alpha = 0.3f), Color.Transparent)
+                ), 
+                CircleShape
+            )
     )
 }
 
@@ -3172,24 +2298,12 @@ fun TypewriterBuffer(
     fontSize: androidx.compose.ui.unit.TextUnit = 16.sp,
     lineHeight: androidx.compose.ui.unit.TextUnit = 22.sp,
     enableThinking: Boolean = true,
-    isDark: Boolean = false,
     onDisplayedTextUpdate: ((String) -> Unit)? = null
 ) {
     // The number of characters currently visible to the user
     var displayedLength by remember { mutableIntStateOf(0) }
     // Track if we've ever started displaying (to handle initial prefill)
     var hasStartedDisplaying by remember { mutableStateOf(false) }
-
-    var lastTargetText by remember { mutableStateOf("") }
-    val revealTimes = remember { mutableStateListOf<Long>() }
-
-    if (targetText != lastTargetText) {
-        if (!targetText.startsWith(lastTargetText) || targetText.length < lastTargetText.length) {
-            revealTimes.clear()
-            displayedLength = 0
-        }
-        lastTargetText = targetText
-    }
 
     // When streaming ends, immediately show full text (for scroll-back, no animation needed)
     if (!isStreaming) {
@@ -3199,8 +2313,6 @@ fun TypewriterBuffer(
         }
     }
 
-    val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
-
     // Adaptive character drip during streaming
     LaunchedEffect(targetText, isStreaming) {
         if (!isStreaming) {
@@ -3209,8 +2321,6 @@ fun TypewriterBuffer(
         }
         
         hasStartedDisplaying = true
-        var lastHapticTime = 0L
-        var lastSoundTime = 0L
         
         // Drip loop: reveal characters one at a time at adaptive speed
         while (displayedLength < targetText.length) {
@@ -3226,49 +2336,8 @@ fun TypewriterBuffer(
             }
             
             displayedLength++
-            
-            val now = System.currentTimeMillis()
-            // Throttle sound/haptic triggers to emulate realistic mechanical keyboard rhythm
-            if (now - lastSoundTime >= 50L) {
-                com.scypheon.app.core.ui.util.SynthClickPlayer.playClick()
-                lastSoundTime = now
-            }
-            if (now - lastHapticTime >= 80L) {
-                hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                lastHapticTime = now
-            }
-            
+            onDisplayedTextUpdate?.invoke(targetText.substring(0, displayedLength))
             delay(delayMs)
-        }
-    }
-
-    // Append reveal times when displayedLength increases
-    LaunchedEffect(displayedLength) {
-        val now = System.currentTimeMillis()
-        while (revealTimes.size < displayedLength) {
-            revealTimes.add(now)
-        }
-    }
-
-    var tickerTime by remember { mutableStateOf(System.currentTimeMillis()) }
-
-    // Ticker to drive the scrambling animation
-    LaunchedEffect(isStreaming, displayedLength) {
-        while (isStreaming) {
-            val now = System.currentTimeMillis()
-            tickerTime = now
-            
-            // Check if any character is still scrambling
-            val anyScrambling = (0 until displayedLength).any { i ->
-                val revealTime = revealTimes.getOrNull(i) ?: 0L
-                now - revealTime < 200L
-            }
-            
-            if (!anyScrambling && displayedLength >= targetText.length) {
-                delay(100L) // Idle tick
-            } else {
-                delay(30L) // 33 fps scramble rate
-            }
         }
     }
 
@@ -3279,61 +2348,64 @@ fun TypewriterBuffer(
         ""
     }
 
-    if (visibleText.isNotEmpty()) {
-        MarkdownText(
-            text = visibleText,
-            color = color,
-            fontSize = fontSize,
-            lineHeight = lineHeight,
-            modifier = modifier,
-            enableThinking = enableThinking,
-            isDark = isDark,
-            showCursor = isStreaming,
-            revealTimes = revealTimes,
-            tickerTime = tickerTime,
-            isStreaming = isStreaming
-        )
+    Row(verticalAlignment = Alignment.Bottom) {
+        if (visibleText.isNotEmpty()) {
+            MarkdownText(
+                text = visibleText,
+                color = color,
+                fontSize = fontSize,
+                lineHeight = lineHeight,
+                modifier = modifier.weight(1f, fill = false),
+                enableThinking = enableThinking
+            )
+        }
+        
+        // Show cursor while streaming and still revealing text
+        if (isStreaming) {
+            BlinkingCursor()
+        }
     }
 }
 
 /**
- * [v1.6.0-SAR] Neural Pulse Indicator — Premium prefill animation.
+ * [v1.5.0-SAR] Thinking Dots Indicator — Premium prefill animation.
  * 
- * Replaces the boring bouncing dots with an organic "breathing/pulsing"
- * scale and alpha transition. Features a subtle glow for high-tech aesthetic.
+ * Replaces the boring CircularProgressIndicator during prefill with
+ * animated bouncing dots that feel more "alive" and premium.
+ * Pattern: ● ● ● with staggered bounce animation.
  */
 @Composable
-fun ThinkingDotsIndicator(isDark: Boolean = false) {
-    val infiniteTransition = rememberInfiniteTransition(label = "NeuralPulseDots")
+fun ThinkingDotsIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "ThinkingDots")
     
     Row(
-        modifier = Modifier.padding(top = 8.dp, bottom = 8.dp, start = 4.dp),
+        modifier = Modifier.padding(top = 4.dp, start = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         repeat(3) { index ->
-            val delay = index * 250 // Stagger each dot's pulse
+            val delay = index * 200 // Stagger each dot
 
-            val scale by infiniteTransition.animateFloat(
-                initialValue = 0.6f,
-                targetValue = 1.3f,
+            val offsetY by infiniteTransition.animateFloat(
+                initialValue = 0f,
+                targetValue = -8f,
                 animationSpec = infiniteRepeatable(
                     animation = tween(
-                        durationMillis = 600,
+                        durationMillis = 500,
                         delayMillis = delay,
                         easing = FastOutSlowInEasing
                     ),
                     repeatMode = RepeatMode.Reverse
                 ),
-                label = "DotScale$index"
+                label = "Dot$index"
             )
             
             val alpha by infiniteTransition.animateFloat(
-                initialValue = 0.2f,
+                initialValue = 0.3f,
                 targetValue = 1f,
                 animationSpec = infiniteRepeatable(
                     animation = tween(
-                        durationMillis = 600,
+                        durationMillis = 500,
                         delayMillis = delay,
                         easing = LinearEasing
                     ),
@@ -3342,24 +2414,15 @@ fun ThinkingDotsIndicator(isDark: Boolean = false) {
                 label = "DotAlpha$index"
             )
 
-            val dotColor = if (isDark) Color(0xFF8AB4F8) else Color(0xFF0A56D1)
-
             Box(
                 modifier = Modifier
+                    .offset(y = offsetY.dp)
                     .size(8.dp)
-                    .graphicsLayer { 
-                        this.scaleX = scale
-                        this.scaleY = scale
-                        this.alpha = alpha 
-                    }
-                    .shadow(
-                        elevation = (4 * scale).dp,
-                        shape = CircleShape,
-                        ambientColor = dotColor,
-                        spotColor = dotColor,
-                        clip = false
+                    .graphicsLayer { this.alpha = alpha }
+                    .background(
+                        Color(0xFF0A56D1),
+                        CircleShape
                     )
-                    .background(dotColor, CircleShape)
             )
         }
     }
@@ -3434,45 +2497,5 @@ fun StabilityWarningCard(
                 }
             }
         }
-    }
-}
-
-fun Color.contrastTextColor(): Color {
-    val luminance = this.luminance()
-    return if (luminance > 0.179) Color.Black else Color.White
-}
-
-@Composable
-private fun CustomPopupItem(
-    text: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    iconColor: Color,
-    isDark: Boolean,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = iconColor,
-            modifier = Modifier.size(20.dp)
-        )
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = text,
-            style = TextStyle(
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isDark) Color(0xFFE5E5EA) else Color(0xFF1C1C1E),
-                letterSpacing = 0.1.sp
-            )
-        )
     }
 }

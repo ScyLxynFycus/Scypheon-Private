@@ -4,7 +4,7 @@
 #include "sha256.h"
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_scypheon_sdk_core_security_AuditChain_nativeComputeChainHash(
+Java_com_scypheon_sdk_core_security_AuditChain_nativeSignEntry(
     JNIEnv* env, jobject /* this */, jstring previousHash, jstring entryData) {
     
     const char* prev_hash_chars = env->GetStringUTFChars(previousHash, nullptr);

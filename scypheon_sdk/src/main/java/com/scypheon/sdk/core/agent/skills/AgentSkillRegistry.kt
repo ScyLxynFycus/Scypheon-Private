@@ -1,139 +1,142 @@
 package com.scypheon.sdk.core.agent.skills
 
-import com.scypheon.sdk.core.agent.tool.Tool
-import com.scypheon.sdk.core.agent.tool.ToolRegistry
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * AgentSkillRegistry (NEW):
- * The high-level 'Brain' of the Scypheon Agent. 
- * Manages domain-specific instructions (System Prompts) and capability orchestration.
+ * AgentSkillRegistry:
+ * The central hub that defines the capabilities (Skills) and their specific tools.
  * 
- * Logic follows the Claude Code 'Skill' pattern:
- * - Skill = Specialized System Instruction + Tool Set Reference.
- * - Tool = Atomic action (managed by ToolRegistry).
+ * Tool Distinction:
+ * - FastTools: Lightweight function calls used by OODA (< 200ms).
+ * - DeepTools: Heavy, multi-hop investigation tools used by ORIGA.
  */
 @Singleton
 class AgentSkillRegistry @Inject constructor(
-    private val toolRegistry: dagger.Lazy<ToolRegistry>,
-    private val fusionRouter: MultiDomainFusionRouter,
     val medicalSkill: MedicalSkill,
     val tutorSkill: TutorSkill,
     val mathSkill: MathSkill,
-    val disasterSkill: DisasterSkill,
     val explainabilitySkill: ExplainabilitySkill,
     val accessibilitySkill: AccessibilitySkill
 ) {
-    enum class SkillType { MEDICAL, EDUCATION, STEM, ACCESSIBILITY, EXPLAINABILITY, GENERAL, RESEARCH, RESILIENCE, DISASTER }
+    data class ToolConstraintProfile(val powerCost: Int, val thermalImpact: Int, val requiresNetwork: Boolean)
+    /**
+     * ParameterRule defines the validation logic for tool arguments.
+     */
+    data class ParameterRule(
+        val required: Boolean, 
+        val type: String, 
+        val description: String = "",
+        val defaultValue: String? = null
+    )
+
+    data class FastTool(
+        val name: String, 
+        val description: String,
+        val keywords: List<String>,
+        val isMedical: Boolean,
+        val constraintProfile: ToolConstraintProfile,
+        val parameterSchema: Map<String, ParameterRule> = emptyMap()
+    )
+    data class DeepTool(val name: String, val description: String)
 
     data class SkillDefinition(
         val type: SkillType,
-        val displayName: String,
-        val systemMandate: String,
-        val recommendedToolNames: List<String>
-    ) {
-        /**
-         * Helper to get the actual Tool objects for this skill.
-         * Used by OODA/ORIGA engines for execution.
-         */
-        fun getTools(registry: ToolRegistry): List<Tool> {
-            return recommendedToolNames.mapNotNull { registry.resolve(it) }
-        }
-    }
+        val description: String,
+        val fastTools: List<FastTool>,
+        val deepTools: List<DeepTool>
+    )
 
-    private val skillDefinitions = mapOf(
-        SkillType.MEDICAL to SkillDefinition(
-            SkillType.MEDICAL,
-            "Medical & Clinical Safety",
-            """
-            [SYSTEM_MANDATE: MEDICAL]
-            You are operating in a clinical safety mode. Your primary responsibility is providing accurate, 
-            verified medical triage and pharmacological data based on WHO and local pharmacopeia standards.
-            - ALWAYS check for drug interactions if multiple medications are mentioned.
-            - ALWAYS provide a medical disclaimer.
-            - If symptoms are severe, prioritize immediate triage.
-            """.trimIndent(),
-            listOf("calculate_clinical_dosage", "check_interaction", "get_first_aid_protocol")
+    private val skills = listOf(
+        SkillDefinition(
+            SkillType.MEDICAL, 
+            "Medical triage, drug safety, and health diagnostics.", 
+            listOf(
+                FastTool(
+                    "get_drug_dosage", 
+                    "Ambil dosis obat dari Farmakope lokal", 
+                    listOf("dosis", "aturan pakai", "dosage", "obat"),
+                    isMedical = true,
+                    ToolConstraintProfile(powerCost = 1, thermalImpact = 1, requiresNetwork = false),
+                    mapOf("drug" to ParameterRule(true, "String"), "ageGroup" to ParameterRule(false, "String", defaultValue = "adult"))
+                ), 
+                FastTool(
+                    "check_interaction", 
+                    "Cek interaksi obat dari SQL log",
+                    listOf("alergi", "allergy", "interaksi"),
+                    isMedical = true,
+                    ToolConstraintProfile(powerCost = 1, thermalImpact = 1, requiresNetwork = false),
+                    mapOf("drug" to ParameterRule(true, "String"))
+                ),
+                FastTool(
+                    "get_first_aid", 
+                    "Dapatkan panduan pertolongan pertama untuk gejala tertentu",
+                    listOf("pertolongan", "first aid", "luka", "darurat"),
+                    isMedical = true,
+                    ToolConstraintProfile(powerCost = 1, thermalImpact = 1, requiresNetwork = false),
+                    mapOf("symptom" to ParameterRule(true, "String"))
+                )
+            ),
+            listOf(DeepTool("oracle_investigate", "Telusuri interaksi obat multi-hop"))
         ),
-        SkillType.DISASTER to SkillDefinition(
-            SkillType.DISASTER,
-            "Disaster Response & SOS",
-            """
-            [SYSTEM_MANDATE: DISASTER]
-            You are operating in an emergency response mode. Your primary mission is saving lives and ensuring safety.
-            - BE CONCISE: Use short, clear instructions.
-            - PRIORITY: If the user is in immediate danger, use the 'trigger_mesh_sos' tool immediately.
-            - STABILITY: Encourage the user to stay calm and follow first-aid steps exactly.
-            - OFFLINE: Remind the user that Scypheon works offline via Mesh if cellular is down.
-            """.trimIndent(),
-            listOf("trigger_mesh_sos", "get_first_aid_protocol")
+        SkillDefinition(
+            SkillType.EDUCATION, 
+            "General teaching, lesson planning, and academic mentorship.", 
+            listOf(
+                FastTool("get_lesson_summary", "Ambil ringkasan materi", listOf("ringkasan", "materi"), false, ToolConstraintProfile(2, 2, false), mapOf("topic" to ParameterRule(true, "String"))),
+                FastTool("start_english_tutor", "Aktifkan tutor Bahasa Inggris interaktif", listOf("belajar", "inggris", "english"), false, ToolConstraintProfile(3, 2, false))
+            ),
+            listOf(DeepTool("build_curriculum_graph", "Bangun kurikulum socratic"))
         ),
-        SkillType.EDUCATION to SkillDefinition(
-            SkillType.EDUCATION,
-            "Education & Pedagogy",
-            """
-            [SYSTEM_MANDATE: EDUCATION]
-            You are a pedagogical expert. Focus on teaching and knowledge transfer.
-            - Use the Socratic method: ask guiding questions rather than just giving answers.
-            - Simplify complex concepts using analogies.
-            - When providing summaries, focus on learning objectives.
-            """.trimIndent(),
-            listOf("get_lesson_summary", "start_english_tutor")
+        SkillDefinition(
+            SkillType.STEM, 
+            "Complex mathematical reasoning and Socratic STEM tutoring.", 
+            listOf(FastTool("calculate_basic", "Kalkulasi matematis dasar", listOf("hitung", "kalkulasi"), false, ToolConstraintProfile(1, 1, false), mapOf("expression" to ParameterRule(true, "String")))),
+            listOf(DeepTool("prove_theorem", "Penyelesaian persamaan kompleks"))
         ),
-        SkillType.STEM to SkillDefinition(
-            SkillType.STEM,
-            "STEM & Mathematics",
-            """
-            [SYSTEM_MANDATE: STEM]
-            You are a rigorous STEM tutor. Focus on first-principles reasoning.
-            - Show your work step-by-step using <thought> tags.
-            - Verify mathematical consistency before outputting.
-            - Use the calculate_basic tool for any non-trivial math.
-            """.trimIndent(),
-            listOf("calculate_basic", "math_cheat_sheet")
+        SkillDefinition(
+            SkillType.ACCESSIBILITY, 
+            "Inclusive formatting and content simplification for dyslexia.", 
+            listOf(FastTool("format_dyslexia", "Ubah teks jadi ramah disleksia", listOf("disleksia", "format"), false, ToolConstraintProfile(1, 1, false), mapOf("text" to ParameterRule(true, "String")))),
+            listOf(DeepTool("analyze_readability", "Audit aksesibilitas dokumen"))
         ),
-        SkillType.RESEARCH to SkillDefinition(
+        SkillDefinition(
             SkillType.RESEARCH,
-            "Research & Discovery",
-            """
-            [SYSTEM_MANDATE: RESEARCH]
-            You are a fact-finding agent. Your mission is to discover objective ground truth.
-            - Do NOT guess or hallucinate facts. 
-            - Immediately use search tools if you are unsure of real-time data or historical facts.
-            - Ground your responses in the citations provided by tools.
-            """.trimIndent(),
-            listOf("discover_wikipedia", "discover_duckduckgo", "web_fetch")
-        ),
-        SkillType.ACCESSIBILITY to SkillDefinition(
-            SkillType.ACCESSIBILITY,
-            "Accessibility & Inclusion",
-            """
-            [SYSTEM_MANDATE: ACCESSIBILITY]
-            Focus on making information accessible to everyone.
-            - Simplify language for cognitive disabilities.
-            - Format content for dyslexia (clear headers, spacing).
-            """.trimIndent(),
-            listOf("format_dyslexia")
-        ),
-        SkillType.GENERAL to SkillDefinition(
-            SkillType.GENERAL,
-            "General Assistance",
-            "Help the user with general tasks and conversation.",
-            emptyList()
+            "External knowledge discovery via Wikipedia, DuckDuckGo, and OpenFDA.",
+            listOf(
+                FastTool(
+                    "discover_wikipedia",
+                    "Cari ringkasan ensiklopedia dari Wikipedia",
+                    listOf("wiki", "wikipedia", "apa itu", "siapa"),
+                    false,
+                    ToolConstraintProfile(2, 2, true),
+                    mapOf("query" to ParameterRule(true, "String"))
+                ),
+                FastTool(
+                    "discover_duckduckgo",
+                    "Cari informasi instan dari DuckDuckGo",
+                    listOf("cari", "search", "duckduckgo", "ddg"),
+                    false,
+                    ToolConstraintProfile(2, 2, true),
+                    mapOf("query" to ParameterRule(true, "String"))
+                ),
+                FastTool(
+                    "discover_openfda",
+                    "Cari data keamanan obat resmi dari OpenFDA/WHO",
+                    listOf("fda", "who", "keamanan obat", "drug safety"),
+                    true,
+                    ToolConstraintProfile(3, 2, true),
+                    mapOf("drug" to ParameterRule(true, "String"))
+                )
+            ),
+            listOf(DeepTool("web_crawl_fandom", "Telusuri wiki komunitas Fandom untuk detail mendalam"))
         )
     )
 
-    fun getSkill(type: SkillType): SkillDefinition? {
-        return skillDefinitions[type]
-    }
+    enum class SkillType { MEDICAL, EDUCATION, STEM, ACCESSIBILITY, EXPLAINABILITY, GENERAL, RESEARCH }
 
-    /**
-     * Helper to resolve tools for a skill type.
-     */
-    fun getToolsForSkill(type: SkillType): List<Tool> {
-        val def = getSkill(type) ?: return emptyList()
-        return def.getTools(toolRegistry.get())
+    fun getSkill(type: SkillType): SkillDefinition? {
+        return skills.find { it.type == type }
     }
 }

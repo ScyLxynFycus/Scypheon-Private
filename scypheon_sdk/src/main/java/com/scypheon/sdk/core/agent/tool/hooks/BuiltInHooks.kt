@@ -14,10 +14,8 @@ import javax.inject.Singleton
  * - Drug names are misspelled or unrecognized
  * - Dosage values exceed known safe maximums  
  * - Critical contraindication keywords are detected
- * - Numeric parameters (dosage, weight) are malformed
  * 
  * This is the "first line of defense" before any medical tool runs.
- * Fail-safe architecture: Invalid numeric formats will trigger a denial.
  */
 @Singleton
 class ClinicalSafetyPreHook @Inject constructor() : ToolHookEngine.PreToolUseHook {
@@ -25,8 +23,8 @@ class ClinicalSafetyPreHook @Inject constructor() : ToolHookEngine.PreToolUseHoo
     override val name: String = "clinical_safety_pre"
 
     private val medicalTools = setOf(
-        "calculate_clinical_dosage", "get_drug_dosage", "check_interaction",
-        "discover_openfda", "get_first_aid_protocol", "get_first_aid"
+        "clinical_dosage", "drug_interaction", "medicine_lookup",
+        "pharmacopeia_search", "first_aid", "symptom_check"
     )
 
     override fun matches(toolName: String): Boolean = toolName in medicalTools
@@ -37,8 +35,8 @@ class ClinicalSafetyPreHook @Inject constructor() : ToolHookEngine.PreToolUseHoo
         context: ExecutionContext
     ): ToolHookEngine.PreToolUseResult {
         val drugName = args["drug_name"]?.toString() ?: args["medication"]?.toString()
-        val rawDosage = args["dosage"]?.toString()
-        val rawWeight = args["weight_kg"]?.toString()
+        val dosage = args["dosage"]?.toString()?.toDoubleOrNull()
+        val weight = args["weight_kg"]?.toString()?.toDoubleOrNull()
 
         // Rule 1: Block empty drug names for dosage tools
         if (toolName == "clinical_dosage" && drugName.isNullOrBlank()) {
@@ -47,14 +45,8 @@ class ClinicalSafetyPreHook @Inject constructor() : ToolHookEngine.PreToolUseHoo
             )
         }
 
-        // Rule 2: Block absurd dosage values (negative, zero, >10g) or malformed values
-        if (!rawDosage.isNullOrBlank()) {
-            val dosage = rawDosage.toDoubleOrNull()
-            if (dosage == null) {
-                return ToolHookEngine.PreToolUseResult.Denied(
-                    "Invalid dosage format: '$rawDosage'. Dosage must be a valid numeric value in mg."
-                )
-            }
+        // Rule 2: Block absurd dosage values (negative, zero, >10g)
+        if (dosage != null) {
             if (dosage <= 0) {
                 return ToolHookEngine.PreToolUseResult.Denied(
                     "Invalid dosage value: $dosage. Dosage must be a positive number."
@@ -68,19 +60,11 @@ class ClinicalSafetyPreHook @Inject constructor() : ToolHookEngine.PreToolUseHoo
             }
         }
 
-        // Rule 3: Sanitize weight (0-500 kg range for humans) or malformed values
-        if (!rawWeight.isNullOrBlank()) {
-            val weight = rawWeight.toDoubleOrNull()
-            if (weight == null) {
-                return ToolHookEngine.PreToolUseResult.Denied(
-                    "Invalid patient weight format: '$rawWeight'. Weight must be a valid numeric value in kg."
-                )
-            }
-            if (weight <= 0 || weight > 500) {
-                return ToolHookEngine.PreToolUseResult.Denied(
-                    "Invalid patient weight: $weight kg. Weight must be between 0.5 and 500 kg."
-                )
-            }
+        // Rule 3: Sanitize weight (0-500 kg range for humans)
+        if (weight != null && (weight <= 0 || weight > 500)) {
+            return ToolHookEngine.PreToolUseResult.Denied(
+                "Invalid patient weight: $weight kg. Weight must be between 0.5 and 500 kg."
+            )
         }
 
         return ToolHookEngine.PreToolUseResult.Approved(args)
@@ -101,8 +85,8 @@ class ClinicalAuditPostHook @Inject constructor() : ToolHookEngine.PostToolUseHo
     override val name: String = "clinical_audit_post"
 
     private val medicalTools = setOf(
-        "calculate_clinical_dosage", "get_drug_dosage", "check_interaction",
-        "discover_openfda", "get_first_aid_protocol", "get_first_aid"
+        "clinical_dosage", "drug_interaction", "medicine_lookup",
+        "pharmacopeia_search", "first_aid", "symptom_check"
     )
 
     private val emergencyKeywords = listOf(
@@ -262,36 +246,5 @@ class SafetyGuardStopHook @Inject constructor() : ToolHookEngine.StopHook {
         }
 
         return ToolHookEngine.StopHookDecision.Pass
-    }
-}
-
-/**
- * EducationAuditPostHook: PostToolUse hook for educational tools.
- */
-@Singleton
-class EducationAuditPostHook @Inject constructor() : ToolHookEngine.PostToolUseHook {
-
-    override val name: String = "education_audit_post"
-
-    private val educationTools = setOf(
-        "get_math_formula", "search_science_constants", "get_lesson_summary", "search_historical_archive", "start_english_tutor"
-    )
-
-    override fun matches(toolName: String): Boolean = toolName in educationTools
-
-    override suspend fun evaluate(
-        toolName: String,
-        args: Map<String, Any?>,
-        result: ToolResult,
-        context: ExecutionContext
-    ): ToolHookEngine.PostToolUseEvaluation {
-        if (result !is ToolResult.Success) return ToolHookEngine.PostToolUseEvaluation()
-
-        val disclaimerText = "🎓 EDUCATION DISCLAIMER: Educational AI provides learning assistance and summaries. Always verify critical facts with authorized curriculum materials."
-
-        return ToolHookEngine.PostToolUseEvaluation(
-            additionalContext = disclaimerText,
-            flagForReEvaluation = false
-        )
     }
 }

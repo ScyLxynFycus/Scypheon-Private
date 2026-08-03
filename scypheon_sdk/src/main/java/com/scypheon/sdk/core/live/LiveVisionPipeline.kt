@@ -25,7 +25,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import timber.log.Timber
 import java.util.concurrent.Executors
 import javax.inject.Inject
-import java.io.Closeable
 import javax.inject.Singleton
 
 /**
@@ -52,9 +51,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class LiveVisionPipeline @Inject constructor(
-    @ApplicationContext private val context: Context,
-    private val hardwareLeakDetector: com.scypheon.sdk.core.telemetry.HardwareLeakDetector
-) : Closeable {
+    @ApplicationContext private val context: Context
+) {
     // ═══════════════════════════════════════════════════════════════
     // State
     // ═══════════════════════════════════════════════════════════════
@@ -63,7 +61,6 @@ class LiveVisionPipeline @Inject constructor(
     private var cameraProvider: ProcessCameraProvider? = null
     private val analysisExecutor = Executors.newSingleThreadExecutor()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val detectorLock = Any()
 
     // Current scene understanding (updated continuously)
     private val _sceneDescription = MutableStateFlow<SceneContext>(SceneContext.empty())
@@ -105,9 +102,7 @@ class LiveVisionPipeline @Inject constructor(
                 .setErrorListener { error -> Timber.e(error, "👁️ [VISION] Detection error") }
                 .build()
 
-            synchronized(detectorLock) {
-                objectDetector = ObjectDetector.createFromOptions(context, options)
-            }
+            objectDetector = ObjectDetector.createFromOptions(context, options)
             Timber.i("👁️ [VISION] LiveVisionPipeline initialized with ObjectDetector")
         } catch (e: Exception) {
             Timber.e(e, "👁️ [VISION] Failed to init ObjectDetector. Vision will be text-only.")
@@ -118,9 +113,6 @@ class LiveVisionPipeline @Inject constructor(
      * Start the camera and bind to ImageAnalysis for continuous frame processing.
      */
     fun startCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView? = null) {
-        if (objectDetector == null) {
-            initializeDetector()
-        }
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             try {
@@ -152,7 +144,6 @@ class LiveVisionPipeline @Inject constructor(
                     provider.bindToLifecycle(lifecycleOwner, cameraSelector, imageAnalysis)
                 }
 
-                hardwareLeakDetector.reportCameraStart()
                 Timber.i("👁️ [VISION] Camera started, continuous analysis active")
             } catch (e: Exception) {
                 Timber.e(e, "👁️ [VISION] Failed to start camera")
@@ -166,16 +157,36 @@ class LiveVisionPipeline @Inject constructor(
 
     @OptIn(ExperimentalGetImage::class)
     private fun processFrame(imageProxy: ImageProxy) {
-        var bitmap: Bitmap? = null
-        var handedOff = false
         try {
-            bitmap = imageProxy.toBitmap()
+            val bitmap = imageProxy.toBitmap()
             val timestampMs = imageProxy.imageInfo.timestamp / 1000 // Convert ns to ms
+
+            // FAST PIPE: Object detection on every frame
+            val mpImage = BitmapImageBuilder(bitmap).build()
+            objectDetector?.detectAsync(mpImage, timestampMs)
 
             // SLOW PIPE: Periodic keyframe capture for multimodal LLM
             val now = System.currentTimeMillis()
             if (now - lastKeyframeTime > KEYFRAME_INTERVAL_MS) {
-                // Scale down synchronously so we don't hold a reference to the large bitmap
+                captureKeyframe(bitmap)
+                lastKeyframeTime = now
+            }
+        } catch (e: Exception) {
+            // Frame processing errors are non-fatal — skip and continue
+            Timber.v("👁️ [VISION] Frame skip: ${e.message}")
+        } finally {
+            imageProxy.close()
+        }
+    }
+
+    /**
+     * Capture a keyframe for rich LLM scene description.
+     * Downscale to 512px for efficient multimodal inference.
+     */
+    private fun captureKeyframe(bitmap: Bitmap) {
+        scope.launch {
+            try {
+                // Downscale for LLM efficiency
                 val scale = 512f / maxOf(bitmap.width, bitmap.height)
                 val scaledBitmap = Bitmap.createScaledBitmap(
                     bitmap,
@@ -183,37 +194,7 @@ class LiveVisionPipeline @Inject constructor(
                     (bitmap.height * scale).toInt(),
                     true
                 )
-                captureKeyframe(scaledBitmap)
-                lastKeyframeTime = now
-            }
-
-            // FAST PIPE: Object detection on every frame
-            val mpImage = BitmapImageBuilder(bitmap).build()
-            synchronized(detectorLock) {
-                val detector = objectDetector
-                if (detector != null) {
-                    detector.detectAsync(mpImage, timestampMs)
-                    handedOff = true
-                }
-            }
-        } catch (e: Exception) {
-            // Frame processing errors are non-fatal — skip and continue
-            Timber.v("👁️ [VISION] Frame skip: ${e.message}")
-        } finally {
-            imageProxy.close()
-            if (!handedOff) {
-                bitmap?.recycle()
-            }
-        }
-    }
-
-    /**
-     * Capture a keyframe for rich LLM scene description.
-     * Stores the already downscaled keyframe and triggers callbacks.
-     */
-    private fun captureKeyframe(scaledBitmap: Bitmap) {
-        scope.launch {
-            try {
+                
                 _latestKeyframe?.recycle()
                 _latestKeyframe = scaledBitmap
 
@@ -271,41 +252,24 @@ class LiveVisionPipeline @Inject constructor(
 
         _sceneDescription.value = newScene
         onSceneUpdated?.invoke(newScene)
-
-        // Recycle the bitmap to prevent memory leak!
-        try {
-            val bitmapToRecycle = com.google.mediapipe.framework.image.BitmapExtractor.extract(image)
-            bitmapToRecycle?.recycle()
-        } catch (e: Exception) {
-            Timber.e(e, "👁️ [VISION] Failed to recycle detection frame bitmap")
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════
     // Lifecycle
     // ═══════════════════════════════════════════════════════════════
 
-    suspend fun stop() = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+    fun stop() {
         try {
             cameraProvider?.unbindAll()
-            synchronized(detectorLock) {
-                objectDetector?.close()
-                objectDetector = null
-            }
+            objectDetector?.close()
+            objectDetector = null
             _latestKeyframe?.recycle()
             _latestKeyframe = null
             previousObjects = emptySet()
             _sceneDescription.value = SceneContext.empty()
-            hardwareLeakDetector.reportCameraStop()
             Timber.i("👁️ [VISION] LiveVisionPipeline stopped")
         } catch (e: Exception) {
             Timber.e(e, "👁️ [VISION] Error stopping pipeline")
-        }
-    }
-
-    override fun close() {
-        runBlocking(kotlinx.coroutines.NonCancellable) {
-            stop()
         }
     }
 

@@ -1,15 +1,11 @@
 package com.scypheon.sdk.core.security
 
-import android.app.Activity
-import android.app.Application
 import android.content.Context
-import android.os.Bundle
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.lang.ref.WeakReference
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -21,31 +17,6 @@ class ConsentManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val auditChain: AuditChain
 ) {
-    private var activeActivity = WeakReference<Activity?>(null)
-
-    init {
-        val app = context.applicationContext as? Application
-        app?.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
-                activeActivity = WeakReference(activity)
-            }
-            override fun onActivityStarted(activity: Activity) {
-                activeActivity = WeakReference(activity)
-            }
-            override fun onActivityResumed(activity: Activity) {
-                activeActivity = WeakReference(activity)
-            }
-            override fun onActivityPaused(activity: Activity) {}
-            override fun onActivityStopped(activity: Activity) {}
-            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-            override fun onActivityDestroyed(activity: Activity) {
-                if (activeActivity.get() == activity) {
-                    activeActivity = WeakReference(null)
-                }
-            }
-        })
-    }
-
     suspend fun requestConsent(
         activity: FragmentActivity,
         title: String,
@@ -100,43 +71,5 @@ class ConsentManager @Inject constructor(
                 auditChain.logEvent("CONSENT_DENIED", "Action: $title | User failed or cancelled authentication")
             }
         }
-    }
-    
-    data class ConsentResult(val granted: Boolean)
-    
-    suspend fun requestBiometricConsent(reason: String): ConsentResult {
-        Timber.i("🛡️ Biometric consent requested: $reason")
-        auditChain.logEvent("BIOMETRIC_CONSENT_REQUESTED", reason)
-
-        val currentActivity = activeActivity.get()
-        if (currentActivity is FragmentActivity) {
-            val granted = requestConsent(
-                activity = currentActivity,
-                title = "Biometric Verification Required",
-                subtitle = "Security Authorization",
-                description = reason
-            )
-            return ConsentResult(granted = granted)
-        }
-
-        // Check if running in a unit test environment to prevent blocking test cases
-        val isUnderTest = if (com.scypheon.sdk.BuildConfig.DEBUG) {
-            try {
-                Class.forName("org.junit.Test")
-                true
-            } catch (e: ClassNotFoundException) {
-                false
-            }
-        } else {
-            false
-        }
-
-        if (isUnderTest) {
-            Timber.i("🧪 Unit test environment detected, bypassing biometric dialog with auto-grant.")
-            return ConsentResult(granted = true)
-        }
-
-        Timber.e("❌ Consent denied: No active FragmentActivity found to prompt user.")
-        return ConsentResult(granted = false)
     }
 }

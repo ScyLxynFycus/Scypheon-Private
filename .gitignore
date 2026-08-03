@@ -42,7 +42,7 @@ scypheon_private/app/src/main/assets/.shm/
 # Exclude other projects
 /VITREON/
 /VITREON_BACKUP_AGENTIC/
-# /scypheon-desktop/
+/scypheon-desktop/
 /llama.cpp/
 /Scypheon-Public/
 /ai_engine/

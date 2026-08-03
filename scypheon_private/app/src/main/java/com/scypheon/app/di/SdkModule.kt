@@ -48,29 +48,14 @@ object SdkModule {
 
     @Provides
     @Singleton
-    fun provideBlackBoxVault(@ApplicationContext context: Context, piiAnonymizer: com.scypheon.sdk.core.telemetry.PIIAnonymizer): kotlin.Lazy<com.scypheon.sdk.core.telemetry.BlackBoxVault> {
-        return lazy { com.scypheon.sdk.core.telemetry.BlackBoxVault(context, piiAnonymizer) }
+    fun provideBlackBoxVault(@ApplicationContext context: Context): BlackBoxVault {
+        return BlackBoxVault(context)
     }
 
     @Provides
     @Singleton
-    fun provideDrugDatabase(@ApplicationContext context: Context): kotlin.Lazy<com.scypheon.sdk.core.humanitarian.DrugDatabase> {
-        return lazy { com.scypheon.sdk.core.humanitarian.DrugDatabase(context) }
-    }
-
-    @Provides
-    @Singleton
-    fun provideAegisVault(@ApplicationContext context: Context, keyManager: com.scypheon.sdk.core.security.DatabaseKeyManager): kotlin.Lazy<com.scypheon.sdk.core.security.AegisVault> {
-        return lazy { com.scypheon.sdk.core.security.AegisVault(context, keyManager) }
-    }
-
-    @Provides
-    @Singleton
-    fun provideGraphMemoryManager(
-        @ApplicationContext context: Context,
-        circuitBreaker: com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
-    ): GraphMemoryManager {
-        return GraphMemoryManager(context, circuitBreaker)
+    fun provideGraphMemoryManager(@ApplicationContext context: Context): GraphMemoryManager {
+        return GraphMemoryManager(context)
     }
 
     @Provides
@@ -78,10 +63,9 @@ object SdkModule {
     fun provideDualMemoryManager(
         @ApplicationContext context: Context,
         vectorEngine: IVectorEngine,
-        graphManager: GraphMemoryManager,
-        circuitBreaker: com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
+        graphManager: GraphMemoryManager
     ): DualMemoryManager {
-        return DualMemoryManager(context, vectorEngine, graphManager, circuitBreaker)
+        return DualMemoryManager(context, vectorEngine, graphManager)
     }
 
 
@@ -110,10 +94,9 @@ object SdkModule {
     @Provides
     @Singleton
     fun provideLiteRtEliteEngine(
-        circuitBreaker: com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker,
-        blackBoxVault: BlackBoxVault
+        circuitBreaker: com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
     ): LiteRtEliteEngine {
-        return LiteRtEliteEngine(circuitBreaker, blackBoxVault)
+        return LiteRtEliteEngine(circuitBreaker)
     }
 
     @Provides
@@ -128,21 +111,15 @@ object SdkModule {
         @ApplicationContext context: Context,
         keyManager: DatabaseKeyManager,
         clinicalValidator: ClinicalValidator,
-        circuitBreaker: com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker,
-        pqcKeyExchangeManager: com.scypheon.sdk.core.security.PqcKeyExchangeManager,
-        blackBoxVault: BlackBoxVault
+        circuitBreaker: com.scypheon.sdk.core.resilience.ResilienceCircuitBreaker
     ): SandboxLlamaEngine {
-        return SandboxLlamaEngine(context, keyManager, clinicalValidator, circuitBreaker, pqcKeyExchangeManager, blackBoxVault)
+        return SandboxLlamaEngine(context, keyManager, clinicalValidator, circuitBreaker)
     }
 
     @Provides
     @Singleton
-    fun provideModelLoader(
-        @ApplicationContext context: Context,
-        modelTrustManager: com.scypheon.sdk.core.engine.ModelTrustManager,
-        versionGuard: com.scypheon.sdk.core.engine.ModelVersionGuard
-    ): ModelLoader {
-        return ModelLoader(context, modelTrustManager, versionGuard)
+    fun provideModelLoader(@ApplicationContext context: Context): ModelLoader {
+        return ModelLoader(context)
     }
 
     @Provides
@@ -164,14 +141,13 @@ object SdkModule {
     @Provides
     @Singleton
     fun provideNeuralGateway(
-        @ApplicationContext context: Context,
         liteRtEngine: dagger.Lazy<LiteRtEliteEngine>,
         llamaEngine: dagger.Lazy<SandboxLlamaEngine>,
         modelLoader: dagger.Lazy<ModelLoader>,
         documentSkill: dagger.Lazy<com.scypheon.sdk.core.skills.DocumentSkill>,
         sensoryHooks: dagger.Lazy<com.scypheon.sdk.core.gateway.SensoryHooks>
     ): NeuralGateway {
-        return NeuralGateway(context, liteRtEngine, llamaEngine, modelLoader, documentSkill, sensoryHooks)
+        return NeuralGateway(liteRtEngine, llamaEngine, modelLoader, documentSkill, sensoryHooks)
     }
 
     @Provides
@@ -193,10 +169,9 @@ object SdkModule {
         liteRtEngine: LiteRtEliteEngine,
         memoryManager: DualMemoryManager,
         interactionChecker: DrugInteractionChecker,
-        dao: PharmacopeiaDao,
-        clinicalValidator: ClinicalValidator
+        dao: PharmacopeiaDao
     ): OfflineMedicineGuard {
-        return OfflineMedicineGuard(context, liteRtEngine, memoryManager, interactionChecker, dao, clinicalValidator)
+        return OfflineMedicineGuard(context, liteRtEngine, memoryManager, interactionChecker, dao)
     }
 
     @Provides
@@ -205,11 +180,9 @@ object SdkModule {
         @ApplicationContext context: Context,
         liteRtEngine: LiteRtEliteEngine,
         memoryManager: DualMemoryManager,
-        sensoryHooks: dagger.Lazy<com.scypheon.sdk.core.gateway.SensoryHooks>,
-        router: dagger.Lazy<com.scypheon.sdk.core.agent.SkillIntentRouter>,
-        orchestrator: dagger.Lazy<com.scypheon.sdk.core.agent.skills.AgenticSkillOrchestrator>
+        sensoryHooks: dagger.Lazy<com.scypheon.sdk.core.gateway.SensoryHooks>
     ): LiveEnglishTutor {
-        return LiveEnglishTutor(context, liteRtEngine, memoryManager, sensoryHooks, router, orchestrator)
+        return LiveEnglishTutor(context, liteRtEngine, memoryManager, sensoryHooks)
     }
 
     @Provides

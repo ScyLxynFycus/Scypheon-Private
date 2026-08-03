@@ -14,7 +14,7 @@ data class ExecutionContext(
     val toolTimeoutMs: Long = 5000L,
     val maxConcurrency: Int = 3,
     val allowNetwork: Boolean = true,
-    val powerProfile: PowerProfile = PowerProfile.BALANCED,
+    val powerProfile: PowerProfile = PowerProfile.NORMAL,
     val thermalProfile: ThermalStatus = ThermalStatus.NORMAL
 )
 

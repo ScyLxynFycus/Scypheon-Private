@@ -28,7 +28,7 @@ class ClarificationTool @Inject constructor() : BaseTool() {
         val fields = args["missing_fields"] ?: "vitals, onset, severity"
         return ToolResult.Success(
             "CLARIFY_REQUEST: Please provide [$fields] for accurate triage.", 
-            latencyMs = System.currentTimeMillis() - start
+            System.currentTimeMillis() - start
         )
     }
 }

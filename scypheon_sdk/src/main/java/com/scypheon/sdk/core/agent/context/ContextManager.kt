@@ -11,17 +11,8 @@ import javax.inject.Singleton
 class ContextManager @Inject constructor() {
     
     private val segments = mutableListOf<ContextSegment>()
-    private var maxTokenBudget = 8192 // Default, can be updated via config
+    private val maxTokenBudget = 2048
 
-    @Synchronized
-    fun updateBudget(newBudget: Int) {
-        if (newBudget > 0 && maxTokenBudget != newBudget) {
-            maxTokenBudget = newBudget
-            enforceBudget()
-        }
-    }
-
-    @Synchronized
     fun push(content: String, priority: ContextPriority) {
         val segment = ContextSegment(
             id = UUID.randomUUID().toString(),
@@ -40,81 +31,36 @@ class ContextManager @Inject constructor() {
 
     fun ingestToolResults(results: List<ToolResult>) {
         results.forEach { result ->
-            val resultStr = when (result) {
-                is ToolResult.Success -> result.data?.toString() ?: "Success"
-                is ToolResult.Error -> "Error: ${result.reason}"
-                is ToolResult.Fallback -> "Fallback: ${result.data}"
-                is ToolResult.AwaitingApproval -> "Awaiting Approval: ${result.reason}"
-            }
-            push("TOOL_RESULT: $resultStr", ContextPriority.CRITICAL)
+            push("TOOL_RESULT: $result", ContextPriority.CRITICAL)
         }
     }
 
-    /**
-     * Safely builds the context window ensuring the SUM of tokens strictly adheres to the budget.
-     * Retains chronological order while packing the most recent and critical context first.
-     */
-    @Synchronized
     fun buildContextWindow(tokenBudget: Int): String {
-        val sortedSegments = segments.sortedByDescending { it.timestamp }
-        var currentTokens = 0
-        val selectedSegments = mutableListOf<ContextSegment>()
-
-        // Always include CRITICAL segments first to prevent safety mechanism eviction
-        val criticalSegments = sortedSegments.filter { it.priority == ContextPriority.CRITICAL }
-        for (segment in criticalSegments) {
-            if (currentTokens + segment.tokens <= tokenBudget) {
-                selectedSegments.add(segment)
-                currentTokens += segment.tokens
-            }
-        }
-
-        // Fill remaining budget chronologically (newest first)
-        for (segment in sortedSegments.filter { it.priority != ContextPriority.CRITICAL }) {
-            if (currentTokens + segment.tokens <= tokenBudget) {
-                selectedSegments.add(segment)
-                currentTokens += segment.tokens
-            }
-            if (currentTokens >= tokenBudget) break
-        }
-
-        // Re-sort selected segments back to chronological order for the LLM
-        return selectedSegments
-            .sortedBy { it.timestamp }
+        // Simple implementation: last X segments that fit in budget
+        return segments.sortedBy { it.timestamp }
+            .takeLastWhile { it.tokens <= tokenBudget }
             .joinToString("\n") { it.text }
     }
 
-    @Synchronized
     private fun enforceBudget() {
         var currentTokens = segments.sumOf { it.tokens }
         if (currentTokens > maxTokenBudget) {
-            // Evict lowest priority first, oldest first
             val evictable = segments.filter { it.priority != ContextPriority.CRITICAL }
-                .sortedWith(compareBy({ it.priority.ordinal }, { it.timestamp }))
+                .sortedBy { it.priority.ordinal }
             
-            val iterator = evictable.iterator()
-            while (iterator.hasNext() && currentTokens > maxTokenBudget) {
-                val segment = iterator.next()
+            for (segment in evictable) {
                 segments.remove(segment)
                 currentTokens -= segment.tokens
+                if (currentTokens <= maxTokenBudget) break
             }
         }
     }
 
-    /**
-     * Enterprise token estimation. Uses 1 token = 3.5 chars ratio based on Cl100kBase / Tiktoken heuristics,
-     * adding a 10% safety margin buffer to prevent OOV overflow.
-     */
-    private fun estimateTokens(text: String): Int {
-        if (text.isBlank()) return 0
-        val baseEstimate = Math.ceil(text.length / 3.5).toInt()
-        return (baseEstimate * 1.1).toInt() // 10% safety margin
-    }
+    private fun estimateTokens(text: String): Int = text.length / 4
 
-    @Synchronized
-    fun getPrompt(): String = buildContextWindow(maxTokenBudget)
+    fun getPrompt(): String = segments.sortedBy { it.timestamp }.joinToString("\n") { it.text }
 
     fun persist(sessionId: String) {
-        // Production: Implement DB serialization via abstract Persistence Layer
+        // Production: Write to Room/AppDatabase if needed
     }
 }

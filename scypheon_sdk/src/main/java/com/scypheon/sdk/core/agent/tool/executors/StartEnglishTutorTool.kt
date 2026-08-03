@@ -33,7 +33,7 @@ class StartEnglishTutorTool @Inject constructor(
             if (!englishTutor.isReady()) {
                 englishTutor.warmUp()
             }
-            ToolResult.Success("SUCCESS: Live English Tutor session initialized in ${args["mode"]} mode.", latencyMs = System.currentTimeMillis() - start)
+            ToolResult.Success("SUCCESS: Live English Tutor session initialized in ${args["mode"]} mode.", System.currentTimeMillis() - start)
         } catch (e: Exception) {
             ToolResult.Error(e.message ?: "Tutor start failed", e, System.currentTimeMillis() - start)
         }

@@ -29,7 +29,7 @@ class GetAuditLogTool @Inject constructor(
         val start = System.currentTimeMillis()
         return try {
             val logs = explainabilitySkill.getRecentAudit()
-            ToolResult.Success(logs, latencyMs = System.currentTimeMillis() - start)
+            ToolResult.Success(logs, System.currentTimeMillis() - start)
         } catch (e: Exception) {
             ToolResult.Error(e.message ?: "Audit lookup failed", e, System.currentTimeMillis() - start)
         }

@@ -4,7 +4,7 @@ package com.scypheon.sdk.core.agent.tool
  * Base implementation of [Tool] to reduce boilerplate.
  * Implements the "Claude Code" pattern for pluggable agentic capabilities.
  */
-abstract class BaseTool : Tool { override val triggerDescription: String get() = description.take(150)
+abstract class BaseTool : Tool {
     override val aliases: List<String> = emptyList()
     override val keywords: List<String> = emptyList()
     override val isMedical: Boolean = false
@@ -22,4 +22,3 @@ abstract class BaseTool : Tool { override val triggerDescription: String get() =
     
     override fun getActivityDescription(args: Map<String, Any?>): String? = null
 }
-

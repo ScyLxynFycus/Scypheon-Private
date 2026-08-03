@@ -24,8 +24,7 @@ class WebDiscoveryProvider @Inject constructor(
      * Fetches a clean, text-only summary from Wikipedia (Rest API).
      */
     suspend fun discoverWikipedia(query: String): String? = withContext(Dispatchers.IO) {
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8").replace("+", "%20")
-        val url = "https://en.wikipedia.org/api/rest_v1/page/summary/$encoded"
+        val url = "https://en.wikipedia.org/api/rest_v1/page/summary/${query.replace(" ", "_")}"
         executeCall(url)?.substringAfter("\"extract\":\"")?.substringBefore("\"")
     }
 
@@ -34,52 +33,17 @@ class WebDiscoveryProvider @Inject constructor(
      * Perfect for low-bandwidth general facts.
      */
     suspend fun discoverDuckDuckGo(query: String): String? = withContext(Dispatchers.IO) {
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val url = "https://api.duckduckgo.com/?q=$encoded&format=json"
+        val url = "https://api.duckduckgo.com/?q=${query.replace(" ", "+")}&format=json"
         executeCall(url)?.substringAfter("\"Abstract\":\"")?.substringBefore("\"")
     }
 
     /**
      * Fetches official drug safety data from OpenFDA.
-     * Parses the raw JSON into a structured clinical schema.
      * Maps to Theme: Health & Sciences.
      */
     suspend fun discoverOpenFDA(drugName: String): String? = withContext(Dispatchers.IO) {
-        val encoded = java.net.URLEncoder.encode(drugName, "UTF-8")
-        val url = "https://api.fda.gov/drug/event.json?search=patient.drug.medicinalproduct:\"$encoded\"&limit=3"
-        val rawJson = executeCall(url) ?: return@withContext null
-        
-        try {
-            val root = org.json.JSONObject(rawJson)
-            val results = root.optJSONArray("results") ?: return@withContext null
-            
-            val summary = java.lang.StringBuilder()
-            summary.append("FDA Adverse Event Reports for $drugName:\n")
-            
-            for (i in 0 until Math.min(results.length(), 3)) {
-                val event = results.getJSONObject(i)
-                val isSerious = event.optString("serious", "2") == "1"
-                val seriousFlag = if (isSerious) "[SERIOUS]" else "[NON-SERIOUS]"
-                
-                summary.append("- Event ID: ${event.optString("safetyreportid", "Unknown")} $seriousFlag\n")
-                
-                val patient = event.optJSONObject("patient")
-                if (patient != null) {
-                    val reactions = patient.optJSONArray("reaction")
-                    if (reactions != null && reactions.length() > 0) {
-                        val reactionList = mutableListOf<String>()
-                        for (j in 0 until reactions.length()) {
-                            reactionList.add(reactions.getJSONObject(j).optString("reactionmeddrapt", "Unknown"))
-                        }
-                        summary.append("  Reactions: ${reactionList.joinToString(", ")}\n")
-                    }
-                }
-            }
-            summary.toString()
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to parse OpenFDA JSON for $drugName")
-            null
-        }
+        val url = "https://api.fda.gov/drug/event.json?search=patient.drug.medicinalproduct:$drugName&limit=1"
+        executeCall(url)?.take(500) // Returns raw event summary for grounding
     }
 
     /**
@@ -87,9 +51,7 @@ class WebDiscoveryProvider @Inject constructor(
      * Optimized for low-bandwidth text extraction.
      */
     suspend fun discoverFandom(wikiName: String, pageName: String): String? = withContext(Dispatchers.IO) {
-        val safeWiki = wikiName.replace(Regex("[^a-zA-Z0-9-]"), "")
-        val encodedPage = java.net.URLEncoder.encode(pageName, "UTF-8").replace("+", "%20")
-        val url = "https://$safeWiki.fandom.com/api/v1/Articles/Details?ids=50&titles=$encodedPage"
+        val url = "https://$wikiName.fandom.com/api/v1/Articles/Details?ids=50&titles=${pageName.replace(" ", "_")}"
         executeCall(url)?.substringAfter("\"abstract\":\"")?.substringBefore("\"")
     }
 
