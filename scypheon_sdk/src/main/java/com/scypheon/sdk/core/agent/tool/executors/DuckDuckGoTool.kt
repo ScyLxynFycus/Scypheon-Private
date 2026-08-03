@@ -33,7 +33,7 @@ class DuckDuckGoTool @Inject constructor(
         return try {
             val summary = webProvider.discoverDuckDuckGo(query)
             if (summary != null) {
-                ToolResult.Success(summary, latencyMs = System.currentTimeMillis() - start)
+                ToolResult.Success(summary, System.currentTimeMillis() - start)
             } else {
                 ToolResult.Error("No instant answer found on DuckDuckGo for: $query", null, System.currentTimeMillis() - start)
             }

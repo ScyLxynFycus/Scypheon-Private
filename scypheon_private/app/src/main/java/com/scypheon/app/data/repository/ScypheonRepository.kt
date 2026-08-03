@@ -22,7 +22,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.IOException
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -34,6 +33,7 @@ import android.os.Trace
 import android.content.Intent
 import android.os.Build
 import com.scypheon.sdk.core.utils.NativeLibraryLoader
+import com.scypheon.sdk.core.utils.SolarisTelemetry
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -100,7 +100,7 @@ class ScypheonRepository @Inject constructor(
     }
 
     private var pendingWarning: String? = null
-
+    
     fun getPendingInitializationWarning(): String? = pendingWarning
     private fun clearPendingWarning() { pendingWarning = null }
 
@@ -108,9 +108,9 @@ class ScypheonRepository @Inject constructor(
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memInfo = ActivityManager.MemoryInfo()
         am.getMemoryInfo(memInfo)
-
+        
         val registry = AssetExtractor.discoverModels(context)
-
+        
         val elitePath = registry.eliteModel?.let { AssetExtractor.getModelPath(context, it) } ?: ""
         val universalPath = registry.universalModel?.let { AssetExtractor.getModelPath(context, it) } ?: ""
         val memoryPath = registry.memoryModel?.let { AssetExtractor.getModelPath(context, it) } ?: ""
@@ -119,7 +119,7 @@ class ScypheonRepository @Inject constructor(
         val isEliteOk = elitePath.isNotEmpty() && File(elitePath).exists()
         val isUniversalOk = universalPath.isNotEmpty() && File(universalPath).exists()
         val isPiggybacking = !isMemoryOk && isUniversalOk
-
+        
         SystemHealth(
             ramUsedMb = (memInfo.totalMem - memInfo.availMem) / (1024 * 1024),
             ramTotalMb = memInfo.totalMem / (1024 * 1024),
@@ -148,7 +148,7 @@ class ScypheonRepository @Inject constructor(
             try {
             triageState.set(TriageState.RUNNING)
             _engineState.emit(InitializationState.Analyzing("Waking Neural Gateway..."))
-
+            
             //  [SBI] Step 0: Dynamic Discovery & Pre-Flight Validation
             val registry = AssetExtractor.discoverModels(context)
             if (!ensureAssetsReady(context, registry)) {
@@ -157,52 +157,31 @@ class ScypheonRepository @Inject constructor(
             }
 
             val health = checkSystemHealth(context)
-
-            // --- TIER 1: ELITE ENGINE (LiteRT) ---
+            
             if (customElitePath != null) {
                 _engineState.emit(InitializationState.Analyzing("Initializing Elite Engine..."))
-
-                // [PHOENIX] Cross-Engine Unloading: Ensure Llama is unloaded to free up RAM/VRAM for LiteRT
-                gateway.releaseLlama()
-
-                val eliteLoadSuccess = try {
-                    gateway.initializeLiteRt(customElitePath, nCtx)
-                } catch (e: Exception) {
-                    Timber.e(e, "CRITICAL: LiteRT-LM JNI/Native Crash during init.")
-                    false
-                }
-
-                if (eliteLoadSuccess) {
+                val loadSuccess = gateway.initializeLiteRt(customElitePath, nCtx)
+                return@withLock if (loadSuccess) {
                     triageState.set(TriageState.READY)
                     scope.launch {
                         initializeEmbedder(registry, health)
                     }
-                    _engineState.emit(InitializationState.Success(gateway.getHardwareStatus()))
-                    return@withLock Result.Success(true)
+                    _engineState.emit(InitializationState.Success("NPU [Accelerated]"))
+                    Result.Success(true)
                 } else {
-                    // CASCADING FALLBACK: Elite Engine failed. Attempting Universal Sandbox.
-                    Timber.w("🛡️ [PHOENIX] Elite Engine failed. Attempting Cascading Fallback to Universal Sandbox...")
-                    if (!health.isUniversalOk && customUniversalPath == null) {
-                        triageState.set(TriageState.FAILED)
-                        _engineState.emit(InitializationState.Failed("CRITICAL", "Elite Engine failed and no Universal fallback found."))
-                        return@withLock Result.Error(Exception("Failed to initialize LiteRT-LM and no Universal fallback available"))
-                    }
-                    // Continue to Universal loading logic
-                    _engineState.emit(InitializationState.Analyzing("Falling back to Universal Sandbox..."))
+                    triageState.set(TriageState.FAILED)
+                    _engineState.emit(InitializationState.Failed("CRITICAL", "Failed to initialize LiteRT-LM"))
+                    Result.Error(Exception("Failed to initialize LiteRT-LM"))
                 }
             }
 
-            // --- TIER 2: UNIVERSAL ENGINE (Llama Sandbox) ---
             val finalUniversalPath = customUniversalPath ?: health.universalPath
             if (finalUniversalPath.isEmpty() || !File(finalUniversalPath).exists()) {
                 return@withLock Result.Error(Exception("Universal model not found at $finalUniversalPath"))
             }
 
             val modelSize = File(finalUniversalPath).length()
-
-            // [PHOENIX] Cross-Engine Unloading: Ensure LiteRT is unloaded to free up RAM for Llama
-            gateway.releaseLiteRt()
-
+            
             // [v1.0.5-SAR] Strict Memory Enforcement
             if (!MemoryGatekeeper.canLoadModel(context, modelSize)) {
                 Timber.e(" [GUARD] Memory Gatekeeper VETO: Model too large for current available RAM.")
@@ -211,7 +190,7 @@ class ScypheonRepository @Inject constructor(
             }
 
             val report = MemoryGatekeeper.performPreflightCheck(context, modelSize, isCpuMode = gateway.getBackendMode() == 1)
-
+            
             if (report.isVetoRequired) {
                 Timber.w("[MDRS] VETO ACTIVE! RAM constraint detected. Enforcing CPU limits.")
             }
@@ -220,9 +199,9 @@ class ScypheonRepository @Inject constructor(
             val tombstone = checkHardwareTombstone()
             if (tombstone != null) {
                 if (tombstone.signal == 6 || tombstone.signal == 0) { // SIGABRT (OOM) or Unexpected Death
-                    Timber.e("﨟槫惺 [PHOENIX] OOM/Crash detected for model: ${tombstone.modelPath}")
+                    Timber.e("🚨 [PHOENIX] OOM/Crash detected for model: ${tombstone.modelPath}")
                     hardwarePrefs.blacklistModel(tombstone.modelPath)
-
+                    
                     val modelName = File(tombstone.modelPath).name
                     _oomDiagnostic.emit(OomDiagnostic(
                         modelName = modelName,
@@ -254,24 +233,27 @@ class ScypheonRepository @Inject constructor(
             // This validates GGUF structure and header before attempting driver init.
             _engineState.emit(InitializationState.Trying("PROBE", 1))
             val probeOk = gateway.probeBackend(finalUniversalPath, 1) // Always use CPU for probe
-
+            
             if (!probeOk) {
-                Timber.e("隨ｶ繝ｻ[PHOENIX] Integrity probe FAILED. Model file may be corrupt or too large.")
+                Timber.e("❌ [PHOENIX] Integrity probe FAILED. Model file may be corrupt or too large.")
                 _engineState.emit(InitializationState.Failed("CORRUPT", "Model integrity check failed"))
                 return@withLock Result.Error(Exception("Model integrity check failed"))
             }
-            Timber.i("隨ｨ繝ｻ[PHOENIX] Probe SUCCESS. Proceeding with hardware initialization.")
+            Timber.i("✅ [PHOENIX] Probe SUCCESS. Proceeding with hardware initialization.")
 
             var success = false
+            // [MDRS 4.2] Dynamic Context Window Optimization
             var finalCtx = nCtx
             if (hardwarePrefs.isMdrsEnabled()) {
-                val safeKvTokens = MemoryGatekeeper.calculateSafeKvCache(context, modelSize)
-                finalCtx = minOf(nCtx, safeKvTokens)
-                Timber.i("﨟樊ぞ [MDRS] Dynamic Context Scaling Applied. Requested: $nCtx -> Granted: $finalCtx")
+                val memAvailableMb = MemoryGatekeeper.performPreflightCheck(context, 0).availableMB
+                if (memAvailableMb < 2048) { // < 2GB Available
+                    finalCtx = minOf(nCtx, 2048) // Cap at standard stable floor
+                    Timber.w("📉 [MDRS] Memory Pressure Detected ($memAvailableMb MB). Scaling Context: $nCtx -> $finalCtx")
+                }
             }
-
+            
             if (hardwarePrefs.isForceDegraded()) {
-                Timber.w("﨟槫惺 [SAR] Emergency Rollback: Forcing DEGRADED mode.")
+                Timber.w("🚨 [SAR] Emergency Rollback: Forcing DEGRADED mode.")
                 _engineState.emit(InitializationState.Failed("CRITICAL", "Emergency Rollback Active"))
                 return@withLock Result.Error(Exception("Emergency Rollback Active"))
             }
@@ -279,7 +261,7 @@ class ScypheonRepository @Inject constructor(
             for (currentTier in backends) {
                 val tierLabel = getTierName(currentTier)
                 var loadSuccess = false
-
+                
                 for (attempt in 1..2) {
                     if (hardwarePrefs.isBlacklisted(currentTier)) {
                         Timber.w(" [PHOENIX] Skipping blacklisted tier: $tierLabel")
@@ -287,11 +269,11 @@ class ScypheonRepository @Inject constructor(
                     }
 
                     _engineState.emit(InitializationState.Trying(tierLabel, attempt))
-
+                    
                     // [SBI] Loading LLM on tierLabel...
                     Timber.i(" [SBI] Loading LLM on $tierLabel...")
                     currentTensorSize = modelSize
-
+                    
                     //  [SAR] Phase 3: Pre-allocate target SHM and apply V.I.I.P OOM protection
                     com.scypheon.sdk.core.utils.ShmLifecycleManager.acquire(context, currentTensorSize, shouldDup = false)
 
@@ -299,11 +281,12 @@ class ScypheonRepository @Inject constructor(
                         // Telemetry: Log MDRS scaling
                         val availableRam = MemoryGatekeeper.performPreflightCheck(context, 0).availableMB * 1024 * 1024
                         val requestedCtx = nCtx
-
-                        blackBoxVault.record("mdrs_context_scaled", 1, mapOf(
+                        val grantedCtx = MemoryGatekeeper.calculateSafeKvCache(context, modelSize)
+                        
+                        SolarisTelemetry.record("mdrs_context_scaled", 1, mapOf(
                             "available_ram_mb" to (availableRam / 1024 / 1024).toString(),
                             "requested_ctx" to requestedCtx.toString(),
-                            "granted_ctx" to finalCtx.toString(),
+                            "granted_ctx" to grantedCtx.toString(),
                             "quantization" to "Q4/Q8"
                         ))
 
@@ -311,7 +294,7 @@ class ScypheonRepository @Inject constructor(
                         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
                         val memInfo = ActivityManager.MemoryInfo()
                         am.getMemoryInfo(memInfo)
-
+                        
                         writeTombstone(HardwareTombstone(
                             backend = tierLabel,
                             signal = 0, // 0 = IN_PROGRESS / LMKD Candidate
@@ -334,9 +317,9 @@ class ScypheonRepository @Inject constructor(
                         loadSuccess = true
                         break
                     } else {
-                        Timber.e("隨ｶ繝ｻ[PHOENIX] Load FAILED or UNSTABLE on $tierLabel. Result=$loadResult")
+                        Timber.e("❌ [PHOENIX] Load FAILED or UNSTABLE on $tierLabel. Result=$loadResult")
                         hardwarePrefs.blacklist(currentTier)
-
+                        
                         if (loadResult) {
                             releaseUniversalEngine()
                             kotlinx.coroutines.delay(1000L * attempt)
@@ -346,16 +329,14 @@ class ScypheonRepository @Inject constructor(
 
                 if (loadSuccess) {
                     success = true
+                    triageState.set(TriageState.READY)
                     
                     // [SBI] Step 2: Proactive wiring of Vector & Safety Embeddings
-                    // We delay this briefly to ensure the LLM has finished its Prefill phase
-                    // and doesn't get choked by simultaneous embedding requests.
+                    // We load these in parallel to LLM stabilization to save ~1.5s
                     scope.launch {
-                        kotlinx.coroutines.delay(2000L) 
                         initializeEmbedder(registry, health)
                     }
 
-                    triageState.set(TriageState.READY)
                     _engineState.emit(InitializationState.Success(gateway.getHardwareStatus()))
                     break
                 } else {
@@ -363,8 +344,8 @@ class ScypheonRepository @Inject constructor(
                     releaseUniversalEngine()
                 }
             }
-
-            if (success) Result.Success(true)
+            
+            if (success) Result.Success(true) 
             else Result.Error(Exception("All backends exhausted"))
         } catch (e: Exception) {
             triageState.set(TriageState.FAILED)
@@ -386,7 +367,7 @@ class ScypheonRepository @Inject constructor(
         val memPath = health.memoryPath.ifEmpty {
             if (memModelName.isNotEmpty()) AssetExtractor.getModelPath(context, memModelName) else ""
         }
-
+        
         when {
             memModelName.isNotEmpty() && AssetExtractor.isGguf(context, memModelName) -> {
                 Timber.i("[HOTSWAP] Piggybacking on Universal GGUF for embeddings.")
@@ -397,20 +378,15 @@ class ScypheonRepository @Inject constructor(
                 vectorEngine.switchToLiteRtEmbedder(memPath)
             }
             else -> {
-                if (gateway.llamaEngine.isReady()) {
-                    Timber.i("[HOTSWAP] No dedicated embedder. Piggybacking on Universal GGUF.")
-                    vectorEngine.switchToLlamaEmbedder(null)
-                } else {
-                    Timber.i("[HOTSWAP] No dedicated embedder and Universal GGUF not active/ready. Falling back to LiteRT embedder.")
-                    vectorEngine.switchToLiteRtEmbedder(null)
-                }
+                Timber.i("[HOTSWAP] No dedicated embedder. Piggybacking on Universal.")
+                vectorEngine.switchToLlamaEmbedder(null)
             }
         }
     }
 
 
     private var lastTombstone: HardwareTombstone? = null
-
+    
     fun dismissOomDiagnostic() {
         _oomDiagnostic.value = null
     }
@@ -436,10 +412,10 @@ class ScypheonRepository @Inject constructor(
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memInfo = ActivityManager.MemoryInfo()
         am.getMemoryInfo(memInfo)
-
+        
         val threshold = memInfo.totalMem * 0.15
         val isStable = memInfo.availMem >= threshold
-
+        
         if (!isStable) {
             Timber.w(" [SAR] Post-load memory VETO: ${memInfo.availMem / 1024 / 1024}MB available < 15% threshold.")
         }
@@ -452,9 +428,11 @@ class ScypheonRepository @Inject constructor(
             if (!tombstoneFile.exists()) return null
             try {
                 val json = tombstoneFile.readText().trim()
-                val gson = com.google.gson.Gson()
-                val tombstone = gson.fromJson(json, HardwareTombstone::class.java)
-
+                val gson = com.google.gson.GsonBuilder().setLenient().create()
+                val reader = com.google.gson.stream.JsonReader(java.io.StringReader(json))
+                reader.isLenient = true
+                val tombstone = gson.fromJson<HardwareTombstone>(reader, HardwareTombstone::class.java)
+                
                 if (tombstone != null) {
                     tombstoneFile.delete() // Always consume if parseable
 
@@ -463,35 +441,18 @@ class ScypheonRepository @Inject constructor(
                     val tsMs = if (tombstone.timestamp < 1000000000000L) tombstone.timestamp * 1000 else tombstone.timestamp
                     val ageS = (System.currentTimeMillis() - tsMs) / 1000
                     val isExpired = ageS > 24 * 60 * 60
-
+                    
                     // [PHOENIX] Fresh tombstone (even with SIG=0) implies a process hang/crash during init.
-                    val isRecent = ageS < 60
+                    val isRecent = ageS < 60 
                     val isKnownBackend = tombstone.backend.uppercase() in setOf("CPU", "VULKAN", "OPENCL")
                     val isRealCrash = (tombstone.signal > 0 || isRecent) && isKnownBackend
-
+                    
                     if (!isRealCrash || isExpired) {
                         Timber.w(" [SOLARIS] Tombstone discarded (stale/empty/expired): SIG=${tombstone.signal} BACKEND=${tombstone.backend} AGE=${ageS}s")
                         return null
                     }
-
-                    Timber.w(" [PHOENIX] Processed CRITICAL Tombstone: SIG=${tombstone.signal} BACKEND=${tombstone.backend}")
                     
-                    // 🛡️ Aegis/BlackBox Vault Logging
-                    scope.launch {
-                        blackBoxVault.record(
-                            eventType = "HARDWARE_TOMBSTONE_CRASH",
-                            traceId = UUID.randomUUID().toString(),
-                            data = mapOf(
-                                "signal" to tombstone.signal,
-                                "backend" to tombstone.backend,
-                                "model" to (tombstone.modelPath.takeIf { it.isNotEmpty() }?.let { File(it).name } ?: "unknown"),
-                                "available_ram_mb" to (tombstone.availableRam / 1024 / 1024).toString(),
-                                "reason" to "Sandbox process terminated unexpectedly (LMKD or Segfault)"
-                            ),
-                            severity = "CRITICAL"
-                        )
-                    }
-
+                    Timber.w(" [PHOENIX] Processed CRITICAL Tombstone: SIG=${tombstone.signal} BACKEND=${tombstone.backend}")
                     lastTombstone = tombstone // Store for UI/Telemetry
                     return tombstone
                 }
@@ -532,13 +493,13 @@ class ScypheonRepository @Inject constructor(
     private suspend fun ensureAssetsReady(context: Context, registry: com.scypheon.sdk.core.utils.ModelRegistry): Boolean {
         return withContext(Dispatchers.IO) {
             Timber.i(" [SBI] Starting Dynamic Asset Validation...")
-
+            
             val modelsToVerify = listOfNotNull(
                 registry.eliteModel,
                 registry.universalModel,
                 registry.memoryModel
             )
-
+            
             if (modelsToVerify.isEmpty()) {
                 Timber.e(" [SBI] No models discovered in Assets or Downloads!")
                 return@withContext false
@@ -599,15 +560,15 @@ class ScypheonRepository @Inject constructor(
             val userQuery = history.lastOrNull { it.role == com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.USER }?.content ?: ""
             val (path, _) = intentRouter.routeMissionSync(userQuery)
             val sessionId = "active_stream_session" // Usually tracked by UI, using active string here as fallback context
-
+            
             blackBoxVault.logEvent("AI_INFERENCE_STREAM", "Streaming requested. Path: $path (Turns=${history.size})")
-
-            // [v1.4.0-SAR] UNIFIED AGENTIC PIPELINE: ALL queries go through the tool-aware
+            
+            // [v1.4.0-SAR] UNIFIED AGENTIC PIPELINE: ALL queries go through the tool-aware 
             // orchestrator. The LLM itself decides whether to invoke tools based on its own
-            // reasoning 遯ｶ繝ｻjust like Claude Code, Cursor, and other agentic IDEs.
+            // reasoning — just like Claude Code, Cursor, and other agentic IDEs.
             // The SkillIntentRouter is kept for telemetry/logging only, not for gating tool access.
             val streamFlow = orchestrator.generateAgenticStream(
-                sessionId, history, topK, topP, temp, maxTokens, enableThinking, allowNetwork
+                sessionId, history, topK, topP, temp, enableThinking, allowNetwork
             )
 
             streamFlow
@@ -615,28 +576,15 @@ class ScypheonRepository @Inject constructor(
                     //  [SAR] Phase 3: Record tokens for possible recovery
                     // In a real implementation we would need to capture the KV offset from the stream
                     // Simulating for now using a counter as the engine doesn't yet transmit offsets per-token
-                    // replayBuffer.record(tokenId, kvOffset)
+                    // replayBuffer.record(tokenId, kvOffset) 
                 }
                 .catch { e ->
                     Timber.e(e, " [PHOENIX] Inference Stream CRASHED. Initiating Solaris Recovery.")
-                    val isOom = e is com.scypheon.sdk.core.gateway.PromptTooLongException
-                    val crashReason = if (isOom) CrashReason.OOM_CONTEXT_OVERFLOW else CrashReason.UNKNOWN
-                    
-                    val crashedState = AgentState(
-                        history = history,
-                        physicalCtx = gateway.llamaEngine.currentLoadedCtx.let { if (it > 0) it else 4096 }
-                    )
-                    
-                    when (val result = attemptPhase3Recovery(crashedState, crashReason)) {
-                        is RecoveryResult.Success -> {
-                            emit("\n\n[SYSTEM] Stream recovered from crash. Please send your message again to continue.")
-                        }
-                        is RecoveryResult.Abort -> {
-                            emit("\n\n[SYSTEM ERROR] ${result.reason}")
-                        }
-                        is RecoveryResult.Retry -> {
-                            throw e
-                        }
+                    val recovered = attemptPhase3Recovery()
+                    if (recovered) {
+                        // Re-trigger generation or signal UI to wait
+                    } else {
+                        throw e
                     }
                 }
                 .onCompletion {
@@ -660,12 +608,12 @@ class ScypheonRepository @Inject constructor(
         try {
             if (gateway.isReady()) {
                 blackBoxVault.logEvent("AI_INFERENCE", "Neural Gateway generation requested")
-
+                
                 // Collect streaming response into a single string for legacy compatibility
                 val builder = StringBuilder()
                 gateway.routeRequest(prompt).collect { builder.append(it) }
                 val fullResponse = builder.toString()
-
+                
                 Result.Success(fullResponse)
             } else {
                 blackBoxVault.logEvent("AI_INFERENCE_ERROR", "Neural Gateway not ready", "CRITICAL")
@@ -678,8 +626,8 @@ class ScypheonRepository @Inject constructor(
     }
 
     suspend fun saveSessionMessage(
-        sessionId: String,
-        message: String,
+        sessionId: String, 
+        message: String, 
         isUser: Boolean,
         status: Int = ScypheonDbHelper.STATUS_SUCCESS,
         isContextEligible: Boolean = true
@@ -700,7 +648,7 @@ class ScypheonRepository @Inject constructor(
     }
 
     /**
-     * MDRS: Reactive memory reclamation.
+     * MDRS: Reactive memory reclamation. 
      * Orchestrates KV cache eviction across the neural pipeline when the system is under duress.
      */
     fun reclaimMemory(level: Int) {
@@ -712,90 +660,40 @@ class ScypheonRepository @Inject constructor(
         memoryManager.expireAwaitingApprovalTasks(fifteenMinsAgo)
     }
 
-    suspend fun deleteSession(sessionId: String) = withContext(Dispatchers.IO) {
-        memoryManager.wipeSessionMemory(sessionId)
-    }
-
-    enum class CrashReason { OOM_CONTEXT_OVERFLOW, LMKD_KILL, SEGFAULT, UNKNOWN }
-
-    data class AgentState(
-        val history: List<com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn>,
-        val physicalCtx: Int,
-        val recoveryAttempts: Int = 0
-    )
-
-    sealed class RecoveryResult {
-        data class Success(val state: AgentState) : RecoveryResult()
-        data class Retry(val state: AgentState) : RecoveryResult()
-        data class Abort(val reason: String) : RecoveryResult()
-    }
-
     /**
      *  [SAR] Phase 3: Zero-Latency Handoff Recovery
      */
-    private suspend fun attemptPhase3Recovery(
-        crashedState: AgentState,
-        crashReason: CrashReason
-    ): RecoveryResult {
+    private suspend fun attemptPhase3Recovery(): Boolean {
         val startTime = System.currentTimeMillis()
-        Timber.w(" [SOLARIS] Emergency Sandbox Resurrection Initiated... Reason: $crashReason")
+        Timber.w(" [SOLARIS] Emergency Sandbox Resurrection Initiated...")
+        
+        val pfd = com.scypheon.sdk.core.utils.ShmLifecycleManager.acquire(context, currentTensorSize)
+        if (pfd == null) {
+            com.scypheon.sdk.core.utils.SolarisTelemetry.record("shm_fallback", 0, mapOf("reason" to "MEMFD_UNSUPPORTED"))
+            return false
+        }
 
-        return when (crashReason) {
-            CrashReason.OOM_CONTEXT_OVERFLOW -> {
-                Timber.w("[Recovery] OOM detected — forcing aggressive compact before restore")
-                
-                // Aggressive compact (keep only last 2 turns + system)
-                val systemMessages = crashedState.history.filter { it.role == com.scypheon.sdk.core.gateway.NeuralGateway.NeuralTurn.Role.SYSTEM }
-                val recentTurns = crashedState.history.takeLast(2)
-                val compactedHistory = systemMessages + recentTurns
-                
-                val recoveredState = crashedState.copy(
-                    history = compactedHistory,
-                    recoveryAttempts = crashedState.recoveryAttempts + 1
-                )
-                
-                if (recoveredState.recoveryAttempts >= 2) {
-                    Timber.e("[Recovery] Max recovery attempts reached — graceful abort")
-                    RecoveryResult.Abort("Multiple OOM recoveries. Please start new session.")
-                } else {
-                    RecoveryResult.Success(recoveredState)
+        return try {
+            // 1. Attach existing SHM tensors (Zero-Latency!)
+            val attached = gateway.attachTensorMemory(pfd, currentTensorSize, lastTensorsHash)
+            if (!attached) throw IOException("SHM Attachment Failed")
+
+            // 3. Sync KV Cache position and re-inject tokens
+            val snapshots = replayBuffer.snapshot()
+            if (snapshots.isNotEmpty()) {
+                gateway.nativeKvRestore(0, replayBuffer.lastPos())
+                snapshots.forEach { 
+                    gateway.injectToken(it.tokenId, it.kvOffset, it.sequenceNumber)
                 }
             }
-            CrashReason.SEGFAULT, CrashReason.LMKD_KILL -> {
-                RecoveryResult.Abort("Fatal engine error. Restart app.")
-            }
-            else -> {
-                val pfd = com.scypheon.sdk.core.utils.ShmLifecycleManager.acquire(context, currentTensorSize)
-                if (pfd == null) {
-                    blackBoxVault.record("shm_fallback", 0, mapOf("reason" to "MEMFD_UNSUPPORTED"))
-                    return RecoveryResult.Abort("MEMFD_UNSUPPORTED")
-                }
 
-                val success = pfd.use { fd ->
-                    try {
-                        val attached = gateway.attachTensorMemory(fd, currentTensorSize, lastTensorsHash)
-                        if (!attached) return@use false
-                        val snapshots = replayBuffer.snapshot()
-                        if (snapshots.isNotEmpty()) {
-                            gateway.nativeKvRestore(0, replayBuffer.lastPos())
-                            snapshots.forEach {
-                                gateway.injectToken(it.tokenId, it.kvOffset, it.sequenceNumber)
-                            }
-                        }
-                        true
-                    } catch (e: Exception) {
-                        false
-                    }
-                }
-
-                if (success) {
-                    val latency = System.currentTimeMillis() - startTime
-                    blackBoxVault.record("crash_to_ready_ready_ms", latency)
-                    RecoveryResult.Success(crashedState)
-                } else {
-                    RecoveryResult.Abort("SHM Attachment Failed")
-                }
-            }
+            val latency = System.currentTimeMillis() - startTime
+            com.scypheon.sdk.core.utils.SolarisTelemetry.record("crash_to_ready_ready_ms", latency)
+            true
+        } catch (e: Exception) {
+            Timber.e(e, " [SOLARIS] Phase 3 Recovery FAILED.")
+            com.scypheon.sdk.core.utils.SolarisTelemetry.record("shm_fallback", 0, mapOf("reason" to "MMAP_ENOMEM"))
+            false
         }
     }
 }

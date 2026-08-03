@@ -1,7 +1,7 @@
 package com.scypheon.app.ui
 
 import android.os.Bundle
-import androidx.fragment.app.FragmentActivity
+import androidx.activity.ComponentActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -15,7 +15,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import android.Manifest
 import android.content.Intent
 import android.provider.Settings
@@ -39,18 +38,11 @@ import timber.log.Timber
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import android.widget.Toast
+import androidx.compose.ui.unit.dp
 import com.scypheon.app.R
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 
 @AndroidEntryPoint
-class MainActivity : FragmentActivity() {
+class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private val graphViewModel: GraphViewModel by viewModels()
@@ -68,90 +60,61 @@ class MainActivity : FragmentActivity() {
         }
         super.onCreate(savedInstanceState)
 
-        // Lock orientation to portrait during splash screen
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-
         requestPermissions()
 
         setContent {
-            val darkTheme = androidx.compose.foundation.isSystemInDarkTheme()
-            val view = androidx.compose.ui.platform.LocalView.current
-            if (!view.isInEditMode) {
-                androidx.compose.runtime.SideEffect {
-                    val window = (view.context as android.app.Activity).window
-                    @Suppress("DEPRECATION")
-                    window.statusBarColor = android.graphics.Color.TRANSPARENT
-                    @Suppress("DEPRECATION")
-                    window.navigationBarColor = android.graphics.Color.TRANSPARENT
-                    androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
-                    androidx.core.view.WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
-                    androidx.core.view.WindowCompat.getInsetsController(window, view).isAppearanceLightNavigationBars = !darkTheme
-                }
-            }
-
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val uiState by viewModel.uiState.collectAsState()
-                    
-                    var customSplashFinished by remember { mutableStateOf(false) }
-                    
-                    if (!customSplashFinished) {
-                        com.scypheon.app.ui.screens.CustomSplashScreen(
-                            onSplashFinished = {
-                                customSplashFinished = true
-                                // Unlock orientation to allow rotation in main screens
-                                requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+
+                    if (uiState.isNotificationSuppressed) {
+                        BlockingNotificationDialog(onOpenSettings = {
+                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
                             }
-                        )
+                            try {
+                                startActivity(intent)
+                            } catch (e: Exception) {
+                                // Fallback for various OS versions
+                                val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.fromParts("package", packageName, null)
+                                }
+                                startActivity(fallbackIntent)
+                            }
+                        })
                     } else {
-                        if (uiState.isNotificationSuppressed) {
-                            BlockingNotificationDialog(onOpenSettings = {
-                                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                                }
-                                try {
-                                    startActivity(intent)
-                                } catch (e: Exception) {
-                                    // Fallback for various OS versions
-                                    val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                        data = Uri.fromParts("package", packageName, null)
+                        // ─── First Launch Terms & Conditions ───
+                        // [v1.5.3-SAR] CRITICAL FIX: Read SharedPreferences OFF the main thread.
+                        // getSharedPreferences() triggers File.exists() which is a blocking disk IO
+                        // call that was causing ~1883ms StrictMode DiskReadViolation, cascading into
+                        // Activity destruction during model loading.
+                        var termsChecked by remember { mutableStateOf(false) }
+                        var showTerms by remember { mutableStateOf(false) }
+
+                        LaunchedEffect(Unit) {
+                            val accepted = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                getSharedPreferences("scypheon_private", MODE_PRIVATE)
+                                    .getBoolean("terms_accepted", false)
+                            }
+                            showTerms = !accepted
+                            termsChecked = true
+                        }
+
+                        if (termsChecked && showTerms) {
+                            ScypheonTermsDialog(
+                                onAccept = {
+                                    kotlinx.coroutines.MainScope().launch(kotlinx.coroutines.Dispatchers.IO) {
+                                        getSharedPreferences("scypheon_private", MODE_PRIVATE)
+                                            .edit().putBoolean("terms_accepted", true).apply()
                                     }
-                                    startActivity(fallbackIntent)
-                                }
-                            })
-                        } else {
-                            // ─── First Launch Terms & Conditions ───
-                            // [v1.5.3-SAR] CRITICAL FIX: Read SharedPreferences OFF the main thread.
-                            // getSharedPreferences() triggers File.exists() which is a blocking disk IO
-                            // call that was causing ~1883ms StrictMode DiskReadViolation, cascading into
-                            // Activity destruction during model loading.
-                            var termsChecked by remember { mutableStateOf(false) }
-                            var showTerms by remember { mutableStateOf(false) }
-    
-                            LaunchedEffect(Unit) {
-                                val accepted = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                    getSharedPreferences("scypheon_private", MODE_PRIVATE)
-                                        .getBoolean("terms_accepted", false)
-                                }
-                                showTerms = !accepted
-                                termsChecked = true
-                            }
-    
-                            if (termsChecked && showTerms) {
-                                ScypheonTermsDialog(
-                                    onAccept = {
-                                        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                            getSharedPreferences("scypheon_private", MODE_PRIVATE)
-                                                .edit().putBoolean("terms_accepted", true).apply()
-                                        }
-                                        showTerms = false
-                                    },
-                                    onDecline = { finish() }
-                                )
-                            }
+                                    showTerms = false
+                                },
+                                onDecline = { finish() }
+                            )
+                        }
 
                         // Waking Neural Gateway on demand only - removed startup initializeEngines
 
@@ -171,159 +134,77 @@ class MainActivity : FragmentActivity() {
                             viewModel = viewModel,
                             onBack = { viewModel.hideModelHub() }
                         )
+                    } else if (uiState.isLiveModeActive) {
+                        // Full-screen immersive Live Mode
+                        LiveModeScreen(
+                            liveState = uiState.liveState,
+                            audioLevel = uiState.liveAudioLevel,
+                            transcript = uiState.liveTranscript,
+                            onEndSession = { viewModel.toggleLiveMode() },
+                            onOrbClick = { viewModel.onLiveOrbClick() }
+                        )
                     } else {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            MainChatScreen(
-                                messages = uiState.messages,
-                                isReady = uiState.isReady,
-                                onSendMessage = { text, uri -> viewModel.sendMessage(text, uri) },
-                                activeFeature = uiState.activeFeature,
-                                onToggleFeature = { feature -> viewModel.toggleFeature(feature) },
-                                onOpenTelemetry = { viewModel.showTelemetryDashboard() },
-                                onOpenGraphExplorer = { viewModel.showGraphExplorer() },
-                                sessionHistory = uiState.sessionHistory,
-                                onNewSession = { viewModel.startNewSession() },
-                                onLoadSession = { sessionId -> viewModel.loadSession(sessionId) },
-                                onDeleteSession = { sessionId -> viewModel.deleteSession(sessionId) },
-                                onArchiveSession = { sessionId -> viewModel.archiveSession(sessionId) },
-                                onUnarchiveSession = { sessionId -> viewModel.unarchiveSession(sessionId) },
-                                onOpenModelHub = { viewModel.showModelHub() },
-                                activeModelName = uiState.activeModelName,
-                                activeEngineType = uiState.activeEngineType,
-                                isLiveModeActive = uiState.isLiveModeActive,
-                                onToggleLiveMode = { viewModel.toggleLiveMode() },
-                                userName = uiState.userName,
-                                onSaveUserName = { name -> viewModel.saveUserName(name) },
-                                error = uiState.error,
-                                localModels = uiState.config.localModels,
-                                isLocalModelPickerVisible = uiState.config.isLocalModelPickerVisible,
-                                onShowLocalModelPicker = { viewModel.showLocalModelPicker() },
-                                onHideLocalModelPicker = { viewModel.hideLocalModelPicker() },
-                                onSelectLocalModel = { file -> viewModel.hotswapLocalModel(file) },
-                                systemHealth = uiState.systemHealth,
-                                isDiagnosticVisible = uiState.isSystemHealthVisible,
-                                onShowDiagnostics = { viewModel.showSystemHealth() },
-                                onHideDiagnostics = { viewModel.hideSystemHealth() },
-                                onDismissError = { viewModel.dismissError() },
-                                showNoModelWarningDialog = uiState.showNoModelWarningDialog,
-                                onDismissNoModelWarning = { viewModel.dismissNoModelWarning() },
-                                onConfirmNoModelWarning = {
-                                    viewModel.dismissNoModelWarning()
-                                    viewModel.showModelHub()
-                                },
-                                systemWarning = uiState.systemWarning,
-                                onDismissWarning = { viewModel.dismissSystemWarning() },
-                                onConfirmWarning = { viewModel.confirmModelLoad() },
-                                config = uiState.config,
-                                isConfigVisible = uiState.isConfigVisible,
-                                onUpdateConfig = { viewModel.updateConfig(it) },
-                                onToggleConfig = { viewModel.toggleConfigDialog(it) },
-                                onResetHardware = { viewModel.resetHardwareOverrides() },
-                                engineState = uiState.engineState,
-                                ragState = uiState.ragState,
-                                diagnosticLogs = uiState.diagnosticLogs,
-                                isSandboxAlive = uiState.isSandboxAlive,
-                                isMemoryOptimized = uiState.isMemoryOptimized,
-                                onDismissMemoryOptimization = { viewModel.dismissMemoryOptimization() },
-                                memoryStabilityState = uiState.memoryStabilityState,
-                                memoryWarningCooldown = uiState.memoryWarningCooldown,
-                                onConfirmStabilityWarning = { viewModel.onConfirmStabilityWarning() },
-                                isAiGenerating = uiState.isAiGenerating,
-                                onStopGeneration = { viewModel.stopGeneration() },
-                                onRetryMessage = { text, uri -> viewModel.retryMessage(text, uri) },
-                                oomDiagnostic = uiState.oomDiagnostic,
-                                onDismissOom = { viewModel.dismissOomDiagnostic() },
-                                isMemoryInconsistent = uiState.isMemoryInconsistent,
-                                onResetMemory = { viewModel.resetMemoryDatabase() },
-                                onIgnoreInconsistency = { viewModel.ignoreMemoryInconsistency() },
-                                pendingContextScalingTokens = uiState.pendingContextScalingTokens,
-                                pendingContextScalingReqRamMb = uiState.pendingContextScalingReqRamMb,
-                                isRamCriticalForScaling = uiState.isRamCriticalForScaling,
-                                onApproveContextScaling = { tokens -> viewModel.approveContextScaling(tokens) },
-                                onRejectContextScaling = { truncate -> viewModel.rejectContextScaling(truncate) }
-                            )
-
-                            androidx.compose.animation.AnimatedVisibility(
-                                visible = uiState.isLiveModeActive,
-                                enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it }) + androidx.compose.animation.fadeIn(),
-                                exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + androidx.compose.animation.fadeOut(),
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                val context = LocalContext.current
-                                val lifecycleOwner = LocalLifecycleOwner.current
-                                var isCameraActive by remember { mutableStateOf(false) }
-                                val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
-
-                                Box(modifier = Modifier.fillMaxSize()) {
-                                    LiveModeScreen(
-                                        liveState = uiState.liveState,
-                                        audioLevel = uiState.liveAudioLevel,
-                                        transcript = uiState.liveTranscript,
-                                        activeSkillType = uiState.activeSkillType,
-                                        canvasDsl = uiState.canvasDsl,
-                                        onEndSession = {
-                                            if (isCameraActive) {
-                                                coroutineScope.launch { viewModel.liveVisionPipeline.stop() }
-                                                isCameraActive = false
-                                            }
-                                            viewModel.toggleLiveMode()
-                                        },
-                                        onOrbClick = { viewModel.onLiveOrbClick() },
-                                        onCameraClick = {
-                                            val hasPermission = ContextCompat.checkSelfPermission(
-                                                context,
-                                                Manifest.permission.CAMERA
-                                            ) == PackageManager.PERMISSION_GRANTED
-                                            
-                                            if (hasPermission) {
-                                                isCameraActive = !isCameraActive
-                                                val status = if (isCameraActive) "activated (Object Detection mode)" else "deactivated"
-                                                Toast.makeText(context, "Camera $status", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                Toast.makeText(context, "Camera permission required for vision mode", Toast.LENGTH_SHORT).show()
-                                                requestPermissions()
-                                            }
-                                        },
-                                        onSettingsClick = {
-                                            viewModel.toggleConfigDialog(true)
-                                        },
-                                        isCameraActive = isCameraActive,
-                                        onCameraPreviewReady = { previewView ->
-                                            if (previewView != null) {
-                                                viewModel.liveVisionPipeline.startCamera(lifecycleOwner, previewView)
-                                            } else {
-                                                coroutineScope.launch { viewModel.liveVisionPipeline.stop() }
-                                            }
-                                        },
-                                        onInterrupt = {
-                                            viewModel.onLiveIntent(com.scypheon.sdk.live.core.model.LiveIntent.StopSession(""))
-                                        },
-                                        onSkillTypeChange = { viewModel.setActiveSkillType(it) }
-                                    )
-
-                                    androidx.compose.animation.AnimatedVisibility(
-                                        visible = uiState.isConfigVisible,
-                                        enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it }) + androidx.compose.animation.fadeIn(),
-                                        exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + androidx.compose.animation.fadeOut(),
-                                        modifier = Modifier.fillMaxSize()
-                                    ) {
-                                        com.scypheon.app.ui.screens.SettingsScreen(
-                                            config = uiState.config,
-                                            onDismiss = { viewModel.toggleConfigDialog(false) },
-                                            onUpdate = { viewModel.updateConfig(it) },
-                                            onResetHardware = { viewModel.resetHardwareOverrides() }
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        MainChatScreen(
+                            messages = uiState.messages,
+                            isReady = uiState.isReady,
+                            onSendMessage = { text, uri -> viewModel.sendMessage(text, uri) },
+                            activeFeature = uiState.activeFeature,
+                            onToggleFeature = { feature -> viewModel.toggleFeature(feature) },
+                            onOpenTelemetry = { viewModel.showTelemetryDashboard() },
+                            onOpenGraphExplorer = { viewModel.showGraphExplorer() },
+                            sessionHistory = uiState.sessionHistory,
+                            onNewSession = { viewModel.startNewSession() },
+                            onLoadSession = { sessionId -> viewModel.loadSession(sessionId) },
+                            onOpenModelHub = { viewModel.showModelHub() },
+                            activeModelName = uiState.activeModelName,
+                            activeEngineType = uiState.activeEngineType,
+                            isLiveModeActive = uiState.isLiveModeActive,
+                            onToggleLiveMode = { viewModel.toggleLiveMode() },
+                            userName = uiState.userName,
+                            onSaveUserName = { name -> viewModel.saveUserName(name) },
+                            error = uiState.error,
+                            localModels = uiState.config.localModels,
+                            isLocalModelPickerVisible = uiState.config.isLocalModelPickerVisible,
+                            onShowLocalModelPicker = { viewModel.showLocalModelPicker() },
+                            onHideLocalModelPicker = { viewModel.hideLocalModelPicker() },
+                            onSelectLocalModel = { file -> viewModel.hotswapLocalModel(file) },
+                            systemHealth = uiState.systemHealth,
+                            isDiagnosticVisible = uiState.isSystemHealthVisible,
+                            onShowDiagnostics = { viewModel.showSystemHealth() },
+                            onHideDiagnostics = { viewModel.hideSystemHealth() },
+                            onDismissError = { viewModel.dismissError() },
+                            systemWarning = uiState.systemWarning,
+                            onDismissWarning = { viewModel.dismissSystemWarning() },
+                            onConfirmWarning = { viewModel.confirmModelLoad() },
+                            config = uiState.config,
+                            isConfigVisible = uiState.isConfigVisible,
+                            onUpdateConfig = { viewModel.updateConfig(it) },
+                            onToggleConfig = { viewModel.toggleConfigDialog(it) },
+                            onResetHardware = { viewModel.resetHardwareOverrides() },
+                            engineState = uiState.engineState,
+                            ragState = uiState.ragState,
+                            diagnosticLogs = uiState.diagnosticLogs,
+                            isSandboxAlive = uiState.isSandboxAlive,
+                            isMemoryOptimized = uiState.isMemoryOptimized,
+                            onDismissMemoryOptimization = { viewModel.dismissMemoryOptimization() },
+                            memoryStabilityState = uiState.memoryStabilityState,
+                            memoryWarningCooldown = uiState.memoryWarningCooldown,
+                            onConfirmStabilityWarning = { viewModel.onConfirmStabilityWarning() },
+                            isAiGenerating = uiState.isAiGenerating,
+                            onStopGeneration = { viewModel.stopGeneration() },
+                            onRetryMessage = { text, uri -> viewModel.retryMessage(text, uri) },
+                            oomDiagnostic = uiState.oomDiagnostic,
+                            onDismissOom = { viewModel.dismissOomDiagnostic() },
+                            isMemoryInconsistent = uiState.isMemoryInconsistent,
+                            onResetMemory = { viewModel.resetMemoryDatabase() },
+                            onIgnoreInconsistency = { viewModel.ignoreMemoryInconsistency() }
+                        )
                     }
-                    }
-                } // End of customSplashFinished else block
-            } // End of Surface
-        } // End of MaterialTheme
-    } // End of setContent
-} // End of onCreate
+                }
+            }
+        }
+        }
+    }
 
     override fun onStart() {
         super.onStart()
@@ -341,16 +222,6 @@ class MainActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.checkNotificationStatus()
-    }
-
-    override fun onStop() {
-        super.onStop()
-        // 🛡️ [SAR-1.1.0] Background Privacy & Resource Hardening
-        // Terminate Live Mode automatically when app goes to background
-        // to comply with OS permission guidelines and release mic/camera locks.
-        if (viewModel.uiState.value.isLiveModeActive) {
-            viewModel.toggleLiveMode()
-        }
     }
 
     private fun requestPermissions() {

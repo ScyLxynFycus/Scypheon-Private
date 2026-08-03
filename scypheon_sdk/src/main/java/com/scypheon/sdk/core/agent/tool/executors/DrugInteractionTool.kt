@@ -35,7 +35,7 @@ class DrugInteractionTool @Inject constructor(
         try {
             val drug = args["drug"]?.toString() ?: throw IllegalArgumentException("Missing drug parameter")
             val result = medicalSkill.checkInteraction(drug)
-            ToolResult.Success(result, latencyMs = System.currentTimeMillis() - start)
+            ToolResult.Success(result, System.currentTimeMillis() - start)
         } catch (e: Exception) {
             ToolResult.Error(e.message ?: "Interaction check failed", e, System.currentTimeMillis() - start)
         }

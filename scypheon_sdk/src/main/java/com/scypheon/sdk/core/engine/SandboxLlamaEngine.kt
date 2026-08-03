@@ -40,9 +40,7 @@ class SandboxLlamaEngine @Inject constructor(
     @ApplicationContext private val context: Context,
     private val keyManager: com.scypheon.sdk.core.security.DatabaseKeyManager,
     private val clinicalValidator: com.scypheon.sdk.core.humanitarian.medical.ClinicalValidator,
-    private val circuitBreaker: ResilienceCircuitBreaker,
-    private val pqcKeyExchangeManager: com.scypheon.sdk.core.security.PqcKeyExchangeManager,
-    private val blackBoxVault: com.scypheon.sdk.core.telemetry.BlackBoxVault
+    private val circuitBreaker: ResilienceCircuitBreaker
 ) : BaseAiEngine {
 
     override val engineId: String = "llama_sandbox"
@@ -109,23 +107,12 @@ class SandboxLlamaEngine @Inject constructor(
                 // [v1.0.6-SAR] StrictMode override for service sync
                 val oldPolicy = android.os.StrictMode.allowThreadDiskReads()
                 try {
-                    Timber.d("🔐 [IPC] Initiating Kyber KEM key exchange...")
-                    val publicKey = sandbox.kemPublicKey
-                    val encapsulationResult = pqcKeyExchangeManager.encapsulate(publicKey) 
-                        ?: throw IllegalStateException("Failed to encapsulate secret")
-                    
-                    val encryptedDbKey = pqcKeyExchangeManager.encryptAesGcm(dbKey, encapsulationResult.sharedSecret)
-                    sandbox.initWithKem(context.filesDir.absolutePath, encapsulationResult.ciphertext, encryptedDbKey)
-                    
-                    // Zero out secrets
-                    encapsulationResult.sharedSecret.fill(0)
-                    dbKey.fill(0)
-                    Timber.i("🎉 [IPC] Kyber KEM key exchange completed successfully")
+                    sandbox.init(context.filesDir.absolutePath, dbKey)
                 } finally {
                     android.os.StrictMode.setThreadPolicy(oldPolicy)
                 }
                 
-                // Release the barrier: Resume all coroutines waiting for binding
+                // Lepaskan barrier: Lanjutkan semua coroutine yang menunggu binding
                 bindDeferred.getAndSet(null)?.complete(true)
             } catch (e: Exception) {
                 Timber.e(e, "Sandbox: Failed to sync initial state or link to death")
@@ -141,6 +128,8 @@ class SandboxLlamaEngine @Inject constructor(
     private fun handleServiceDeath() {
         Timber.e("🚨 [PHOENIX] Sandbox process DIED. Triggering emergency cleanup.")
         nativeModelLoadedInSandbox.set(false)
+        currentModelPath = ""
+        currentLoadedCtx = 0
         
         // SAR HARDENING: Immediately inform UI of the failure
         _processHealth.value = false
@@ -268,32 +257,6 @@ class SandboxLlamaEngine @Inject constructor(
 
     suspend fun injectToken(tokenId: Int, kvOffset: Int, sequenceNumber: Long) {
         sandboxRef.get()?.injectToken(tokenId, kvOffset, sequenceNumber)
-    }
-
-    suspend fun processImageTensor(buffer: android.hardware.HardwareBuffer, width: Int, height: Int): Boolean {
-        if (!ensureServiceBound()) return false
-        val sandbox = sandboxRef.get() ?: return false
-        val deferred = CompletableDeferred<Boolean>()
-        
-        val callback = object : IInferenceCallback.Stub() {
-            override fun onOutputSharedMemoryReady(pfd: ParcelFileDescriptor, size: Int) {}
-            override fun onPhaseChanged(phase: Int) {
-                if (phase == 2) deferred.complete(true)
-            }
-            override fun onTokenAvailable(count: Int) {}
-            override fun onComplete(promptTokens: Int, genTokens: Int, ttftMs: Long, tps: Float) {}
-            override fun onError(errorCode: Int, message: String) {
-                deferred.complete(false)
-            }
-        }
-
-        return try {
-            sandbox.processImageTensor(buffer, width, height, callback)
-            withTimeoutOrNull(30.seconds) { deferred.await() } ?: false
-        } catch (e: Exception) {
-            Timber.e(e, "Sandbox: processImageTensor failed")
-            false
-        }
     }
 
     suspend fun getEmbeddings(text: String): FloatArray? {
@@ -607,6 +570,7 @@ class SandboxLlamaEngine @Inject constructor(
                 continue
             }
 
+            // Ensure the model is loaded on the current sandbox process (especially after a crash/restart)
             val currentSandbox = sandboxRef.get()
             if (currentSandbox == null) {
                 if (attempt == maxAttempts) {
@@ -615,14 +579,9 @@ class SandboxLlamaEngine @Inject constructor(
                 continue
             }
 
-            if (!isReady()) {
-                if (currentModelPath.isEmpty()) {
-                    Timber.e("💀 [PHOENIX] Cannot infer: No model path registered. Engine must be initialized first.")
-                    if (attempt == maxAttempts) emit("Error: Engine not initialized.")
-                    break
-                }
+            if (currentModelPath.isNotEmpty() && !isReady()) {
                 Timber.w("🛡️ [PHOENIX] Sandbox was restarted. Re-loading model $currentModelPath...")
-                val loadSuccess = loadWithMode(currentModelPath, selectedBackendMode, if (currentLoadedCtx > 0) currentLoadedCtx else 4096)
+                val loadSuccess = loadWithMode(currentModelPath, selectedBackendMode, currentLoadedCtx)
                 if (!loadSuccess) {
                     Timber.e("💀 [PHOENIX] Model re-load failed. Aborting inference.")
                     if (attempt == maxAttempts) {
@@ -633,14 +592,13 @@ class SandboxLlamaEngine @Inject constructor(
             }
 
             // [v1.2.5-SAR] CONTEXT GUARD: Truncate prompt if it exceeds context limit.
-            val activeCtx = if (currentLoadedCtx >= 512) currentLoadedCtx else 4096
-            val maxInputTokens = (activeCtx * 0.75).toInt()
+            val maxInputTokens = (currentLoadedCtx * 0.75).toInt()
             val estimatedPromptTokens = (prompt.length / 3.5).toInt()
             
             val safePrompt = if (estimatedPromptTokens > maxInputTokens) {
                 val keepChars = (maxInputTokens * 3.5).toInt()
-                Timber.w("⚠️ [CONTEXT] Prompt too long ($estimatedPromptTokens tokens). Truncating to ~$maxInputTokens tokens to fit n_ctx=$activeCtx.")
-                prompt.takeLast(keepChars)
+                Timber.w("⚠️ [CONTEXT] Prompt too long ($estimatedPromptTokens tokens). Truncating to ~$maxInputTokens tokens to fit n_ctx=$currentLoadedCtx.")
+                prompt.takeLast(keepChars) // Keep the most recent context
             } else {
                 prompt
             }
@@ -653,6 +611,7 @@ class SandboxLlamaEngine @Inject constructor(
                 val callback = object : IInferenceCallback.Stub() {
                     override fun onOutputSharedMemoryReady(pfd: ParcelFileDescriptor, size: Int) {
                         try {
+                            // Close old references if any exist to prevent address leak / hang
                             mappedBuffer?.let { android.os.SharedMemory.unmap(it) }
                             sharedMemory?.close()
                             
@@ -672,16 +631,28 @@ class SandboxLlamaEngine @Inject constructor(
                     }
 
                     override fun onTokenAvailable(count: Int) {
+                        timber.log.Timber.d("onTokenAvailable called with count: $count")
+                        
+                        // Validasi DirectByteBuffer dan hak akses/liveness dari sandbox
                         val sandboxLive = sandboxRef.get()
-                        if (sandboxLive == null || !_processHealth.value || !sandboxLive.asBinder().isBinderAlive) return
+                        if (sandboxLive == null || !_processHealth.value || !sandboxLive.asBinder().isBinderAlive) {
+                            timber.log.Timber.w("Sandbox process is dead or binder is not alive, aborting buffer access")
+                            return
+                        }
 
                         val buffer = mappedBuffer ?: return
-                        if (!buffer.isDirect) return
+                        if (!buffer.isDirect) {
+                            timber.log.Timber.e("Buffer is not direct. Aborting.")
+                            return
+                        }
 
                         while (currentTokenIndex < count) {
                             try {
                                 val offset = 4 + (currentTokenIndex * 256)
-                                if (offset + 256 > buffer.capacity()) break
+                                if (offset + 256 > buffer.capacity()) {
+                                    timber.log.Timber.e("Buffer overflow: offset $offset exceeds capacity ${buffer.capacity()}")
+                                    break
+                                }
 
                                 buffer.position(offset)
                                 val tokenId = buffer.getInt()
@@ -693,21 +664,28 @@ class SandboxLlamaEngine @Inject constructor(
                                 buffer.get(textBytes)
                                 val nullIndex = textBytes.indexOf(0.toByte())
                                 val validLength = if (nullIndex == -1) 244 else nullIndex
-                                val text = String(textBytes, 0, validLength, Charsets.UTF_8).replace("\u2581", " ")
+                                val text = String(textBytes, 0, validLength, Charsets.UTF_8)
+                                
+                                timber.log.Timber.d("Token $currentTokenIndex: id=$tokenId, len=$length, conf=$confidence, extracted='$text'")
                                 
                                 if (text.isNotEmpty()) {
                                     trySend(text)
                                 }
                                 currentTokenIndex++
-                            } catch (e: Exception) { break }
+                            } catch (e: Exception) { 
+                                timber.log.Timber.e(e, "Error parsing token $currentTokenIndex")
+                                break 
+                            }
                         }
                     }
 
                     override fun onComplete(promptTokens: Int, genTokens: Int, ttftMs: Long, tps: Float) {
+                        Timber.i("🛰️ [TELEMETRY] Prompt: $promptTokens | Gen: $genTokens | TTFT: ${ttftMs}ms | TPS: $tps")
                         close()
                     }
 
                     override fun onError(errorCode: Int, message: String) {
+                        Timber.e("💀 [ERROR $errorCode] $message")
                         close(Exception("Error $errorCode: $message"))
                     }
                 }
@@ -749,7 +727,6 @@ class SandboxLlamaEngine @Inject constructor(
                     sharedMemory?.close()
                     mappedBuffer = null
                     sharedMemory = null
-                    try { sandboxRef.get()?.cancelInference() } catch (e: Exception) {}
                 }
             }.flowOn(Dispatchers.IO)
 
@@ -757,32 +734,29 @@ class SandboxLlamaEngine @Inject constructor(
                 var hasPrefillProgress = false
                 circuitBreaker.execute("llama_engine") {
                     val responseBuffer = StringBuilder()
-                    
-                    // Use withTimeoutOrNull so we can distinguish OUR timeout from the caller's timeout
-                    val timedOut = withTimeoutOrNull(getTimeoutMs()) {
-                        resultFlow.cancellable().collect {
-                            if (it == "<system:prefill>") {
-                                hasPrefillProgress = true
-                            } else {
-                                if (it.isNotEmpty()) {
+                    try {
+                        withTimeout(getTimeoutMs()) {
+                            resultFlow.cancellable().collect {
+                                if (it == "<system:prefill>") {
                                     hasPrefillProgress = true
+                                } else {
+                                    if (it.isNotEmpty()) {
+                                        hasPrefillProgress = true
+                                    }
+                                    responseBuffer.append(it)
+                                    emit(it)
                                 }
-                                responseBuffer.append(it)
-                                emit(it)
                             }
                         }
-                        true // Indicate completion
-                    } == null
-                    
-                    if (timedOut) {
+                    } catch (e: TimeoutCancellationException) {
                         if (hasPrefillProgress) {
-                            Timber.i(" [SAR] Internal timeout reached, but active progress detected. Clean exit.")
+                            Timber.i(" [SAR] Timeout reached, but active prefill/generation progress was detected. Treating as benign cancellation.")
+                            throw CancellationException("Benign timeout with progress", e)
                         } else {
-                            Timber.e("❌ [SAR] Internal timeout reached with zero progress! Engine is frozen.")
-                            throw Exception("Engine hung: Internal timeout with zero progress")
+                            Timber.e("❌ [SAR] Timeout reached with zero prefill/generation progress! Engine is likely frozen.")
+                            throw Exception("Engine hung: Timeout with zero progress", e)
                         }
                     }
-                    
                     val fullResponse = responseBuffer.toString()
                     if (fullResponse.isNotEmpty()) {
                         val audit = withContext(Dispatchers.Default) { clinicalValidator.validateResponse(fullResponse) }
@@ -792,12 +766,10 @@ class SandboxLlamaEngine @Inject constructor(
                 success = true
             } catch (e: CircuitBreakerOpenException) {
                 emit("⚠️ RESILIENCE ALERT: Engine is currently cooling down due to previous failures.")
-                success = true
+                success = true // Don't retry if circuit breaker is open
             } catch (e: CancellationException) {
-                // If caller (e.g. DualMemoryManager extraction) times out, it throws CancellationException.
-                // We MUST let it propagate cleanly WITHOUT killing the engine!
-                Timber.i(" [SAR] Inference cancelled cleanly by parent scope. Engine remains healthy.")
-                throw e 
+                Timber.i(" [SAR] Inference cancelled cleanly.")
+                throw e // Propagate CancellationException so coroutine framework handles it cleanly
             } catch (e: Exception) {
                 Timber.e(e, "Inference attempt $attempt failed")
                 handleServiceDeath()
@@ -805,7 +777,7 @@ class SandboxLlamaEngine @Inject constructor(
                     emit("Error: AI engine link failed.")
                 } else {
                     Timber.w("🛡️ [PHOENIX] Reconnecting and retrying inference...")
-                    delay(1500)
+                    delay(1500) // Brief recovery window
                 }
             }
         }
@@ -841,4 +813,3 @@ class SandboxLlamaEngine @Inject constructor(
 
     override fun isReady(): Boolean = sandboxRef.get() != null && _initializationState.value is InitializationState.Success && nativeModelLoadedInSandbox.get()
 }
-

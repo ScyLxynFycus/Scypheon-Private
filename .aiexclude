@@ -10,10 +10,6 @@
 !README.md
 !LICENSE
 
-# === SCYPHEON: Core Modules ===
-!scypheon-desktop/**
-!llama/**
-
 # === VITREON: Edge Android & C++ Engine ===
 
 # Unblock the local-llama C++ source directory for architectural analysis and development

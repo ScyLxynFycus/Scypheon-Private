@@ -34,9 +34,10 @@ class Layer5PrivacyShield @Inject constructor() {
      */
     suspend fun scanAndRedact(input: String): PrivacyScanResult = withContext(Dispatchers.Default) {
         val detections = mutableListOf<PiiDetection>()
+        var redacted = input
 
         PII_PATTERNS.forEach { (type, pattern) ->
-            pattern.findAll(input).forEach { match ->
+            pattern.findAll(redacted).forEach { match ->
                 detections.add(PiiDetection(
                     type = type,
                     originalValue = match.value,
@@ -44,37 +45,15 @@ class Layer5PrivacyShield @Inject constructor() {
                     endIndex = match.range.last + 1,
                     confidence = 1.0f // Deterministic match
                 ))
+                redacted = redacted.replaceRange(match.range, REDACTION_TOKEN)
             }
-        }
-
-        // Sort by startIndex ascending, then by length descending (endIndex descending) to resolve overlaps
-        val sortedDetections = detections.sortedWith(
-            compareBy<PiiDetection> { it.startIndex }
-                .thenByDescending { it.endIndex }
-        )
-
-        val nonOverlappingDetections = mutableListOf<PiiDetection>()
-        var lastEnd = 0
-        for (det in sortedDetections) {
-            if (det.startIndex >= lastEnd) {
-                nonOverlappingDetections.add(det)
-                lastEnd = det.endIndex
-            }
-        }
-
-        // Sort descending by startIndex to apply replacements from right to left
-        val finalDetections = nonOverlappingDetections.sortedByDescending { it.startIndex }
-
-        var redacted = input
-        for (det in finalDetections) {
-            redacted = redacted.replaceRange(det.startIndex until det.endIndex, REDACTION_TOKEN)
         }
 
         PrivacyScanResult(
             originalInput = input,
             redactedOutput = redacted,
-            detections = nonOverlappingDetections.sortedBy { it.startIndex },
-            isClean = nonOverlappingDetections.isEmpty(),
+            detections = detections,
+            isClean = detections.isEmpty(),
             timestamp = System.currentTimeMillis()
         )
     }

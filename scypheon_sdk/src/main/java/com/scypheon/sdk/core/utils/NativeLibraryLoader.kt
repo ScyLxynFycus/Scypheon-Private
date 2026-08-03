@@ -25,12 +25,7 @@ object NativeLibraryLoader {
 
         return try {
             Timber.i("🛰️ SAR: Loading native library '$LIBRARY_NAME' in process ${android.os.Process.myPid()}")
-            val oldPolicy = android.os.StrictMode.allowThreadDiskReads()
-            try {
-                System.loadLibrary(LIBRARY_NAME)
-            } finally {
-                android.os.StrictMode.setThreadPolicy(oldPolicy)
-            }
+            System.loadLibrary(LIBRARY_NAME)
             isLoaded.set(true)
             Timber.i("✅ [SAR] Native library loaded successfully.")
             true

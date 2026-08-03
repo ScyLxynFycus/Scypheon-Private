@@ -47,7 +47,6 @@ class InputSafetyFilter @Inject constructor(
         SafetyRule("SENSITIVE_PHARMA", listOf("lethal dose", "synthesize poison", "illegal drug", "manufacture bomb", "buat racun", "dosis mematikan"), 0.8, 2),
         SafetyRule("SENSITIVE_MEDICAL_ADVICE", listOf("stop taking medication", "don't see a doctor", "berhenti minum obat", "jangan ke dokter"), 0.7, 2),
         
-        SafetyRule("ROLEPLAY_FRAMING", listOf("pretend you are", "act as", "you are now"), 0.55, 3),
         // Layer 3: Obfuscation Protection
         SafetyRule(
             "OBFUSCATED_ATTACK",
@@ -159,6 +158,4 @@ class InputSafetyFilter @Inject constructor(
 
     suspend fun isSafe(input: String): Boolean = evaluate(input).isSafe
 }
-
-
 

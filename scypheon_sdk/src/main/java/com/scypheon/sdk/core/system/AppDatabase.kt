@@ -15,32 +15,30 @@ import com.scypheon.sdk.core.security.AuditChainDao
 import com.scypheon.sdk.core.humanitarian.mesh.MeshMessageEntity
 import com.scypheon.sdk.core.humanitarian.mesh.MeshDao
 import com.scypheon.sdk.core.grounding.*
-import com.scypheon.sdk.core.memory.MemoryEntry
-import com.scypheon.sdk.core.memory.MemoryDao
+
 import com.scypheon.sdk.core.intelligence.graph.GraphNode
 import com.scypheon.sdk.core.intelligence.graph.GraphEdge
 import com.scypheon.sdk.core.intelligence.graph.GraphDao
 
 @Database(
     entities = [
-        AgentCheckpoint::class,
+        AgentCheckpoint::class, 
         MapTile::class,
         TelemetryEvent::class,
         FirstAidEntity::class,
         InteractionEntity::class,
         PharmacopeiaMetadata::class,
         MedicalVectorEntity::class,
-        PharmacopeiaEntry::class,
-        PharmacopeiaFts::class,
         AuditEntry::class,
         MeshMessageEntity::class,
+        PharmacopeiaEntry::class,
+        PharmacopeiaFts::class,
         KnowledgeEntry::class,
         KnowledgeFts::class,
         GraphNode::class,
-        GraphEdge::class,
-        MemoryEntry::class
+        GraphEdge::class
     ],
-    version = 10,
+    version = 8,
     exportSchema = false
 )
 @TypeConverters(MedicalTypeConverters::class)
@@ -53,5 +51,4 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun auditChainDao(): AuditChainDao
     abstract fun meshDao(): MeshDao
     abstract fun graphDao(): GraphDao
-    abstract fun memoryDao(): MemoryDao
 }

@@ -17,10 +17,10 @@ data class GraphNode(
 )
 
 data class GraphEdge(
-    var fromX: Float,
-    var fromY: Float,
-    var toX: Float,
-    var toY: Float,
+    val fromX: Float,
+    val fromY: Float,
+    val toX: Float,
+    val toY: Float,
     val particleOffset: Float, // Precomputed [0..1]
     val predicate: String
 )

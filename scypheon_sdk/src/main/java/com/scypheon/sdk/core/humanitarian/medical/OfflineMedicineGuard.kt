@@ -32,8 +32,7 @@ class OfflineMedicineGuard @Inject constructor(
     private val llmEngine: LiteRtEliteEngine,
     private val memoryManager: DualMemoryManager,
     private val interactionChecker: DrugInteractionChecker,
-    private val dao: PharmacopeiaDao,
-    private val clinicalValidator: ClinicalValidator
+    private val dao: PharmacopeiaDao
 ) : TextToSpeech.OnInitListener {
 
     private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -76,7 +75,7 @@ class OfflineMedicineGuard @Inject constructor(
         isProcessing = true
         textRecognizer.process(image)
             .addOnSuccessListener { visionText ->
-                val scannedText = visionText.text.trim()
+                val scannedText = visionText.text.replace("\n", " ").trim()
 
                 // Only trigger Gemma if we found substantial new text
                 if (scannedText.length > 10 && scannedText != lastScannedText) {
@@ -102,50 +101,6 @@ class OfflineMedicineGuard @Inject constructor(
             val userAllergies = memoryManager.getUserAllergies()
             Timber.i("💊 Active Patient Allergies fetched from DB: $userAllergies")
 
-            val cleanOcr = FtsSanitizer.sanitize(rawOcrText)
-            val resolvedIds = if (cleanOcr.isNotBlank()) {
-                try {
-                    dao.resolveIds(cleanOcr)
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to resolve IDs from OCR text using FTS: $cleanOcr")
-                    emptyList()
-                }
-            } else {
-                emptyList()
-            }
-            val detectedDrug = if (resolvedIds.isNotEmpty()) {
-                dao.getDrugById(resolvedIds.first())?.genericName
-            } else null
-
-            // 1. Programmatic Allergy Cross-Check (Bypasses LLM entirely)
-            val userAllergiesList = clinicalValidator.parseAllergies(userAllergies)
-            if (resolvedIds.isNotEmpty()) {
-                val drug = dao.getDrugById(resolvedIds.first())
-                if (drug != null) {
-                    val checkResult = clinicalValidator.checkAllergyInteraction(drug.drugName, userAllergiesList)
-                    val genericCheckResult = drug.genericName?.let { clinicalValidator.checkAllergyInteraction(it, userAllergiesList) } ?: AllergyCheckResult.Safe
-                    
-                    val unsafeResult = when {
-                        checkResult is AllergyCheckResult.Unsafe -> checkResult
-                        genericCheckResult is AllergyCheckResult.Unsafe -> genericCheckResult
-                        else -> null
-                    }
-                    
-                    if (unsafeResult != null) {
-                        Timber.e("[OfflineMedicineGuard] LETHAL ALLERGY BLOCKED: ${drug.drugName} vs ${unsafeResult.allergen}")
-                        val allergyWarning = "⚠️ CRITICAL LETHAL ALLERGY WARNING ⚠️\n\n" +
-                                "This medication contains or is related to '${unsafeResult.allergen}', which you are severely allergic to. " +
-                                "DO NOT TAKE THIS MEDICATION. Seek immediate alternative treatments."
-                        try {
-                            tts?.speak(allergyWarning, TextToSpeech.QUEUE_FLUSH, null, "MedicineGuard")
-                        } catch (e: Exception) {
-                            isProcessing = false
-                        }
-                        return@launch
-                    }
-                }
-            }
-
             val prompt = """
                 You are a strict, highly accurate offline pharmacist AI.
 
@@ -162,6 +117,11 @@ class OfflineMedicineGuard @Inject constructor(
                 Start with "DANGER" if it conflicts with allergies, otherwise start with "Medicine identified".
                 Do not use markdown. Speak clearly.
             """.trimIndent()
+
+            val resolvedIds = dao.resolveIds(rawOcrText)
+            val detectedDrug = if (resolvedIds.isNotEmpty()) {
+                dao.getDrugById(resolvedIds.first())?.genericName
+            } else null
 
             var interactionWarning = ""
             if (detectedDrug != null) {

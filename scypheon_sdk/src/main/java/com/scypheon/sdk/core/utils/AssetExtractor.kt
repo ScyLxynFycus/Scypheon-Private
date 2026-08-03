@@ -164,50 +164,7 @@ object AssetExtractor {
         
         // 1. Check if already exists and valid
         val expectedHash = getExpectedHash(filename)
-        if (integrityGuard.verifyAndEnsure(filename, targetFile, expectedHash)) {
-            if (expectedHash.equals("IGNORE", ignoreCase = true)) {
-                val assetPath = if (filename.startsWith(".")) {
-                    "shm/${filename.removePrefix(".")}"
-                } else {
-                    "$MODELS_DIR/$filename"
-                }
-                
-                // Known expected sizes for uncompressed stealth assets to detect truncation:
-                val expectedMinSize = when (filename) {
-                    ".gateway_sync.bin", "gateway_sync.bin" -> 190_000_000L
-                    ".universal_sync.bin", "universal_sync.bin" -> 320_000_000L
-                    else -> 0L
-                }
-
-                if (expectedMinSize > 0 && targetFile.length() < expectedMinSize) {
-                    Timber.w("⚠️ [PHOENIX] File on disk '${targetFile.name}' is too small (${targetFile.length()} < $expectedMinSize). Forcing re-extraction...")
-                    targetFile.delete()
-                    return extractIndividualModel(context, filename, targetFile, expectedHash)
-                }
-
-                try {
-                    var assetLength = -1L
-                    try {
-                        context.assets.openFd(assetPath).use { afd ->
-                            assetLength = afd.length
-                        }
-                    } catch (e: Exception) {
-                        context.assets.open(assetPath).use { input ->
-                            assetLength = input.available().toLong()
-                        }
-                    }
-                    
-                    if (assetLength > 0 && targetFile.length() != assetLength) {
-                        Timber.w("⚠️ [PHOENIX] Size mismatch for '$filename' on disk (${targetFile.length()} != $assetLength). Forcing re-extraction...")
-                        targetFile.delete()
-                        return extractIndividualModel(context, filename, targetFile, expectedHash)
-                    }
-                } catch (e: Exception) {
-                    Timber.e(e, "Error checking asset size for '$assetPath'")
-                }
-            }
-            return true
-        }
+        if (integrityGuard.verifyAndEnsure(filename, targetFile, expectedHash)) return true
         
         // 2. Try migration from Downloads (if fully downloaded)
         if (migrateFromDownloads(context, filename, targetFile, expectedHash)) return true
@@ -299,13 +256,7 @@ object AssetExtractor {
             val assetManager = context.assets
             val tempFile = File(targetFile.parentFile, "${targetFile.name}.tmp")
             
-            val assetPath = if (filename.startsWith(".")) {
-                "shm/${filename.removePrefix(".")}"
-            } else {
-                "$MODELS_DIR/$filename"
-            }
-            
-            assetManager.open(assetPath).use { input ->
+            assetManager.open("$MODELS_DIR/$filename").use { input ->
                 val fileSize = input.available().toLong()
                 tempFile.outputStream().use { output ->
                     val buffer = ByteArray(1024 * 1024)
@@ -324,7 +275,7 @@ object AssetExtractor {
                 true
             } else false
         } catch (e: Exception) {
-            Timber.e(e, "Asset $filename not found in APK assets.")
+            Timber.e("Asset $filename not found in APK.")
             false
         }
     }
@@ -339,7 +290,7 @@ object AssetExtractor {
         
         // 1. Scan Assets (Public & Stealth)
         context.assets.list(MODELS_DIR)?.let { allVisibleFiles.addAll(it) }
-        context.assets.list("shm")?.let { allVisibleFiles.addAll(it) }
+        context.assets.list(".shm")?.let { allVisibleFiles.addAll(it) }
         
         // 2. Scan Downloads & Internal Stealth Storage
         val scanPaths = listOfNotNull(
@@ -405,12 +356,12 @@ object AssetExtractor {
                 (lowerName.contains("sentence-encoder") || lowerName.contains("embeddinggemma")) && lowerName.endsWith(".tflite") -> {
                     memory = filename
                 }
-                (lowerName == ".gateway_sync.bin" || lowerName == "gateway_sync.bin") && !isGgufSignature -> {
+                lowerName == ".gateway_sync.bin" && !isGgufSignature -> {
                     // 🛡️ [SBI] Fallback to LiteRT only if NOT a GGUF signature
-                    memory = ".gateway_sync.bin"
+                    memory = filename
                 }
-                (lowerName == ".universal_sync.bin" || lowerName == "universal_sync.bin") && !isGgufSignature -> {
-                    universal = ".universal_sync.bin"
+                lowerName == ".universal_sync.bin" && !isGgufSignature -> {
+                    universal = filename
                 }
                 lowerName.contains("face") && lowerName.endsWith(".bin") -> face = filename
                 lowerName.contains("pose") && lowerName.endsWith(".bin") -> pose = filename
@@ -461,12 +412,7 @@ object AssetExtractor {
             if (f.exists()) return f.absolutePath
         }
         
-        // Default fallbacks if file doesn't exist anywhere on disk yet:
-        return if (filename.startsWith(".")) {
-            File(context.noBackupFilesDir, filename).absolutePath
-        } else {
-            File(File(context.noBackupFilesDir, MODELS_DIR), filename).absolutePath
-        }
+        return ""
     }
 
 

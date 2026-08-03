@@ -9,7 +9,7 @@ import javax.inject.Singleton
 
 @Singleton
 class KeywordToolMatcher @Inject constructor() : ToolMatcher {
-    override suspend fun scoreTools(query: String, candidates: List<Tool>): List<ToolMatcher.ToolScore> = withContext(Dispatchers.Default) {
+    override suspend fun scoreTools(query: String, candidates: List<AgentSkillRegistry.FastTool>): List<ToolMatcher.ToolScore> = withContext(Dispatchers.Default) {
         val queryTokens = query.lowercase().split(Regex("\\s+")).toSet()
         candidates.map { tool ->
             val toolTokens = tool.keywords.flatMap { it.lowercase().split(Regex("\\s+")) }.toSet()

@@ -4,13 +4,12 @@ import android.os.ParcelFileDescriptor
 import com.scypheon.sdk.core.engine.LiteRtEliteEngine
 import com.scypheon.sdk.core.engine.SandboxLlamaEngine
 import com.scypheon.sdk.core.engine.ModelLoader
-import com.scypheon.sdk.core.math.neural.LLMInferenceGateway
 import com.scypheon.sdk.core.skills.DocumentSkill
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.reduce
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
 import timber.log.Timber
-import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
-import com.scypheon.sdk.core.utils.MemoryGatekeeper
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,13 +20,12 @@ import javax.inject.Singleton
  */
 @Singleton
 class NeuralGateway @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val liteRtEngineLazy: dagger.Lazy<LiteRtEliteEngine>,
     private val llamaEngineLazy: dagger.Lazy<SandboxLlamaEngine>,
     private val modelLoaderLazy: dagger.Lazy<ModelLoader>,
     private val documentSkill: dagger.Lazy<DocumentSkill>,
     private val sensoryHooks: dagger.Lazy<SensoryHooks>
-) : LLMInferenceGateway {
+) {
     // Computed properties to access lazy instances
     private val liteRtEngine get() = liteRtEngineLazy.get()
     val llamaEngine get() = llamaEngineLazy.get()
@@ -35,24 +33,20 @@ class NeuralGateway @Inject constructor(
 
     val processHealth get() = llamaEngine.processHealth
 
-    override suspend fun generateText(prompt: String): String {
-        return routeRequest(prompt, enableThinking = false).reduce { acc, s -> acc + s }
-    }
-
     fun getBackendMode(): Int = llamaEngine.selectedBackendMode
-
+    
     fun setBackendMode(mode: Int) {
         llamaEngine.selectedBackendMode = mode
     }
 
-    fun getHardwareStatus(): String = if (liteRtEngine.isReady()) liteRtEngine.hardwareStatus else llamaEngine.hardwareStatus
+    fun getHardwareStatus(): String = llamaEngine.hardwareStatus
 
     fun isReady(): Boolean = llamaEngine.isReady() || liteRtEngine.isReady()
 
     suspend fun initializeLiteRt(modelPath: String, nCtx: Int): Boolean {
         return liteRtEngine.initialize(modelPath, nCtx)
     }
-
+    
     suspend fun probeBackend(modelPath: String, mode: Int): Boolean {
         return llamaEngine.probeBackend(modelPath, mode)
     }
@@ -78,7 +72,7 @@ class NeuralGateway @Inject constructor(
         return if (liteRtEngine.isReady()) {
             liteRtEngine.generateResponse(prompt, 51, 0.95f, 0.8f, 4096, enableThinking)
                 .catch { e ->
-                    Timber.e(e, "🛡️ LiteRT routeRequest generation failed. Cascading fallback to Llama...")
+                    Timber.e(e, "🚨 LiteRT routeRequest generation failed. Cascading fallback to Llama...")
                     emitAll(llamaEngine.generateResponse(prompt, 51, 0.95f, 0.8f, 4096, enableThinking))
                 }
         } else {
@@ -91,22 +85,20 @@ class NeuralGateway @Inject constructor(
         topK: Int = 51,
         topP: Float = 0.95f,
         temp: Float = 0.8f,
-        maxTokens: Int = 8192,
+        maxTokens: Int = 2048,
         enableThinking: Boolean = true
     ): Flow<String> {
-        val startTime = System.currentTimeMillis()
-        var firstTokenReceived = false
         val modelPath = llamaEngine.currentModelPath.lowercase()
-
+        
         val baseSystemPrompt = "You are Scypheon, a highly intelligent and versatile humanitarian AI assistant. You can assist with conversation, creativity, roleplay, learning, and triage support. You MUST refuse requests involving real-world violence, self-harm, illegal activities, or sexually explicit content. NEVER write structural tokens like 'User:', 'AI:', '<eos>', or any other turn markers in your responses. Always respond in the same language as the user's query (e.g., if the user asks in English, reply in English; if the user asks in Indonesian, reply in Indonesian)."
-
+        
         // [v1.4.0-SAR] Reasoning Activation: Inject thinking instruction when enabled
         val thinkingInstruction = if (enableThinking) {
             "\n\nBEFORE answering, you MUST think step-by-step inside <thought>...</thought> tags. Write your reasoning process inside these tags, and then provide your final answer outside the tags. Example format:\n<thought>\nStep-by-step analysis...\n</thought>\nYour final answer here. Keep the language of your thoughts and final response consistent with the user's query language."
         } else {
             "\n\nDO NOT use <thought>...</thought> tags and DO NOT write out your reasoning process. Answer directly and concisely in the same language as the user's query."
         }
-
+        
         val systemPrompt = baseSystemPrompt + thinkingInstruction
 
         // [v1.6.1-SAR] Unified System Prompt Merging:
@@ -160,14 +152,19 @@ class NeuralGateway @Inject constructor(
                 modelPath.contains("gemma") && !modelPath.contains("chatml") -> {
                     // Detect Unsloth fine-tuned models (e2b = "Easy to Build" Unsloth naming)
                     val isUnsloth = modelPath.contains("e2b") || modelPath.contains("unsloth")
-
+                    
                     if (isUnsloth) {
+                        // [v1.1.5-SAR] UNSLOTH PLAIN-TEXT FORMAT
+                        // Unsloth LoRA fine-tunes ONLY know "User:" and "AI:" roles.
+                        // They were NEVER trained with "System:" — sending a separate
+                        // System turn is ignored. We MUST inject the system instruction
+                        // as a preamble inside the first User message.
                         var systemInjected = false
-
+                        
                         processedHistory.forEach { turn ->
                             when(turn.role) {
                                 NeuralTurn.Role.SYSTEM -> {
-                                    // DON'T emit as "System:" save for injection into first User turn
+                                    // DON'T emit as "System:" — save for injection into first User turn
                                 }
                                 NeuralTurn.Role.USER -> {
                                     if (!systemInjected) {
@@ -186,7 +183,8 @@ class NeuralGateway @Inject constructor(
                                 NeuralTurn.Role.ASSISTANT -> append("AI: ${turn.content.trim()}\n")
                             }
                         }
-
+                        
+                        // If no user turn existed to inject into, prepend system as context
                         if (!systemInjected) {
                             append("### SYSTEM INSTRUCTION:\n$systemPrompt\n\nAI:")
                         } else {
@@ -211,7 +209,7 @@ class NeuralGateway @Inject constructor(
                     }
                 }
                 else -> {
-                    // Default to ChatML
+                    // Default to ChatML (Scypheon Gemma-4 custom, Qwen, etc)
                     if (!hasSystemTurn) {
                         append("<|im_start|>system\n")
                         append(systemPrompt)
@@ -221,7 +219,7 @@ class NeuralGateway @Inject constructor(
                         val role = when(turn.role) {
                             NeuralTurn.Role.USER -> "user"
                             NeuralTurn.Role.ASSISTANT -> "assistant"
-                            NeuralTurn.Role.SYSTEM -> "system"
+                            NeuralTurn.Role.SYSTEM -> "system" 
                         }
                         append("<|im_start|>$role\n")
                         append(turn.content.trim())
@@ -231,75 +229,14 @@ class NeuralGateway @Inject constructor(
                 }
             }
         }
-
-        // --- GAP 2: Dynamic Prompt Limit Detection ---
-        // Scypheon 5.0 Hardening: We now use the user-configured contextWindow as the absolute ceiling,
-        // and maxTokens as the target limit. This ensures synchronization with UI settings.
-        val estimatedTokens = (formattedPrompt.length / 3.5).toInt()
-        val physicalCeiling = history.firstOrNull { it.role == NeuralTurn.Role.SYSTEM && it.content.contains("ctx_window:") }
-            ?.content?.substringAfter("ctx_window:")?.substringBefore("\n")?.toIntOrNull() 
-            ?: 32768 // Fallback to 32k if metadata missing
-
-        val dynamicCeiling = try {
-            val safeKvTokens = MemoryGatekeeper.calculateSafeKvCache(context, 2_000_000_000L)
-            maxOf(physicalCeiling, safeKvTokens)
-        } catch (e: Throwable) {
-            physicalCeiling
-        }
-
-        val totalNeeded = estimatedTokens + maxTokens
-        if (totalNeeded > dynamicCeiling) {
-            val isHealthy = try {
-                val memoryReport = MemoryGatekeeper.performPreflightCheck(context, 2_000_000_000L)
-                memoryReport.isHealthy
-            } catch (e: Throwable) {
-                false
-            }
-
-            if (isHealthy && totalNeeded <= 32768) {
-                Timber.i("📈 [NeuralGateway] RAM is healthy. Dynamically increasing context limit to $totalNeeded tokens.")
-            } else {
-                Timber.e("🚨 [NeuralGateway] Combined tokens ($totalNeeded) exceed dynamic context ceiling ($dynamicCeiling) and RAM is insufficient. Throwing PromptTooLongException.")
-                throw PromptTooLongException(estimatedTokens, dynamicCeiling)
-            }
-        }
-
-        val rawStream = if (liteRtEngine.isReady()) {
+        return if (liteRtEngine.isReady()) {
             liteRtEngine.generateResponse(formattedPrompt, topK, topP, temp, maxTokens, enableThinking)
                 .catch { e ->
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    Timber.e(e, "🛡️ LiteRT generateResponse failed. Cascading fallback to Llama...")
-                    emitAll(
-                        llamaEngine.generateResponse(formattedPrompt, topK, topP, temp, maxTokens, enableThinking)
-                            .catch { fallbackErr ->
-                                if (fallbackErr is kotlinx.coroutines.CancellationException) throw fallbackErr
-                                Timber.e(fallbackErr, "🚨 Llama fallback also failed!")
-                                throw fallbackErr
-                            }
-                    )
+                    Timber.e(e, "🚨 LiteRT generateResponse failed. Cascading fallback to Llama...")
+                    emitAll(llamaEngine.generateResponse(formattedPrompt, topK, topP, temp, maxTokens, enableThinking))
                 }
         } else {
             llamaEngine.generateResponse(formattedPrompt, topK, topP, temp, maxTokens, enableThinking)
-                .catch { e ->
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    Timber.e(e, "🚨 Llama generation failed!")
-                    throw e
-                }
-        }
-
-        var tokenCount = 0
-        return rawStream.onEach {
-            if (!firstTokenReceived) {
-                firstTokenReceived = true
-                val ttft = System.currentTimeMillis() - startTime
-                com.scypheon.sdk.core.utils.SolarisTelemetry.record("ttft_ms", ttft, mapOf("engine" to if (liteRtEngine.isReady()) "litert" else "llama"))
-            }
-            tokenCount++
-        }.onCompletion {
-            val totalTime = System.currentTimeMillis() - startTime
-            if (tokenCount > 0) {
-                com.scypheon.sdk.core.utils.SolarisTelemetry.record("inference_complete", totalTime, mapOf("tokens" to tokenCount.toString()))
-            }
         }
     }
 
@@ -329,88 +266,3 @@ class NeuralGateway @Inject constructor(
         return llamaEngine.promoteToForeground()
     }
 }
-
-/**
- * Extension to suppress/filter out <thought>...</thought> blocks from a token stream.
- * Handles split/fragmented tags across stream chunks robustly with minimal buffering.
- */
-fun Flow<String>.filterWithThoughtSuppression(): Flow<String> = flow {
-    var isInThinkingBlock = false
-    var buffer = ""
-
-    val startTag = "<thought>"
-    val endTag = "</thought>"
-
-    collect { token ->
-        buffer += token
-
-        var processing = true
-        while (processing) {
-            if (!isInThinkingBlock) {
-                val tagIndex = buffer.indexOf(startTag)
-                if (tagIndex != -1) {
-                    isInThinkingBlock = true
-                    val preText = buffer.substring(0, tagIndex)
-                    if (preText.isNotEmpty()) {
-                        emit(preText)
-                    }
-                    buffer = buffer.substring(tagIndex + startTag.length)
-                } else {
-                    var longestPrefixMatch = 0
-                    for (len in 1..buffer.length.coerceAtMost(startTag.length - 1)) {
-                        val suffix = buffer.substring(buffer.length - len)
-                        val tagPrefix = startTag.substring(0, len)
-                        if (suffix == tagPrefix) {
-                            longestPrefixMatch = len
-                        }
-                    }
-
-                    if (longestPrefixMatch > 0) {
-                        val emitText = buffer.substring(0, buffer.length - longestPrefixMatch)
-                        if (emitText.isNotEmpty()) {
-                            emit(emitText)
-                        }
-                        buffer = buffer.substring(buffer.length - longestPrefixMatch)
-                    } else {
-                        if (buffer.isNotEmpty()) {
-                            emit(buffer)
-                            buffer = ""
-                        }
-                    }
-                    processing = false
-                }
-            } else {
-                val tagIndex = buffer.indexOf(endTag)
-                if (tagIndex != -1) {
-                    isInThinkingBlock = false
-                    buffer = buffer.substring(tagIndex + endTag.length)
-                } else {
-                    var longestPrefixMatch = 0
-                    for (len in 1..buffer.length.coerceAtMost(endTag.length - 1)) {
-                        val suffix = buffer.substring(buffer.length - len)
-                        val tagPrefix = endTag.substring(0, len)
-                        if (suffix == tagPrefix) {
-                            longestPrefixMatch = len
-                        }
-                    }
-
-                    if (longestPrefixMatch > 0) {
-                        buffer = buffer.substring(buffer.length - longestPrefixMatch)
-                    } else {
-                        buffer = ""
-                    }
-                    processing = false
-                }
-            }
-        }
-    }
-
-    if (!isInThinkingBlock && buffer.isNotEmpty()) {
-        emit(buffer)
-    }
-}
-
-class PromptTooLongException(
-    val tokenCount: Int,
-    val maxTokens: Int
-) : Exception("Prompt has $tokenCount tokens, exceeds limit of $maxTokens")

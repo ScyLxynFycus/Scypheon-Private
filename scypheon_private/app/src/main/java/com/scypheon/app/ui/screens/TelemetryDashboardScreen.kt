@@ -7,7 +7,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,7 +27,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.scypheon.sdk.core.security.AuditLogEntry
+import com.scypheon.sdk.core.telemetry.AuditLogEntry
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -63,8 +62,8 @@ fun TelemetryDashboardScreen(
 ) {
     // Count stats for the summary card
     val totalEvents = logs.size
-    val criticalCount = logs.count { extractSecurityLevel(it.payload) == "CRITICAL" }
-    val warningCount = logs.count { extractSecurityLevel(it.payload) == "WARNING" }
+    val criticalCount = logs.count { it.securityLevel == "CRITICAL" }
+    val warningCount = logs.count { it.securityLevel == "WARNING" }
 
     Scaffold(
         containerColor = AegisBg,
@@ -132,8 +131,6 @@ fun TelemetryDashboardScreen(
         if (logs.isEmpty()) {
             AegisEmptyState(modifier = Modifier.padding(paddingValues))
         } else {
-            val reversedLogs = remember(logs) { logs.reversed() }
-
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -164,32 +161,29 @@ fun TelemetryDashboardScreen(
                     )
                 }
 
-                // ─── Log Items ───
-                itemsIndexed(reversedLogs, key = { _, log -> log.hashCode() }) { index, log ->
+                // ─── Log Items in Grouped Card ───
+                item {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp),
                         color = AegisSurface,
-                        // Top rounded corner for first item, bottom for last
-                        shape = when {
-                            reversedLogs.size == 1 -> RoundedCornerShape(12.dp)
-                            index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
-                            index == reversedLogs.lastIndex -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
-                            else -> androidx.compose.ui.graphics.RectangleShape
-                        }
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Column {
-                            AegisLogItem(log)
-                            if (index < reversedLogs.lastIndex) {
-                                // iOS-style indented divider
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(start = 60.dp)
-                                        .height(0.5.dp)
-                                        .background(AegisDivider)
-                                )
+                            val reversedLogs = logs.reversed()
+                            reversedLogs.forEachIndexed { index, log ->
+                                AegisLogItem(log)
+                                if (index < reversedLogs.lastIndex) {
+                                    // iOS-style indented divider
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 60.dp)
+                                            .height(0.5.dp)
+                                            .background(AegisDivider)
+                                    )
+                                }
                             }
                         }
                     }
@@ -343,11 +337,8 @@ fun TelemetryLogItem(log: AuditLogEntry) {
 
 @Composable
 private fun AegisLogItem(log: AuditLogEntry) {
-    val securityLevel = extractSecurityLevel(log.payload)
-    val details = extractDetails(log.payload)
-
-    val (icon, iconBg, iconTint) = remember(log.eventType, securityLevel) {
-        resolveLogVisuals(log.eventType, securityLevel)
+    val (icon, iconBg, iconTint) = remember(log.eventType, log.securityLevel) {
+        resolveLogVisuals(log.eventType, log.securityLevel)
     }
 
     val formattedTime = remember(log.timestamp) {
@@ -392,7 +383,7 @@ private fun AegisLogItem(log: AuditLogEntry) {
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = formatDetails(details),
+                text = formatDetails(log.details),
                 style = TextStyle(
                     fontSize = 13.sp,
                     color = AegisTextSecondary,
@@ -565,20 +556,4 @@ private fun formatDetails(raw: String): String {
         .replace("(Turns=", "· ")
         .replace(")", "")
         .trim()
-}
-
-private fun extractSecurityLevel(payload: String): String {
-    return try {
-        org.json.JSONObject(payload).optString("securityLevel", "INFO")
-    } catch (e: Exception) {
-        "INFO"
-    }
-}
-
-private fun extractDetails(payload: String): String {
-    return try {
-        org.json.JSONObject(payload).optString("details", payload)
-    } catch (e: Exception) {
-        payload
-    }
 }

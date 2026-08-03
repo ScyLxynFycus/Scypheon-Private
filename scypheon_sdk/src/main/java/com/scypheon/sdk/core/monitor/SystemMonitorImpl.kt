@@ -12,11 +12,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
-import dagger.hilt.android.qualifiers.ApplicationContext
 
 @Singleton
 class SystemMonitorImpl @Inject constructor(
-    @ApplicationContext private val context: Context
+    private val context: Context
 ) : com.scypheon.sdk.core.agent.SystemMonitor {
     private val batteryManager by lazy { context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
     private val connectivityManager by lazy { context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }

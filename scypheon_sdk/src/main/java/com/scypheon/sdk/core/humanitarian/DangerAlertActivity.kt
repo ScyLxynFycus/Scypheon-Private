@@ -114,7 +114,6 @@ class DangerAlertActivity : AppCompatActivity() {
     }
 
     @Deprecated("Deprecated in Java", ReplaceWith("Unit"))
-    @android.annotation.SuppressLint("MissingSuperCall")
     override fun onBackPressed() {
         // ENTERPRISE: Intentionally block back press during emergency alert
         // User must explicitly tap the button to dismiss - this is a safety feature

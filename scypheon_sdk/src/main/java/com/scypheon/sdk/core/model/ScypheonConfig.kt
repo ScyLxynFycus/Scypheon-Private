@@ -6,17 +6,7 @@ import java.io.File
  * ScypheonConfig holds the session-level AI tuning parameters.
  * Moved to the SDK to allow Secure Vault persistence without App-module dependencies.
  */
-enum class ThemeMode {
-    SYSTEM, LIGHT, DARK
-}
-
-enum class ChatBubbleStyle {
-    GRADIENT_BLUE, GRADIENT_WARM, GRADIENT_GREEN, MINIMALIST_SOLID
-}
-
 data class ScypheonConfig(
-    val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val chatBubbleStyle: ChatBubbleStyle = ChatBubbleStyle.GRADIENT_BLUE,
     val maxTokens: Int = 4096,
     val contextWindow: Int = 4096,
     val topK: Int = 51,
@@ -29,21 +19,8 @@ data class ScypheonConfig(
     val enableZeroLatency: Boolean = true,
     val localModels: List<File> = emptyList(),
     val isLocalModelPickerVisible: Boolean = false,
-    val backendDiagnostics: List<ScypheonBackendDiagnostic> = emptyList(),
-    val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val chatBubbleStyle: ChatBubbleStyle = ChatBubbleStyle.GRADIENT_BLUE
+    val backendDiagnostics: List<ScypheonBackendDiagnostic> = emptyList()
 )
-
-enum class ThemeMode {
-    SYSTEM, LIGHT, DARK
-}
-
-enum class ChatBubbleStyle {
-    GRADIENT_BLUE,
-    GRADIENT_WARM,
-    GRADIENT_GREEN,
-    MINIMALIST_SOLID
-}
 
 /**
  * Captures hardware failure events (SIGSEGV/SIGILL) to inform the tiered fallback strategy.

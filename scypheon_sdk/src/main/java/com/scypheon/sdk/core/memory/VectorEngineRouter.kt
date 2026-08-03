@@ -5,10 +5,6 @@ import com.scypheon.sdk.core.engine.SandboxLlamaEngine
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -31,23 +27,9 @@ class VectorEngineRouter @Inject constructor(
     private val _state = MutableStateFlow<IVectorEngine.EngineState>(IVectorEngine.EngineState.Idle)
     override val state = _state.asStateFlow()
 
-    private val job = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.Default + job)
-    private var stateCollectionJob: kotlinx.coroutines.Job? = null
-
     init {
         // Default to LiteRT if nothing else is active
         activeEngine = liteRtEngine
-        startStateCollection()
-    }
-
-    private fun startStateCollection() {
-        stateCollectionJob?.cancel()
-        stateCollectionJob = scope.launch {
-            activeEngine.state.collect { newState ->
-                _state.value = newState
-            }
-        }
     }
 
     /**
@@ -58,7 +40,6 @@ class VectorEngineRouter @Inject constructor(
         Timber.i("[ROUTER] Switching to GGUF (Sandbox) Embedder.")
         liteRtEngine.close()
         activeEngine = sandboxEngine
-        startStateCollection()
         sandboxEngine.initialize(modelPath)
     }
 
@@ -67,7 +48,6 @@ class VectorEngineRouter @Inject constructor(
         // Do NOT call sandboxEngine.close() here  it would release the shared Llama model
         // used by the main chat engine (SandboxLlamaEngine is a singleton).
         activeEngine = liteRtEngine
-        startStateCollection()
         liteRtEngine.initialize(modelPath)
     }
 
@@ -82,7 +62,5 @@ class VectorEngineRouter @Inject constructor(
     override fun close() {
         liteRtEngine.close()
         sandboxEngine.close()
-        job.cancel()
     }
 }
-

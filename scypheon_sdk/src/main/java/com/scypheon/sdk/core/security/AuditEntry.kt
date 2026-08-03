@@ -14,7 +14,5 @@ data class AuditEntry(
     val actionType: String,
     val payload: String,
     val hash: String,
-    val previousHash: String,
-    val pqcSignature: ByteArray? = null,
-    val pqcAlgorithm: String? = null
+    val previousHash: String
 )

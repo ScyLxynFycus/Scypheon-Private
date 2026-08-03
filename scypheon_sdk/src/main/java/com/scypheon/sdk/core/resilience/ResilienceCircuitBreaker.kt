@@ -1,28 +1,33 @@
 package com.scypheon.sdk.core.resilience
 
-import timber.log.Timber
-import java.util.concurrent.ConcurrentHashMap
-import javax.inject.Inject
-import javax.inject.Singleton
-import kotlinx.coroutines.CancellationException
+import com.scypheon.sdk.core.annotations.SafetyCritical
 
 /**
- * ResilienceCircuitBreaker: Enterprise-grade fault tolerance.
- * Prevents system degradation by "opening" the circuit when a component (e.g., BLE Mesh, FTS5) 
- * fails repeatedly. Implements exponential backoff for recovery attempts.
+ * ResilienceCircuitBreaker: Prevents system cascade failure by isolating failing components.
+ * Enterprise-grade implementation supporting multiple isolated circuits.
  */
 interface ResilienceCircuitBreaker {
-    
-    enum class State { CLOSED, OPEN, HALF_OPEN }
-
-    fun allowRequest(key: String): Boolean
-    fun recordSuccess(key: String)
-    fun recordFailure(key: String, throwable: Throwable? = null)
-    
     /**
-     * Executes a block of code protected by the circuit breaker.
+     * Checks if a request is allowed for the given key.
+     */
+    fun allowRequest(key: String = "default"): Boolean
+
+    /**
+     * Records a success for the given key, potentially closing the circuit.
+     */
+    fun recordSuccess(key: String = "default")
+
+    /**
+     * Records a failure for the given key, potentially opening the circuit.
+     */
+    fun recordFailure(key: String = "default")
+
+    /**
+     * Executes a block of code with circuit breaker protection.
      */
     suspend fun <T> execute(key: String, block: suspend () -> T): T
 }
+
+enum class State { CLOSED, OPEN, HALF_OPEN }
 
 class CircuitBreakerOpenException(msg: String) : Exception(msg)

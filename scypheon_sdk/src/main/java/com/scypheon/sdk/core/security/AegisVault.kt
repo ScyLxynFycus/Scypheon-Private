@@ -9,13 +9,13 @@ import javax.inject.Singleton
 import com.scypheon.sdk.core.model.ScypheonConfig
 
 /**
- * AegisVault: Enterprise hardware-backed encrypted storage for sensitive credentials.
- * Hardened to support isolated processes via software-backed key derivation fallback.
+ * AegisVault provides hardware-backed encrypted storage for sensitive credentials
+ * like the Hugging Face API Token (HF_TOKEN). It utilizes the Android Keystore (TEE/SE)
+ * to ensure tokens cannot be extracted from the device's storage.
  */
 @Singleton
 class AegisVault @Inject constructor(
-    @ApplicationContext private val context: Context,
-    private val keyManager: DatabaseKeyManager
+    @ApplicationContext private val context: Context
 ) {
     private val isMainProcess by lazy {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
@@ -24,8 +24,10 @@ class AegisVault @Inject constructor(
     }
 
     private val masterKey by lazy {
-        val alias = keyManager.getOrCreateMasterKey()
-        MasterKey.Builder(context, alias)
+        if (!isMainProcess) {
+            timber.log.Timber.w("AegisVault: Access attempted from non-main process. Redirecting to Sandbox Protocol.")
+        }
+        MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
     }
@@ -35,6 +37,7 @@ class AegisVault @Inject constructor(
             createSharedPrefs()
         } catch (e: Exception) {
             timber.log.Timber.e(e, "AegisVault: EncryptedSharedPreferences initialization failed. Purging corrupted vault.")
+            // The nuclear option: delete the file and start fresh
             context.deleteSharedPreferences(VAULT_NAME)
             createSharedPrefs()
         }
@@ -48,15 +51,54 @@ class AegisVault @Inject constructor(
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
-    fun saveHfToken(token: String) = sharedPrefs.edit().putString(KEY_HF_TOKEN, token).apply()
-    fun getHfToken(): String? = sharedPrefs.getString(KEY_HF_TOKEN, null)
+    /**
+     * Stores the Hugging Face API Token securely.
+     */
+    fun saveHfToken(token: String) {
+        sharedPrefs.edit().putString(KEY_HF_TOKEN, token).apply()
+    }
 
-    fun saveUserName(name: String) = sharedPrefs.edit().putString(KEY_USER_NAME, name).apply()
-    fun getUserName(): String? = sharedPrefs.getString(KEY_USER_NAME, null)
+    /**
+     * Retrieves the Hugging Face API Token. Returns null if not set.
+     */
+    fun getHfToken(): String? {
+        return sharedPrefs.getString(KEY_HF_TOKEN, null)
+    }
 
-    fun saveLastHwCheckVersion(version: Long) = sharedPrefs.edit().putLong(KEY_LAST_HW_VERSION, version).apply()
-    fun getLastHwCheckVersion(): Long = sharedPrefs.getLong(KEY_LAST_HW_VERSION, 0L)
+    /**
+     * Stores the User's Display Name securely.
+     */
+    fun saveUserName(name: String) {
+        sharedPrefs.edit().putString(KEY_USER_NAME, name).apply()
+    }
 
+    /**
+     * Retrieves the User's Display Name.
+     */
+    fun getUserName(): String? {
+        return sharedPrefs.getString(KEY_USER_NAME, null)
+    }
+
+    /**
+     * Stores the app version of the last hardware diagnostic check.
+     */
+    fun saveLastHwCheckVersion(version: Long) {
+        sharedPrefs.edit().putLong(KEY_LAST_HW_VERSION, version).apply()
+    }
+
+    /**
+     * Retrieves the app version of the last hardware diagnostic check.
+     */
+    fun getLastHwCheckVersion(): Long {
+        return sharedPrefs.getLong(KEY_LAST_HW_VERSION, 0L)
+    }
+
+    /**
+     * Stores the entire ScypheonConfig. 
+     * Since these are non-sensitive tuning parameters, we store them as simple individual keys
+     * to avoid unnecessary serialization overhead, but we keep them in the Aegis vault
+     * for unified hardware-encrypted persistence.
+     */
     fun saveConfig(config: ScypheonConfig) {
         sharedPrefs.edit().apply {
             putInt(KEY_MAX_TOKENS, config.maxTokens)
@@ -67,11 +109,12 @@ class AegisVault @Inject constructor(
             putInt(KEY_BACKEND, config.selectedBackendMode)
             putBoolean(KEY_THINKING, config.enableThinking)
             putBoolean(KEY_ONLINE_SEARCH, config.enableOnlineSearch)
-            putString(KEY_THEME_MODE, config.themeMode.name)
-            putString(KEY_CHAT_BUBBLE, config.chatBubbleStyle.name)
         }.apply()
     }
 
+    /**
+     * Loads the ScypheonConfig from vault.
+     */
     fun loadConfig(): ScypheonConfig {
         return ScypheonConfig(
             maxTokens = sharedPrefs.getInt(KEY_MAX_TOKENS, 2048),
@@ -81,27 +124,24 @@ class AegisVault @Inject constructor(
             temperature = sharedPrefs.getFloat(KEY_TEMP, 0.8f),
             selectedBackendMode = sharedPrefs.getInt(KEY_BACKEND, 0),
             enableThinking = sharedPrefs.getBoolean(KEY_THINKING, true),
-            enableOnlineSearch = sharedPrefs.getBoolean(KEY_ONLINE_SEARCH, true),
-            themeMode = try {
-                com.scypheon.sdk.core.model.ThemeMode.valueOf(sharedPrefs.getString(KEY_THEME_MODE, "SYSTEM") ?: "SYSTEM")
-            } catch (e: Exception) {
-                com.scypheon.sdk.core.model.ThemeMode.SYSTEM
-            },
-            chatBubbleStyle = try {
-                com.scypheon.sdk.core.model.ChatBubbleStyle.valueOf(sharedPrefs.getString(KEY_CHAT_BUBBLE, "GRADIENT_BLUE") ?: "GRADIENT_BLUE")
-            } catch (e: Exception) {
-                com.scypheon.sdk.core.model.ChatBubbleStyle.GRADIENT_BLUE
-            }
+            enableOnlineSearch = sharedPrefs.getBoolean(KEY_ONLINE_SEARCH, true)
         )
     }
 
-    fun clearVault() = sharedPrefs.edit().clear().apply()
+    /**
+     * Clears all stored credentials from the vault.
+     */
+    fun clearVault() {
+        sharedPrefs.edit().clear().apply()
+    }
 
     companion object {
         private const val VAULT_NAME = "scypheon_aegis_vault"
         private const val KEY_HF_TOKEN = "hf_api_token"
         private const val KEY_USER_NAME = "user_display_name"
         private const val KEY_LAST_HW_VERSION = "last_hw_check_version"
+        
+        // AI Tuning Parameters
         private const val KEY_MAX_TOKENS = "cfg_max_tokens"
         private const val KEY_CTX_WINDOW = "cfg_ctx_window"
         private const val KEY_TOP_K = "cfg_top_k"
@@ -110,7 +150,5 @@ class AegisVault @Inject constructor(
         private const val KEY_BACKEND = "cfg_backend"
         private const val KEY_THINKING = "cfg_thinking"
         private const val KEY_ONLINE_SEARCH = "cfg_online_search"
-        private const val KEY_THEME_MODE = "cfg_theme_mode"
-        private const val KEY_CHAT_BUBBLE = "cfg_chat_bubble"
     }
 }

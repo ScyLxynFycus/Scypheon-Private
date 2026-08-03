@@ -18,26 +18,10 @@ class DrugInteractionChecker @Inject constructor(
      * Checks if a newly scanned drug interacts dangerously with the patient's currently prescribed drugs.
      */
     suspend fun checkInteraction(scannedDrug: String, currentPrescriptions: List<String>): String? {
-        val cleanScanned = FtsSanitizer.sanitize(scannedDrug)
-        if (cleanScanned.isBlank()) return null
-
-        val idScanned = try {
-            dao.resolveIds(cleanScanned).firstOrNull()
-        } catch (e: Exception) {
-            Timber.e(e, "SQLite FTS error resolving ID for: $cleanScanned")
-            null
-        } ?: return null
+        val idScanned = dao.resolveIds(scannedDrug).firstOrNull() ?: return null
 
         for (prescription in currentPrescriptions) {
-            val cleanPrescription = FtsSanitizer.sanitize(prescription)
-            if (cleanPrescription.isBlank()) continue
-
-            val idPrescription = try {
-                dao.resolveIds(cleanPrescription).firstOrNull()
-            } catch (e: Exception) {
-                Timber.e(e, "SQLite FTS error resolving ID for: $cleanPrescription")
-                null
-            } ?: continue
+            val idPrescription = dao.resolveIds(prescription).firstOrNull() ?: continue
             
             // Interaction details are now stored in the PharmacopeiaEntry or separate entity
             // Using the hardened dao.getInteraction which returns a detail string

@@ -28,30 +28,11 @@ class LocalDocumentParser(
 
         try {
             val contentResolver = context.contentResolver
-            val mimeType = contentResolver.getType(uri) ?: ""
-            val isPdf = mimeType == "application/pdf" || documentTitle.endsWith(".pdf", ignoreCase = true)
-            
             val inputStream = contentResolver.openInputStream(uri) ?: return
 
-            val fullText = inputStream.use { stream ->
-                if (isPdf) {
-                    Timber.i("📄 Detected PDF document. Extracting via PDFBox...")
-                    // Copy to temp file since PDFBox requires a File object
-                    val tempFile = java.io.File.createTempFile("rag_doc", ".pdf", context.cacheDir)
-                    tempFile.outputStream().use { out ->
-                        stream.copyTo(out)
-                    }
-                    val pdfParser = com.scypheon.sdk.core.humanitarian.medical.seeder.DisasterPdfParser(context)
-                    val extracted = pdfParser.parsePdfText(tempFile) ?: ""
-                    tempFile.delete()
-                    extracted
-                } else {
-                    val reader = BufferedReader(InputStreamReader(stream))
-                    val text = reader.readText()
-                    reader.close()
-                    text
-                }
-            }
+            val reader = BufferedReader(InputStreamReader(inputStream))
+            val fullText = reader.readText()
+            reader.close()
 
             if (fullText.isEmpty()) {
                 Timber.w("📄 Document is empty.")

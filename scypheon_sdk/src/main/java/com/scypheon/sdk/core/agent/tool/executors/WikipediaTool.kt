@@ -33,7 +33,7 @@ class WikipediaTool @Inject constructor(
         return try {
             val summary = webProvider.discoverWikipedia(query)
             if (summary != null) {
-                ToolResult.Success(summary, latencyMs = System.currentTimeMillis() - start)
+                ToolResult.Success(summary, System.currentTimeMillis() - start)
             } else {
                 ToolResult.Error("Wikipedia page not found for: $query", null, System.currentTimeMillis() - start)
             }
