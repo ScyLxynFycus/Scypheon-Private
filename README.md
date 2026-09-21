@@ -1,70 +1,128 @@
-# SCYPHEON: ZERO-TRUST EDGE INTELLIGENCE ECOSYSTEM
-**Version:** 1.5.0-SAR (Silicon-Verified Architecture)  
-**Target:** Gemma 4 Good Hackathon Final Submission  
+# Scypheon
 
+**Intelligence that stays with you — on your device, under your control, even when the world goes dark.**
+
+[![Version](https://img.shields.io/badge/Version-1.5.0--SAR-orange.svg)](#)
 [![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](#)
 [![Android SDK: 35](https://img.shields.io/badge/Android%20SDK-35-blue.svg)](#)
 [![Kotlin: 1.9+](https://img.shields.io/badge/Kotlin-1.9%2B-purple.svg)](#)
 [![Engine: LiteRT & llama.cpp](https://img.shields.io/badge/Engine-LiteRT%20%26%20llama.cpp-green.svg)](#)
-[![Download APK](https://img.shields.io/badge/Download-Latest%20APK-brightgreen?style=for-the-badge&logo=android)](https://github.com/ScyLxynFycus/Scypheon-Private/releases/download/release/app-debug.apk)
 
-> **Notice to Technical Auditors and Judges:**
-> Scypheon Private is not a conversational wrapper around a generative API. It is a deterministic, systems-level edge platform engineered to survive catastrophic hardware constraints, active adversarial injection, and complete internet deprivation. If you are evaluating this repository, do not merely look at the user interface. Examine the native memory pipelines, the Linux POSIX signal handlers, and the cryptographic intercepts detailed throughout this ecosystem.
+Scypheon is an offline-first, zero-trust AI platform for Android. It brings capable, frontier-class reasoning to an ordinary phone — and keeps it there. No cloud round-trip. No data leaving the device. No dependency on a signal that may never arrive.
 
----
+> Scypheon isn't a chat UI wrapped around someone else's API. It's a complete, self-contained intelligence stack — engineered so the people who need it most can still use it when everything else has stopped working.
 
-## 1. Executive Abstract: The Humanitarian Edge Dilemma
-
-In 2024, natural hazard-related disasters affected 167 million people globally. In conflict zones, refugee camps, and disaster epicenters, the primary cause of excess mortality is the collapse of communication and healthcare infrastructure. 
-
-Current "production-grade" applications fail in these environments:
-*   **Cloud-tethered AI assistants** (e.g., Google Assistant) become entirely non-functional without cellular infrastructure.
-*   **Static medical reference tools** cannot dynamically cross-reference complex, multi-variable patient symptoms.
-*   **Standard offline LLM implementations** on consumer mobile hardware inevitably suffer from severe thermal throttling, catastrophic memory fragmentation, and spontaneous kernel panics triggered by the Linux Low Memory Killer Daemon (LMKD).
-
-**Scypheon Private** was engineered to solve this exact dilemma. It brings the immense reasoning power of the **Gemma 4** model family to consumer mobile devices, encased within a defense-in-depth architectural fortress that mathematically guarantees memory safety, execution determinism, and absolute data sovereignty.
+**Get the APK:** [Latest release](https://github.com/ScyLxynFycus/Scypheon-Private/releases/download/release/app-debug.apk)
 
 ---
 
-## 2. Modular Repository Topography
+## Contents
 
-The platform eschews monolithic design in favor of a strictly decoupled, modular architecture. The repository is partitioned into isolated subsystems to enforce an absolute separation of concerns between the presentation layer, the systems-level logic, and the native C++ inference boundaries.
+- [Why we built this](#why-we-built-this)
+- [What using it feels like](#what-using-it-feels-like)
+- [Under the hood](#under-the-hood)
+- [How it's put together](#how-its-put-together)
+- [Build & run](#build--run)
+- [Documentation](#documentation)
+- [License](#license)
+- [Acknowledgements](#acknowledgements)
+
+---
+
+## Why we built this
+
+When disaster hits, connectivity is usually the first thing to go. In conflict zones, refugee camps, and disaster epicentres, the deadliest failure isn't the event itself — it's the silence that follows. Communication collapses. Records disappear. Guidance becomes guesswork.
+
+Most AI tools simply stop being useful at that exact moment:
+
+- **Cloud assistants go dark.** No signal, no intelligence — precisely when it matters.
+- **Static reference apps can't reason.** They can't weigh conflicting symptoms or adapt to a situation nobody scripted.
+- **Naive offline models crash.** On real consumer hardware they throttle, fragment memory, and get killed by the OS under pressure.
+
+Scypheon was built for that gap. It runs the **Gemma 4** model family locally on consumer Android devices, wrapped in layered defenses that keep it memory-safe, predictable, and completely private.
+
+---
+
+## What using it feels like
+
+- **It just works — offline.** Airplane mode, no tower, no Wi-Fi. Scypheon doesn't care.
+- **Nothing leaves your phone.** Your conversations, your context, your data. All of it stays client-side, encrypted at rest.
+- **It recovers instead of crashing.** If the OS tries to kill the engine under memory pressure, Scypheon catches it and brings the runtime back — without dropping your screen.
+- **It stays responsive.** Heavy work happens off the UI thread, so the interface holds its frame budget even while the model is generating.
+- **It's honest about limits.** Safety rails and clear disclaimers are built into the experience, not bolted on.
+
+---
+
+## Under the hood
+
+For those who want to look past the interface, here's what makes it hold up.
+
+### Resilience
+
+| Mechanism | What it does |
+|---|---|
+| **The Lazarus Protocol** | Watches the native runtime. If the system kills it under memory pressure, Scypheon traps the failure, reads the tombstone, and cold-restarts the sandbox — the UI never dies. |
+| **Zero-copy SHM pipeline** | Moves tensors through shared memory instead of Android's IPC limit, keeping the interface smooth at full generation speed. |
+| **Thermal & memory governance** | Actively tracks device constraints and thermal state so the model degrades gracefully instead of collapsing. |
+
+### Performance
+
+| Mechanism | What it does |
+|---|---|
+| **Spatial grid indexing (O(1))** | The knowledge-graph view resolves touches and node positions in constant time — panning and zooming stay fluid no matter how large the graph grows. |
+| **Cryptographic pre-warming** | Heavy AES-256 database setup runs on background I/O threads, so cold start never blocks the screen. |
+
+### Safety
+
+| Guardrail | What it does |
+|---|---|
+| **Shannon Entropy Guard** | Inspects input before it reaches the model and drops obfuscated, adversarial payloads on sight. |
+| **Clinical Safety Pre-Hook** | Intercepts agentic tool calls and blocks mathematically absurd parameters (e.g. an impossible dosage) before execution. |
+| **Deterministic execution** | Same input, same conditions, same outcome — reproducible by design. |
+
+### Intelligence
+
+- **Agentic orchestration** — an OODA loop with extensible skills (math, medical, tutoring) and parallel multi-agent reasoning.
+- **Mesh RAG & dual memory** — hybrid, time-aware retrieval keeps context relevant without ballooning the prompt.
+- **BLE mesh sync** — offline communities can share vital knowledge vectors peer-to-peer, with no cloud in the path.
+- **Explainability layer** — critic nodes surface *why* an answer was produced, not just the answer.
+
+### Privacy
+
+- **Encrypted at rest** via SQLCipher (AES-256).
+- **BlackBoxVault** — tamper-evident, offline audit logging.
+- **Zero-trust containment** — no telemetry egress, no hidden network path.
+
+---
+
+## How it's put together
 
 ```text
 Scypheon-Private (Repository Root)
-├── scypheon_private/              # Presentation Layer & Workspace Component
-│   ├── app/src/main/java/com/scypheon/app/
-│   │   ├── ui/screens/            # Jetpack Compose UI (LiveMode, GraphExplorer)
-│   │   ├── ui/views/              # Custom rendering (NeuralGraphView)
-│   │   ├── orchestrator/          # App-level orchestration
-│   │   └── data/                  # App-level repositories and local providers
-│   └── README.md                  # Application-specific architectural guide
+├── scypheon_private/              # Presentation layer — Compose UI, screens, app state
+│   └── app/src/main/java/com/scypheon/app/
+│       ├── ui/screens/            # Live Mode, Graph Explorer
+│       ├── ui/views/              # Custom rendering (Neural Graph View)
+│       ├── orchestrator/          # App-level orchestration
+│       └── data/                  # Repositories and local providers
 │
-├── scypheon_sdk/                  # Systems Intelligence & Resilience Core
-│   ├── src/main/java/com/scypheon/sdk/core/
-│   │   ├── agent/                 # Agentic Orchestration
-│   │   │   ├── ooda/              # OODA Fast Engine Loop
-│   │   │   ├── skills/            # Extensible Agent Skills (Math, Medical, Tutor)
-│   │   │   ├── tool/hooks/        # ToolHookEngine (PreToolUse/PostToolUse/Stop)
-│   │   │   └── swarm/             # Multi-Agent Parallel Reasoning
-│   │   ├── safety/                # Defense-in-Depth Guardrails
-│   │   │   ├── helios/            # Layer 0 Sanitizer (Shannon Entropy Guards)
-│   │   │   └── security/          # Integrity verifiers
-│   │   ├── resilience/            # Circuit Breakers and Fallback Engines
-│   │   ├── memory/                # Dual Memory & Context Replay Buffers
-│   │   ├── telemetry/             # BlackBoxVault (Offline Encrypted Auditing)
-│   │   ├── medical/               # Humanitarian Medical Grounding
-│   │   │   └── humanitarian/      # Disaster-relief routing and triage
-│   │   ├── gateway/               # NeuralGateway and Dynamic Prompt Compilers
-│   │   ├── mesh/                  # P2P Cryptographic Identity Mesh
-│   │   ├── xai/                   # Explainable AI & Critic Nodes
-│   │   └── environment/           # Device constraints and thermal monitoring
-│   └── README.md                  # SDK API reference and defensive guardrail documentation
+├── scypheon_sdk/                  # Systems intelligence & resilience core
+│   └── src/main/java/com/scypheon/sdk/core/
+│       ├── agent/                 # OODA loop, skills, tool hooks, agent swarm
+│       ├── safety/                # Layered sanitizers & integrity verifiers
+│       ├── resilience/            # Circuit breakers & fallback engines
+│       ├── memory/                # Dual memory & context replay buffers
+│       ├── telemetry/             # BlackBoxVault — offline encrypted auditing
+│       ├── medical/               # Humanitarian grounding, triage & routing
+│       ├── gateway/               # Model gateway & dynamic prompt compilers
+│       ├── mesh/                  # P2P cryptographic identity mesh
+│       ├── xai/                   # Explainability & critic nodes
+│       └── environment/           # Device constraints & thermal monitoring
 │
-├── llama/                         # Native C++ Boundaries
-│   └── src/main/cpp/              # JNI execution, Zero-Copy SHM memfd_create
+├── llama/                         # Native C++ boundaries
+│   └── src/main/cpp/              # JNI execution, zero-copy shared memory
 │
-└── docs/                          # Enterprise Documentation & Audit Artifacts
+└── docs/                          # Architecture & reference documentation
     ├── ARCHITECTURE_OVERVIEW.md
     ├── ARCHITECTURE_TECHNICAL_REFERENCE.md
     ├── ARCHITECTURE_ENTERPRISE_WHITEPAPER.md
@@ -76,74 +134,67 @@ Scypheon-Private (Repository Root)
     ├── ARCHITECTURAL_DECISION_RECORDS.md
     ├── SCYPHEON_HUMANITARIAN_IMPACT.md
     ├── SCYPHEON_VS_PRODUCTION_GRADE.md
-    ├── JUDGES_QUICK_START_GUIDE.md
     ├── PROJECT_DESCRIPTION.md
-    ├── KAGGLE_WRITEUP.md
     └── DATA_SOURCES.md
 ```
 
 ---
 
-## 3. Navigating the Architecture (Audit Pointers)
+## Build & run
 
-To comprehensively understand the structural integrity and capabilities of this ecosystem, auditors and engineers should navigate the repository via the following entry points. These are the subsystems that elevate Scypheon from a hackathon prototype to an enterprise-grade platform.
+### Prerequisites
 
-### 3.1 The SDK Safety & Resilience Core (The Fortress)
-**Path:** `./scypheon_sdk/README.md`
-This module houses the core defenses of the application. Auditors should inspect this module to verify the following mechanisms:
-*   **Zero-Copy Shared Memory (SHM) Pipeline:** Bypasses Binder IPC limits by bridging directly to the Linux kernel via `NativeLibraryLoader.createMemfdNative`. Tensor buffers are mapped into `SharedMemory`, guaranteeing a 120 FPS UI frame budget even at maximum token generation speeds.
-*   **The Lazarus Protocol:** Actively monitors the native C++ sandbox via `IBinder.DeathRecipient`. If the OS terminates the engine due to memory exhaustion, the SDK traps the binder death, parses the `HardwareTombstone`, and asynchronously cold-reboots the sandbox without crashing the UI.
-*   **Shannon Entropy Guard:** Intercepts input before it reaches the Gemma 4 engine, calculating the Shannon Entropy of the byte distribution to instantly drop obfuscated adversarial payloads (e.g., polymorphic shellcode).
-*   **Decentralized Cognitive Grid (Mesh RAG & Dual Memory):** Employs LLM-driven fact extraction and Hybrid Time-Aware Search (Reciprocal Rank Fusion) for extreme context relevance. Critically, it allows offline rural communities to share vital RAG vectors (scam signatures, medical facts) via BLE Mesh Sync, completely bypassing the cloud.
-*   **ToolHookEngine & ClinicalSafetyPreHook:** Intercepts autonomous agentic function calls, mathematically blocking execution if a medical dosage tool call contains absurd parameters (e.g., >10,000mg).
+- Android Studio Ladybug (or newer stable)
+- Android NDK **26.1.10909125+**
+- CMake **3.22.1+**
+- JDK **17**
 
-### 3.2 The Application Presentation Layer
-**Path:** `./scypheon_private/README.md`
-This directory contains the user-facing implementation. Auditors should review this to understand:
-*   **Spatial Grid Indexing O(1):** The Sentient Mirror (Knowledge Graph) UI utilizes a `MutableGridSpatialIndex` via `LongSparseArray` to resolve touch events and node mapping in constant time, eliminating UI thread iteration bottlenecks.
-*   **CompletableDeferred Cryptographic Pre-Warming:** Ensures that heavy AES-256 SQLCipher initialization occurs exclusively on background I/O threads, preventing UI jank during the cold-boot sequence.
+### Device requirements
 
-### 3.3 Global Architectural Blueprints & Impact Analysis
-**Path:** `./docs/`
-This directory contains the definitive whitepapers mapping the holistic system.
-*   **[ARCHITECTURE_OVERVIEW.md](./docs/ARCHITECTURE_OVERVIEW.md)**: The high-level entry point with visual SVG diagrams of the Scypheon data flow. **Start here.**
-*   **[ARCHITECTURE_TECHNICAL_REFERENCE.md](./docs/ARCHITECTURE_TECHNICAL_REFERENCE.md)**: Deep dive into the codebase, resilience mechanisms, and safety guardrails.
-*   **[ARCHITECTURE_ENTERPRISE_WHITEPAPER.md](./docs/ARCHITECTURE_ENTERPRISE_WHITEPAPER.md)**: The 17-point whitepaper providing Mermaid topological diagrams of data flow.
-*   **[JOURNEY.md](./docs/JOURNEY.md)**: The story of building Scypheon, fighting the silicon, and creating an unkillable AI.
-*   **[GLOSSARY.md](./docs/GLOSSARY.md)**: Definitions for specialized terminology like Lazarus Protocol and Sentient Mirror.
-*   **[COMPONENT_MAP.md](./docs/COMPONENT_MAP.md)**: Direct links from high-level components to their physical source code files.
-*   **[FAQ.md](./docs/FAQ.md)**: Troubleshooting and frequently asked questions for developers and users.
-*   **[SCYPHEON_VS_PRODUCTION_GRADE.md](./docs/SCYPHEON_VS_PRODUCTION_GRADE.md)**: An analysis of how Scypheon prevents the zero-day vulnerabilities.
-*   **[JUDGES_QUICK_START_GUIDE.md](./docs/JUDGES_QUICK_START_GUIDE.md)**: Step-by-step instructions to manually trigger the Lazarus Protocol and Shannon Entropy guards.
+Deploy to a **physical Android device** (API 26+). Emulators aren't supported — they can't faithfully reproduce real SoC thermals, Linux LMKD behaviour, or the shared-memory bindings the resilience layer depends on.
 
----
-
-## 4. Compilation and Execution Protocol
-
-Engineers must ensure the local build environment is configured strictly according to the following parameters. 
-
-### 4.1 System Prerequisites
-*   Android Studio Ladybug (or more recent stable release)
-*   Android Native Development Kit (NDK) version 26.1.10909125+
-*   CMake version 3.22.1+
-*   Java Development Kit (JDK) 17
-
-### 4.2 Target Device Constraints
-Target deployment must be directed to a **physical Android device** (API 26+). Emulators are explicitly unsupported. Emulated environments utilize host CPU emulation and virtualized memory spaces, rendering them incapable of accurately reproducing Android SoC thermal dynamics, Linux LMKD behavior, or the `memfd_create` bindings required to evaluate the resilience protocols.
-
-### 4.3 Build Directives
-Execute the following directives from the repository root to purge stale artifacts and initiate a clean cross-module compilation. Note that the `HardwareConfigProvider` and the native C++ sandbox (`llama-android.cpp`) will cross-compile automatically.
+### Build
 
 ```bash
-# 1. Purge historical build caches and native objects
+# 1. Clean stale build artifacts and native objects
 ./gradlew clean
 
-# 2. Execute strict Kotlin compilation and linking across all discrete modules
+# 2. Compile Kotlin across all modules
 ./gradlew compileDebugKotlin
 
-# 3. Generate the executable release artifact
+# 3. Produce the release artifact
 ./gradlew :app:assembleRelease
 ```
 
+The native C++ runtime and hardware configuration providers cross-compile automatically.
+
 ---
-*Signed, The Scypheon Engineering Directorate.*
+
+## Documentation
+
+Start with **[ARCHITECTURE_OVERVIEW.md](./docs/ARCHITECTURE_OVERVIEW.md)** — the visual entry point into how data flows through Scypheon.
+
+From there: a [technical reference](./docs/ARCHITECTURE_TECHNICAL_REFERENCE.md), an [enterprise whitepaper](./docs/ARCHITECTURE_ENTERPRISE_WHITEPAPER.md), a [component map](./docs/COMPONENT_MAP.md), the [build journey](./docs/JOURNEY.md), and the [glossary](./docs/GLOSSARY.md) for terms like *Lazarus Protocol* and *Sentient Mirror*.
+
+---
+
+## License
+
+Proprietary. All rights reserved.
+
+Scypheon is distributed under a proprietary license — it may be viewed and evaluated, but not redistributed, modified, or used in derivative works without written permission.
+
+---
+
+## Acknowledgements
+
+Scypheon stands on the work of others:
+
+- **Google Gemma** — the open model family that makes on-device reasoning viable.
+- **LiteRT (TensorFlow Lite)** — the runtime path for accelerated mobile inference.
+- **llama.cpp** — the native C++ engine behind the local execution boundary.
+- **SQLCipher** — transparent, full-database encryption at rest.
+
+---
+
+*Built for the people who can't afford to lose connection.*
